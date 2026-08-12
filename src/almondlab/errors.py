@@ -30,6 +30,11 @@ class AlmondLabError(Exception):
         return serialized
 
 
-def fail(code: str, message: str, field_path: str) -> Never:
+def fail(
+    code: str,
+    message: str,
+    field_path: str,
+    details: dict[str, object] | None = None,
+) -> Never:
     """Raise a structured AlmondLab error with stable fields."""
-    raise AlmondLabError(code, message, field_path)
+    raise AlmondLabError(code, message, field_path, details)

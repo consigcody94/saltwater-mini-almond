@@ -1,0 +1,53 @@
+blend:
+  volumes_l: [2.0, 6.0]
+  source_a:
+    ec_kind: ECw
+    ec_ds_m: 3.0
+    temperature_k: 298.15
+    measured_osmolality_osmol_kg: 0.08
+    ph: 7.0
+    alkalinity_mmol_c_l: 2.0
+    na_mmol_l: 10.0
+    cl_mmol_l: 12.0
+    ca_mmol_l: 2.0
+    mg_mmol_l: 1.0
+    k_mmol_l: 1.0
+    total_b_mmol_l: 0.1
+    sulfate_mmol_l: 1.0
+    bicarbonate_mmol_l: 2.0
+    nitrate_mmol_l: 1.0
+    phosphate_mmol_l: 0.2
+  source_b:
+    ec_kind: ECw
+    ec_ds_m: 9.0
+    temperature_k: 298.15
+    measured_osmolality_osmol_kg: 0.22
+    ph: 7.8
+    alkalinity_mmol_c_l: 6.0
+    na_mmol_l: 30.0
+    cl_mmol_l: 36.0
+    ca_mmol_l: 6.0
+    mg_mmol_l: 3.0
+    k_mmol_l: 3.0
+    total_b_mmol_l: 0.3
+    sulfate_mmol_l: 3.0
+    bicarbonate_mmol_l: 6.0
+    nitrate_mmol_l: 3.0
+    phosphate_mmol_l: 0.6
+  expected:
+    alkalinity_mmol_c_l: 5.0
+    na_mmol_l: 25.0
+    cl_mmol_l: 30.0
+    ca_mmol_l: 5.0
+    mg_mmol_l: 2.5
+    k_mmol_l: 2.5
+    total_b_mmol_l: 0.25
+    sulfate_mmol_l: 2.5
+    bicarbonate_mmol_l: 5.0
+    nitrate_mmol_l: 2.5
+    phosphate_mmol_l: 0.5
+
+charge_balance:
+  cation_charge_mmol_c_l: 17.0
+  anion_charge_mmol_c_l: 15.0
+  expected_percent: 6.25
