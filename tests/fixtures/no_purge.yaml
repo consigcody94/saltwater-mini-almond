@@ -1,0 +1,15 @@
+initial:
+  volumes_l: {tank: 10.0}
+  stocks_mmol: {tank: {na: 20.0}}
+source_flux:
+  compartment: tank
+  boundary: dissolved_source
+  volume_rate_l_per_hour: 0.0
+  entity_rates_mmol_per_hour: {na: 2.0}
+volume: 10.0
+c0: 2.0
+c_in: 0.0
+m_dot: 2.0
+stop_concentration_mmol_l: 4.0
+sample_hours: 0.5
+expected_stop_hours: 10.0

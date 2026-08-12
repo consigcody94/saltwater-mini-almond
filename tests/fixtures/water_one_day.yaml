@@ -1,0 +1,9 @@
+initial:
+  volumes_l: {reservoir: 1000.0, field: 0.0}
+  stocks_mmol: {reservoir: {}, field: {}}
+flow:
+  source: reservoir
+  target: field
+  rate_l_per_hour: 10.0
+duration_hours: 24.0
+expected_volumes_l: {reservoir: 760.0, field: 240.0}

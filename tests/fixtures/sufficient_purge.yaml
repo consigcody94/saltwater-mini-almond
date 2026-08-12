@@ -1,0 +1,19 @@
+initial:
+  volumes_l: {tank: 10.0}
+  stocks_mmol: {tank: {na: 50.0}}
+influx:
+  compartment: tank
+  boundary: feed
+  volume_rate_l_per_hour: 2.0
+  entity_rates_mmol_per_hour: {na: 6.0}
+purge_flux:
+  compartment: tank
+  boundary: discharge
+  volume_rate_l_per_hour: -2.0
+volume: 10.0
+c0: 5.0
+c_in: 3.0
+m_dot: 0.0
+purge: 2.0
+sample_hours: 5.0
+samples: 12

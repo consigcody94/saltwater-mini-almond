@@ -1,0 +1,10 @@
+initial:
+  volumes_l: {source: 100.0, receiving: 0.0}
+  stocks_mmol:
+    source: {na: 200.0, cl: 300.0, b: 1.0}
+    receiving: {na: 0.0, cl: 0.0, b: 0.0}
+flow: {source: source, target: receiving, rate_l_per_hour: 10.0}
+duration_hours: 2.0
+expected_stocks_mmol:
+  source: {na: 160.0, cl: 240.0, b: 0.8}
+  receiving: {na: 40.0, cl: 60.0, b: 0.2}
