@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AlmondLab Visual Concepts</title>
+  <style>
+    :root { color-scheme: light; --ink:#15231c; --muted:#52645a; --paper:#f5f7f2; --card:#fff; --line:#d6dfd7; --accent:#226b49; --warn:#8b4a12; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    header { padding:4rem max(5vw,1.25rem) 2.4rem; background:linear-gradient(135deg,#163c2c,#2f7454); color:#fff; }
+    header p { max-width:72rem; color:#e2eee7; }
+    .badge { display:inline-block; padding:.35rem .7rem; border:1px solid #f0c690; border-radius:999px; color:#ffe1b8; font-size:.8rem; font-weight:700; letter-spacing:.06em; }
+    main { width:min(1500px,92vw); margin:2rem auto 4rem; display:grid; gap:2rem; }
+    article { overflow:hidden; border:1px solid var(--line); border-radius:18px; background:var(--card); box-shadow:0 12px 32px rgba(17,45,31,.08); }
+    img { display:block; width:100%; height:auto; background:#e8ede8; }
+    .copy { padding:1.25rem 1.5rem 1.6rem; }
+    h1,h2 { line-height:1.15; margin:.5rem 0; }
+    h1 { font-size:clamp(2rem,5vw,4.5rem); }
+    h2 { font-size:clamp(1.3rem,2.5vw,2rem); }
+    p { margin:.65rem 0 0; }
+    .note { color:var(--warn); font-weight:650; }
+    footer { width:min(1500px,92vw); margin:0 auto 3rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="badge">CONCEPTS — NOT BIOLOGICAL EVIDENCE</span>
+    <h1>What AlmondLab could look like</h1>
+    <p>Three linked views of the proposed research program: the contained greenhouse, the mechanism tournament, and the auditable virtual laboratory.</p>
+  </header>
+  <main>
+    <article>
+      <img src="01-contained-greenhouse-concept.png" alt="Cutaway concept of contained greenhouse with compact almond trees, sealed lysimeters, water treatment, drainage capture, and concentrate storage">
+      <div class="copy"><h2>1. Contained greenhouse</h2><p>Treated source water enters separate experimental loops. Each compact tree sits in a sealed lysimeter; drainage and condensate are captured, while concentrate is measured and isolated for authorized disposal.</p><p class="note">Untreated seawater is not applied directly to almond roots.</p></div>
+    </article>
+    <article>
+      <img src="02-six-gene-mechanism-map.png" alt="Scientific concept diagram of six gene modules around an almond root cross-section">
+      <div class="copy"><h2>2. Six-gene mechanism tournament</h2><p>Each construct is tied to a measurable physiological mechanism. The diagram preserves the central risk: moving sodium out of one root cell is not useful if it simply raises xylem and shoot sodium.</p><p class="note">These are hypotheses, not evidence of engineered-almond performance.</p></div>
+    </article>
+    <article>
+      <img src="03-virtual-lab-dashboard-demo.png" alt="Desktop mockup of AlmondLab candidate gates, salt ledger, tree digital twin, and uncertainty panels">
+      <div class="copy"><h2>3. Virtual-lab dashboard demo</h2><p>The software joins candidate gates to water and ion ledgers, root/shoot compartments, uncertainty, sensitivity checks, evidence labels, and a reproducible run manifest.</p><p class="note">Visible values are illustrative interface content; every biological candidate remains not evaluated.</p></div>
+    </article>
+  </main>
+  <footer>Generated 12 August 2026 with the built-in OpenAI image-generation workflow. See README.md and PROMPTS.md for provenance and limitations.</footer>
+</body>
+</html>
