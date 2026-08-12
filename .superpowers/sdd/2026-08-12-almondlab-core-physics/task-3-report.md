@@ -3,8 +3,9 @@
 ## Result
 
 Task 3 is implemented on `build/virtual-lab` in feature commit
-`91a0a5e83eba5f7e46dfd108d0b79bfeef1403ee`. The final focused suite passes
-35 tests and the Tasks 1-2 regression suite passes 25 tests. Both final pytest
+`91a0a5e83eba5f7e46dfd108d0b79bfeef1403ee` plus review fix
+`5f10a7a11fc33e4d9b3908d6ea70b93d2893bc27`. The final focused suite passes
+38 tests and the Tasks 1-2 regression suite passes 25 tests. Both final pytest
 commands use the required task-local UV cache and disabled pytest cache
 provider, with no warnings or cache artifacts in their output.
 
@@ -237,13 +238,103 @@ pytest output or changed repository content.
   hashes, and the requested evidence label are checked before returning the
   requested label.
 - Denied extrapolation raises `DOMAIN_VIOLATION` with every violation in
-  structured details. Allowed extrapolation returns only `hypothesis_prior` or
-  `synthetic_only`, retains the strong requested label separately, and returns
-  all violations, including an entirely empty analyte set.
+  structured details. Allowed extrapolation requires the caller to request
+  exactly the weak label named by the policy, returns that requested label,
+  and includes all violations, including an entirely empty analyte set.
 - Mutation checks are represented by explicit rejection tests, a Hypothesis
   RO conservation/positivity property, mixed-EC tests, domain endpoint tests,
   exact hash mismatch tests, and the bicarbonate/phosphate decoy in the charge
   hand oracle.
+
+## Fix round 1: require explicit weak extrapolation requests
+
+Reviewer finding: allowed extrapolation previously selected the policy label
+even when a caller requested `physics_constrained` or
+`empirically_calibrated`, silently downgrading strong evidence. The corrected
+contract permits extrapolation only when the caller explicitly requests the
+exact weak label named by the policy. Hypothesis and synthetic policies are
+not interchangeable.
+
+### RED
+
+The incorrect downgrade assertion was removed. New real-behavior tests cover
+both strong labels, both incompatible weak-policy permutations, both exact
+compatible weak-policy paths, and preservation of the full accumulated
+violation list.
+
+Command:
+
+```powershell
+$env:UV_CACHE_DIR = 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_domains.py -v -p no:cacheprovider
+```
+
+Exact result before the fix:
+
+```text
+collecting ... collected 16 items
+tests/test_domains.py::test_weak_policy_refuses_out_of_domain_strong_requested_label[hypothesis_prior-empirically_calibrated-expected_fields0] FAILED
+tests/test_domains.py::test_weak_policy_refuses_out_of_domain_strong_requested_label[synthetic_only-physics_constrained-expected_fields1] FAILED
+tests/test_domains.py::test_weak_request_requires_exact_extrapolation_policy_match[hypothesis_prior-synthetic_only] FAILED
+tests/test_domains.py::test_weak_request_requires_exact_extrapolation_policy_match[synthetic_only-hypothesis_prior] FAILED
+E       Failed: DID NOT RAISE AlmondLabError
+======================== 4 failed, 12 passed in 0.63s =========================
+```
+
+All four failures were the intended silent-downgrade symptom. The compatible
+weak-label tests and all unrelated domain tests already passed.
+
+### GREEN
+
+The minimal production change compares `request.requested_label.value`
+exactly to `domain.extrapolation_policy`. Deny, strong-label, and incompatible
+weak-label paths raise the existing structured `DOMAIN_VIOLATION` after all
+checks have accumulated. The compatible path returns
+`request.requested_label` directly.
+
+Focused command (same as RED) exact result:
+
+```text
+collecting ... collected 16 items
+tests/test_domains.py::test_domain_boundaries_are_inclusive[ec_ds_m-1.0] PASSED
+tests/test_domains.py::test_domain_boundaries_are_inclusive[ec_ds_m-10.0] PASSED
+tests/test_domains.py::test_domain_boundaries_are_inclusive[measured_osmolality_osmol_kg-0.05] PASSED
+tests/test_domains.py::test_domain_boundaries_are_inclusive[measured_osmolality_osmol_kg-0.25] PASSED
+tests/test_domains.py::test_domain_boundaries_are_inclusive[temperature_k-290.0] PASSED
+tests/test_domains.py::test_domain_boundaries_are_inclusive[temperature_k-305.0] PASSED
+tests/test_domains.py::test_denied_domain_reports_every_violation_in_structured_error PASSED
+tests/test_domains.py::test_missing_analyte_is_refused PASSED
+tests/test_domains.py::test_dataset_hash_mismatch_is_refused PASSED
+tests/test_domains.py::test_allowed_extrapolation_returns_weak_label_and_all_violations[hypothesis_prior-hypothesis_prior] PASSED
+tests/test_domains.py::test_allowed_extrapolation_returns_weak_label_and_all_violations[synthetic_only-synthetic_only] PASSED
+tests/test_domains.py::test_weak_policy_refuses_out_of_domain_strong_requested_label[hypothesis_prior-empirically_calibrated-expected_fields0] PASSED
+tests/test_domains.py::test_weak_policy_refuses_out_of_domain_strong_requested_label[synthetic_only-physics_constrained-expected_fields1] PASSED
+tests/test_domains.py::test_weak_request_requires_exact_extrapolation_policy_match[hypothesis_prior-synthetic_only] PASSED
+tests/test_domains.py::test_weak_request_requires_exact_extrapolation_policy_match[synthetic_only-hypothesis_prior] PASSED
+tests/test_domains.py::test_allowed_extrapolation_reports_every_analyte_when_none_are_available PASSED
+============================= 16 passed in 0.43s ==============================
+```
+
+Final Task 3 command:
+
+```powershell
+$env:UV_CACHE_DIR = 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_chemistry.py tests/test_treatment.py tests/test_domains.py -v -p no:cacheprovider
+```
+
+Exact result: `38 passed in 0.83s`.
+
+Tasks 1-2 regression command:
+
+```powershell
+$env:UV_CACHE_DIR = 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_contracts.py tests/test_cli.py tests/test_schemas.py -v -p no:cacheprovider
+```
+
+Exact result: `25 passed in 1.04s`.
+
+Fix commit: `5f10a7a11fc33e4d9b3908d6ea70b93d2893bc27` (`fix: require
+explicit weak extrapolation request`).
 
 ## Concerns
 
