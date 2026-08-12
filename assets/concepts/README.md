@@ -27,3 +27,12 @@ are illustrative interface content, not outputs from the AlmondLab simulator.
 
 Built-in OpenAI image generation was used. The exact production prompts are in
 [PROMPTS.md](PROMPTS.md).
+
+## Revision policy
+
+These are version-1 concepts. Revisions use sibling filenames such as `-v2`
+rather than overwriting prior assets. A scientific image is revised when a
+verified interface, compartment, experimental allocation, chemistry value, or
+decision label changes. Once the simulator is operational, dashboard numbers
+must be rendered from a manifest-listed synthetic run rather than copied from
+this illustrative UI mockup.
