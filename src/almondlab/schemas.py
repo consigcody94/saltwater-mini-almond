@@ -23,10 +23,10 @@ class WaterChemistry(StrictScientificModel):
 
     ec_kind: ECKind
     ec_ds_m: float = Field(ge=0)
-    temperature_c: float
+    temperature_k: float = Field(ge=0)
     measured_osmolality_osmol_kg: float = Field(ge=0)
     ph: float
-    alkalinity_mmol_c_l: float
+    alkalinity_mmol_c_l: float = Field(ge=0)
     na_mmol_l: float = Field(ge=0)
     cl_mmol_l: float = Field(ge=0)
     ca_mmol_l: float = Field(ge=0)
@@ -37,6 +37,15 @@ class WaterChemistry(StrictScientificModel):
     bicarbonate_mmol_l: float = Field(ge=0)
     nitrate_mmol_l: float = Field(ge=0)
     phosphate_mmol_l: float = Field(ge=0)
+
+    @classmethod
+    def from_celsius(
+        cls, *, temperature_c: float, **values: object
+    ) -> "WaterChemistry":
+        """Build canonical Kelvin chemistry from an explicit Celsius input."""
+        if "temperature_k" in values:
+            raise ValueError("temperature_k and temperature_c cannot both be provided")
+        return cls(**values, temperature_k=temperature_c + 273.15)
 
 
 class WaterBatch(StrictScientificModel):
@@ -56,12 +65,12 @@ class ModelDomain(StrictScientificModel):
     version: str = Field(min_length=1)
     permitted_label: EvidenceLabel
     ec_kind: ECKind = ECKind.ECW
-    ec_ds_m_min: float
-    ec_ds_m_max: float
-    osmolality_min: float
-    osmolality_max: float
-    temperature_c_min: float
-    temperature_c_max: float
+    ec_ds_m_min: float = Field(ge=0)
+    ec_ds_m_max: float = Field(ge=0)
+    osmolality_min: float = Field(ge=0)
+    osmolality_max: float = Field(ge=0)
+    temperature_k_min: float = Field(ge=0)
+    temperature_k_max: float = Field(ge=0)
     required_analytes: tuple[str, ...] = Field(min_length=1)
     allowed_chassis: tuple[str, ...] = Field(min_length=1)
     allowed_life_stages: tuple[str, ...] = Field(min_length=1)
@@ -73,7 +82,7 @@ class ModelDomain(StrictScientificModel):
         for lower_name, upper_name in (
             ("ec_ds_m_min", "ec_ds_m_max"),
             ("osmolality_min", "osmolality_max"),
-            ("temperature_c_min", "temperature_c_max"),
+            ("temperature_k_min", "temperature_k_max"),
         ):
             if getattr(self, lower_name) > getattr(self, upper_name):
                 raise ValueError(f"{lower_name} must be less than or equal to {upper_name}")
@@ -85,11 +94,12 @@ class ModelDomain(StrictScientificModel):
         ]
         if malformed:
             raise ValueError(f"calibration datasets have malformed SHA-256 hashes: {malformed}")
-        if (
-            self.permitted_label is EvidenceLabel.EMPIRICALLY_CALIBRATED
-            and not self.calibration_datasets
-        ):
-            raise ValueError("empirically calibrated models require calibration datasets")
+        is_conservation_core = (
+            self.model_id == "core_v1"
+            and self.permitted_label is EvidenceLabel.PHYSICS_CONSTRAINED
+        )
+        if not self.calibration_datasets and not is_conservation_core:
+            raise ValueError("empty calibration datasets are reserved for core_v1")
         return self
 
 

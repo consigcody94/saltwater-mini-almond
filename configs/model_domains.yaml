@@ -7,8 +7,8 @@ core_v1:
   ec_ds_m_max: 15.0
   osmolality_min: 0.02
   osmolality_max: 0.30
-  temperature_c_min: 18.0
-  temperature_c_max: 30.0
+  temperature_k_min: 291.15
+  temperature_k_max: 303.15
   required_analytes:
     - na
     - cl
