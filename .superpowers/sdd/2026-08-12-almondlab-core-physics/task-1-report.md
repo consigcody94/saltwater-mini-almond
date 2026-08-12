@@ -108,3 +108,52 @@ Bootstrap commit: `2eeb3ab52c0f4ab386ec207b9256aacc05c8fa00`
 
 None outstanding. The initially auto-selected inaccessible interpreter was
 replaced before final verification; `.venv` is ignored and was not committed.
+
+## Follow-up: public CLI entry point
+
+Review found that the published `almondlab = "almondlab.cli:app"` entry point
+had no implementation. The fix adds the smallest real Typer command group in
+`src/almondlab/cli.py` and a focused public-help contract test.
+
+### RED
+
+Command:
+
+```powershell
+$env:UV_CACHE_DIR = 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_cli.py -v -p no:cacheprovider
+```
+
+Output before `almondlab.cli` existed:
+
+```text
+collecting ... collected 0 items / 1 error
+E   ModuleNotFoundError: No module named 'almondlab.cli'
+============================== 1 error in 0.60s ===============================
+```
+
+### GREEN
+
+Commands:
+
+```powershell
+$env:UV_CACHE_DIR = 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_cli.py tests/test_contracts.py -v -p no:cacheprovider
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run almondlab --help
+```
+
+Output:
+
+```text
+tests/test_cli.py::test_public_cli_app_shows_help PASSED
+tests/test_contracts.py::test_public_enums_and_stable_error_code PASSED
+tests/test_contracts.py::test_error_serializes_structured_fields PASSED
+============================== 3 passed in 0.52s ==============================
+Usage: almondlab [OPTIONS] COMMAND [ARGS]...
+AlmondLab virtual-lab command line interface.
+```
+
+The task-local `UV_CACHE_DIR` and disabled pytest cache provider kept test
+output free of sandbox cache warnings.
+
+Follow-up fix commit: `a842baca586376fba3462ec1a9c7fee4a42e31ca`
