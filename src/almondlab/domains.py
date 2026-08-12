@@ -192,7 +192,10 @@ def validate_domain(
             requested_label=request.requested_label,
             violations=(),
         )
-    if domain.extrapolation_policy == "deny":
+    if (
+        domain.extrapolation_policy == "deny"
+        or request.requested_label.value != domain.extrapolation_policy
+    ):
         fail(
             "DOMAIN_VIOLATION",
             "request is outside the model domain",
@@ -205,9 +208,8 @@ def validate_domain(
             },
         )
 
-    extrapolation_label = EvidenceLabel(domain.extrapolation_policy)
     return DomainValidationResult(
-        evidence_label=extrapolation_label,
+        evidence_label=request.requested_label,
         requested_label=request.requested_label,
         violations=tuple(violations),
     )

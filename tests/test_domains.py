@@ -174,34 +174,100 @@ def test_allowed_extrapolation_returns_weak_label_and_all_violations(
         water=_water(ec_ds_m=20.0),
         available_analytes=frozenset({"na"}),
         chassis="Other",
+        requested_label=expected_label,
     )
 
     result = validate_domain(_domain(policy=policy), request)
 
     assert result.evidence_label is expected_label
+    assert result.requested_label is expected_label
     assert {item["field"] for item in result.violations} == {
         "request.water.ec_ds_m",
         "request.available_analytes.cl",
         "request.available_analytes.ca",
         "request.available_analytes.mg",
         "request.chassis",
+        "request.requested_label",
     }
 
 
-def test_allowed_extrapolation_never_preserves_strong_requested_label() -> None:
-    result = validate_domain(
-        _domain(policy="hypothesis_prior"),
-        _request(water=_water(ec_ds_m=20.0)),
+@pytest.mark.parametrize(
+    ("policy", "strong_label", "expected_fields"),
+    [
+        (
+            "hypothesis_prior",
+            EvidenceLabel.EMPIRICALLY_CALIBRATED,
+            {"request.water.ec_ds_m"},
+        ),
+        (
+            "synthetic_only",
+            EvidenceLabel.PHYSICS_CONSTRAINED,
+            {"request.water.ec_ds_m", "request.requested_label"},
+        ),
+    ],
+)
+def test_weak_policy_refuses_out_of_domain_strong_requested_label(
+    policy: str,
+    strong_label: EvidenceLabel,
+    expected_fields: set[str],
+) -> None:
+    request = _request(
+        water=_water(ec_ds_m=20.0),
+        requested_label=strong_label,
     )
 
-    assert result.evidence_label is EvidenceLabel.HYPOTHESIS_PRIOR
-    assert result.requested_label is EvidenceLabel.EMPIRICALLY_CALIBRATED
+    with pytest.raises(AlmondLabError) as exc_info:
+        validate_domain(_domain(policy=policy), request)
+
+    assert exc_info.value.code == "DOMAIN_VIOLATION"
+    assert exc_info.value.details["requested_label"] == strong_label.value
+    assert {
+        item["field"] for item in exc_info.value.details["violations"]
+    } == expected_fields
+
+
+@pytest.mark.parametrize(
+    ("policy", "requested_label"),
+    [
+        ("hypothesis_prior", EvidenceLabel.SYNTHETIC_ONLY),
+        ("synthetic_only", EvidenceLabel.HYPOTHESIS_PRIOR),
+    ],
+)
+def test_weak_request_requires_exact_extrapolation_policy_match(
+    policy: str,
+    requested_label: EvidenceLabel,
+) -> None:
+    request = _request(
+        water=_water(ec_ds_m=20.0),
+        available_analytes=frozenset(),
+        chassis="Other",
+        requested_label=requested_label,
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        validate_domain(_domain(policy=policy), request)
+
+    assert exc_info.value.code == "DOMAIN_VIOLATION"
+    assert {
+        item["field"] for item in exc_info.value.details["violations"]
+    } == {
+        "request.water.ec_ds_m",
+        "request.available_analytes.na",
+        "request.available_analytes.cl",
+        "request.available_analytes.ca",
+        "request.available_analytes.mg",
+        "request.chassis",
+        "request.requested_label",
+    }
 
 
 def test_allowed_extrapolation_reports_every_analyte_when_none_are_available() -> None:
     result = validate_domain(
         _domain(policy="synthetic_only"),
-        _request(available_analytes=frozenset()),
+        _request(
+            available_analytes=frozenset(),
+            requested_label=EvidenceLabel.SYNTHETIC_ONLY,
+        ),
     )
 
     assert [item["field"] for item in result.violations] == [
@@ -209,4 +275,5 @@ def test_allowed_extrapolation_reports_every_analyte_when_none_are_available() -
         "request.available_analytes.cl",
         "request.available_analytes.ca",
         "request.available_analytes.mg",
+        "request.requested_label",
     ]
