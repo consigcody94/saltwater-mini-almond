@@ -294,8 +294,9 @@ biology/registry repair worktree:
 ```
 
 This final combined run used the committed biology and registry repairs through
-`4adf366` plus the unstaged Task 1 provenance diff. Exact-index verification,
-native-POSIX execution, and a fresh independent Task 1 rereview remain required.
+`4adf366` plus the then-unstaged Task 1 provenance diff. The exact four-path
+repair was subsequently committed at `1713a26277ae6d50ff4945c6eb4b464a2138abfb`
+after cached-name, cached-diff, and shared-ledger preservation checks.
 
 Dependency-free Draft 2020-12 schema coverage is included in the focused suite.
 The optional external gate remains unavailable:
@@ -308,3 +309,12 @@ optional external jsonschema gate: NOT INSTALLED (not a locked dependency)
 Python bytecode compilation and owned-file diff checks passed after the narrow
 repair. No biological model, evidence registry, candidate registry, or core
 contract file is part of this Task 1 change.
+
+## Final scoped rereview verdict
+
+The independent exact-commit rereview of `1713a262` approved both specification
+compliance and task quality with no substantive findings. The reviewer
+reproduced the focused provenance result (218 passed, 3 platform skips), the
+14-case cleanup-race matrix, and the combined repository result (1085 passed,
+3 platform skips). The remaining native-POSIX execution gap is explicitly
+documented above and was not represented as executed on this Windows host.
