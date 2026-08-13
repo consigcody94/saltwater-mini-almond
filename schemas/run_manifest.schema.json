@@ -47,7 +47,7 @@
     "lockfile": {"$ref": "#/$defs/file_provenance"},
     "config_hashes": {"$ref": "#/$defs/digest_map"},
     "input_hashes": {"$ref": "#/$defs/digest_map"},
-    "artifact_hashes": {"$ref": "#/$defs/digest_map"},
+    "artifact_hashes": {"$ref": "#/$defs/artifact_digest_map"},
     "model_versions": {
       "type": "object",
       "propertyNames": {"type": "string", "minLength": 1},
@@ -93,6 +93,17 @@
       "type": "object",
       "propertyNames": {"$ref": "#/$defs/portable_path"},
       "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "artifact_digest_map": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/artifact_path"},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "artifact_path": {
+      "$ref": "#/$defs/portable_path",
+      "not": {
+        "pattern": "(?:^|/)[Rr][Uu][Nn]_[Mm][Aa][Nn][Ii][Ff][Ee][Ss][Tt]\\.[Jj][Ss][Oo][Nn](?:/|(?![\\s\\S]))"
+      }
     },
     "portable_path": {
       "type": "string",

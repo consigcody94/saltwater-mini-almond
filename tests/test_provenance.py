@@ -8,9 +8,11 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 from types import MappingProxyType
+from types import SimpleNamespace
 
 import pytest
 
@@ -1112,6 +1114,146 @@ def test_run_directory_detects_runs_root_swap_during_collision_claim(
     assert list(runs_root.iterdir()) == []
 
 
+def test_run_directory_prepublication_identity_failure_reports_retained_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs_root = tmp_path / "outputs" / "runs"
+    staging_name = ".claim-" + "0" * 32
+    cleanup_called = False
+    fake_os = SimpleNamespace(
+        name="posix",
+        O_RDONLY=os.O_RDONLY,
+        O_DIRECTORY=getattr(os, "O_DIRECTORY", 0),
+        O_NOFOLLOW=getattr(os, "O_NOFOLLOW", 0),
+        O_CLOEXEC=getattr(os, "O_CLOEXEC", 0),
+        mkdir=lambda name, mode=0o777, *, dir_fd=None: (runs_root / name).mkdir(
+            mode=mode
+        ),
+        open=lambda *args, **kwargs: (_ for _ in ()).throw(
+            OSError("claim identity unavailable")
+        ),
+        close=lambda descriptor: None,
+    )
+
+    def refuse_unverified_cleanup(*args: object, **kwargs: object) -> bool:
+        nonlocal cleanup_called
+        cleanup_called = True
+        return True
+
+    monkeypatch.setattr(provenance, "os", fake_os)
+    monkeypatch.setattr(provenance.secrets, "token_hex", lambda count: "0" * 32)
+    monkeypatch.setattr(
+        provenance,
+        "_open_directory_descriptor",
+        lambda path, create=False: (path.mkdir(parents=True, exist_ok=True) or 70),
+    )
+    monkeypatch.setattr(
+        provenance,
+        "_require_path_matches_descriptor",
+        lambda path, descriptor, expected: (1, 2),
+    )
+    monkeypatch.setattr(provenance, "_rmdir_name_if_identity", refuse_unverified_cleanup)
+
+    with pytest.raises(provenance.AtomicCleanupRetainedError) as captured:
+        provenance.RunDirectory.create(
+            runs_root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is False
+    assert captured.value.destination == runs_root / "SYN_demo"
+    assert captured.value.retained_path == runs_root / staging_name
+    assert captured.value.retained_path.is_dir()
+    assert cleanup_called is False
+
+
+@pytest.mark.parametrize("private_quarantine", [False, True])
+def test_run_directory_postpublication_retention_is_reported_as_committed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    private_quarantine: bool,
+) -> None:
+    runs_root = tmp_path / "outputs" / "runs"
+    destination = runs_root / "SYN_demo"
+    retained_name = ".almondlab-quarantine-retained-run"
+    closed: list[int] = []
+
+    fake_os = SimpleNamespace(
+        name="posix",
+        O_RDONLY=os.O_RDONLY,
+        O_DIRECTORY=getattr(os, "O_DIRECTORY", 0),
+        O_NOFOLLOW=getattr(os, "O_NOFOLLOW", 0),
+        O_CLOEXEC=getattr(os, "O_CLOEXEC", 0),
+        mkdir=lambda name, mode=0o777, *, dir_fd=None: (runs_root / name).mkdir(
+            mode=mode
+        ),
+        open=lambda name, flags, *, dir_fd=None: 71,
+        close=lambda descriptor: closed.append(descriptor),
+    )
+
+    def fail_after_publication(
+        cls: type[provenance.RunDirectory], **kwargs: object
+    ) -> object:
+        raise RuntimeError("forced post-publication validation failure")
+
+    def retain_cleanup(
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+    ) -> bool:
+        del parent_descriptor, expected_identity
+        assert name == "SYN_demo"
+        if private_quarantine:
+            destination.rename(runs_root / retained_name)
+            raise provenance._RetainedCleanupIdentityError(retained_name)
+        return False
+
+    monkeypatch.setattr(provenance, "os", fake_os)
+    monkeypatch.setattr(
+        provenance,
+        "_open_directory_descriptor",
+        lambda path, create=False: (path.mkdir(parents=True, exist_ok=True) or 70),
+    )
+    monkeypatch.setattr(
+        provenance,
+        "_require_path_matches_descriptor",
+        lambda path, descriptor, expected: (1, 2),
+    )
+    monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
+    monkeypatch.setattr(provenance, "_directory_identity", lambda path: (3, 4))
+    monkeypatch.setattr(
+        provenance,
+        "_rename_directory_noreplace",
+        lambda parent_descriptor, source_name, target_name: (
+            runs_root / source_name
+        ).rename(runs_root / target_name),
+    )
+    monkeypatch.setattr(
+        provenance.RunDirectory,
+        "_from_claim",
+        classmethod(fail_after_publication),
+    )
+    monkeypatch.setattr(provenance, "_rmdir_name_if_identity", retain_cleanup)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            runs_root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.destination == destination
+    assert captured.value.retained_path == (
+        runs_root / retained_name if private_quarantine else destination
+    )
+    assert captured.value.retained_path.is_dir()
+    assert closed == [71, 70]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows path-publication fallback")
 def test_windows_run_claim_detects_post_publish_replacement_without_deleting_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1130,7 +1272,7 @@ def test_windows_run_claim_detects_post_publish_replacement_without_deleting_it(
 
     monkeypatch.setattr(provenance.os, "rename", replace_after_publish)
 
-    with pytest.raises(RuntimeError, match="replaced|identity"):
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
         provenance.RunDirectory.create(
             runs_root,
             config_sha256="1" * 64,
@@ -1138,6 +1280,8 @@ def test_windows_run_claim_detects_post_publish_replacement_without_deleting_it(
             deterministic_run_id="SYN_demo",
         )
 
+    assert captured.value.committed is True
+    assert captured.value.retained_path == destination
     assert (destination / "sentinel.txt").read_bytes() == b"preserve replacement"
     assert list(displaced.iterdir()) == []
 
@@ -1485,9 +1629,69 @@ def test_finalize_manifest_refuses_artifact_escape_before_manifest_write(
     assert outside.read_bytes() == b"outside"
 
 
-def test_run_manifest_rejects_reserved_self_artifact_hash() -> None:
-    with pytest.raises(ValueError, match="run_manifest.json"):
-        _manifest(artifact_hashes={"run_manifest.json": "1" * 64})
+@pytest.mark.parametrize(
+    "reserved_path",
+    [
+        "run_manifest.json",
+        "RUN_MANIFEST.JSON",
+        "nested/Run_Manifest.JsOn",
+    ],
+)
+def test_run_manifest_rejects_casefolded_reserved_artifact_components(
+    reserved_path: str,
+) -> None:
+    with pytest.raises(ValueError, match="run_manifest.json|reserved"):
+        _manifest(artifact_hashes={reserved_path: "1" * 64})
+
+
+@pytest.mark.parametrize(
+    "reserved_path", ["RUN_MANIFEST.JSON", "nested/Run_Manifest.JsOn"]
+)
+def test_finalize_manifest_rejects_casefolded_reserved_artifact_paths(
+    tmp_path: Path, reserved_path: str
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+
+    with pytest.raises(ValueError, match="run_manifest.json|reserved"):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                ended_at=None,
+                artifact_hashes={},
+            ),
+            run,
+            artifact_paths={reserved_path: reserved_path},
+        )
+
+    assert list(run.path.iterdir()) == []
+
+
+def test_finalize_manifest_rechecks_reserved_artifact_hashes(tmp_path: Path) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    manifest = _manifest(
+        run_id="SYN_demo",
+        deterministic_demo_id=True,
+        artifact_hashes={},
+    )
+    object.__setattr__(
+        manifest,
+        "artifact_hashes",
+        MappingProxyType({"RUN_MANIFEST.JSON": "1" * 64}),
+    )
+
+    with pytest.raises(ValueError, match="run_manifest.json|reserved"):
+        provenance.finalize_manifest(manifest, run)
 
 
 @pytest.mark.parametrize(
@@ -1697,6 +1901,62 @@ def test_finalize_manifest_revalidates_after_exclusive_create(
     assert not (run.path / "run_manifest.json").exists()
 
 
+def test_finalize_manifest_translates_postpublication_cleanup_retention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    manifest_path = run.path / "run_manifest.json"
+    retained_path = run.path / ".almondlab-quarantine-retained-manifest"
+
+    def create_then_corrupt(
+        destination: str | Path,
+        payload: bytes,
+        *,
+        _expected_parent_identity: tuple[int, int] | None = None,
+        _validator: object = None,
+        _committed_identity: list[tuple[int, int]] | None = None,
+    ) -> Path:
+        del _expected_parent_identity, _validator
+        target = Path(destination)
+        target.write_bytes(payload + b"corrupt")
+        metadata = target.stat(follow_symlinks=False)
+        assert _committed_identity is not None
+        _committed_identity.append((metadata.st_dev, metadata.st_ino))
+        return target
+
+    def retain_manifest(
+        path: Path, expected_identity: tuple[int, int]
+    ) -> bool:
+        del expected_identity
+        path.rename(retained_path)
+        raise provenance.AtomicCommitUncertainError(
+            path, retained_path=retained_path
+        )
+
+    monkeypatch.setattr(provenance, "atomic_create_bytes", create_then_corrupt)
+    monkeypatch.setattr(provenance, "_unlink_path_if_identity", retain_manifest)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                artifact_hashes={},
+            ),
+            run,
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.destination == manifest_path
+    assert captured.value.retained_path == retained_path
+    assert retained_path.is_file()
+
+
 def test_finalize_manifest_validates_emitted_document_before_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1822,6 +2082,187 @@ def test_atomic_create_temp_cleanup_failure_is_explicitly_postcommit(
     assert list(tmp_path.iterdir()) == [destination]
 
 
+@pytest.mark.parametrize("exclusive", [False, True])
+def test_posix_atomic_precommit_cleanup_retention_fails_safely(
+    monkeypatch: pytest.MonkeyPatch, exclusive: bool
+) -> None:
+    retained_name = ".almondlab-quarantine-retained-temp"
+    parent_closed = False
+
+    def fake_open_directory(path: Path, *, create: bool = False) -> int:
+        del path, create
+        return 50
+
+    def fake_open(
+        name: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        del name, flags, mode
+        assert dir_fd == 50
+        return 51
+
+    def fail_write(descriptor: int, mode: str) -> object:
+        del descriptor, mode
+        raise OSError("forced precommit failure")
+
+    def retain_cleanup(
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+    ) -> bool:
+        del parent_descriptor, name, expected_identity
+        raise provenance._RetainedCleanupIdentityError(retained_name)
+
+    monkeypatch.setattr(provenance, "_open_directory_descriptor", fake_open_directory)
+    monkeypatch.setattr(
+        provenance, "_require_path_matches_descriptor", lambda *args: (1, 2)
+    )
+    monkeypatch.setattr(provenance.os, "open", fake_open)
+    monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
+    monkeypatch.setattr(provenance.os, "fdopen", fail_write)
+    monkeypatch.setattr(provenance, "_unlink_name_if_identity", retain_cleanup)
+
+    def close_parent(descriptor: int) -> None:
+        nonlocal parent_closed
+        assert descriptor == 50
+        parent_closed = True
+
+    monkeypatch.setattr(provenance.os, "close", close_parent)
+
+    with pytest.raises(provenance.AtomicCleanupRetainedError) as captured:
+        provenance._atomic_commit_posix(
+            Path("/sandbox/result.json"),
+            b"created",
+            expected_parent_identity=None,
+            exclusive=exclusive,
+            validator=None,
+        )
+
+    assert captured.value.committed is False
+    assert captured.value.retained_path == Path("/sandbox") / retained_name
+    assert captured.value.__cause__ is not None
+    assert "forced precommit failure" in str(captured.value.__cause__)
+    assert parent_closed is True
+
+
+def test_posix_atomic_identity_capture_failure_reports_retained_temp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temporary_name = ".result.json." + "0" * 32 + ".tmp"
+    cleanup_called = False
+
+    monkeypatch.setattr(provenance, "_open_directory_descriptor", lambda *args, **kwargs: 50)
+    monkeypatch.setattr(
+        provenance, "_require_path_matches_descriptor", lambda *args: (1, 2)
+    )
+    monkeypatch.setattr(provenance.os, "open", lambda *args, **kwargs: 51)
+    monkeypatch.setattr(
+        provenance,
+        "_descriptor_identity",
+        lambda descriptor: (_ for _ in ()).throw(OSError("identity unavailable")),
+    )
+    monkeypatch.setattr(provenance.secrets, "token_hex", lambda count: "0" * 32)
+
+    def refuse_unverified_cleanup(*args: object, **kwargs: object) -> bool:
+        nonlocal cleanup_called
+        cleanup_called = True
+        return True
+
+    monkeypatch.setattr(provenance, "_unlink_name_if_identity", refuse_unverified_cleanup)
+    monkeypatch.setattr(provenance.os, "close", lambda descriptor: None)
+
+    with pytest.raises(provenance.AtomicCleanupRetainedError) as captured:
+        provenance._atomic_commit_posix(
+            Path("/sandbox/result.json"),
+            b"created",
+            expected_parent_identity=None,
+            exclusive=True,
+            validator=None,
+        )
+
+    assert captured.value.committed is False
+    assert captured.value.retained_path == Path("/sandbox") / temporary_name
+    assert cleanup_called is False
+
+
+def test_posix_atomic_postcommit_retention_reports_every_recovery_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_names: list[str] = []
+    validation_calls = 0
+
+    class FakeHandle:
+        def __enter__(self) -> "FakeHandle":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def write(self, payload: bytes) -> None:
+            assert payload == b"created"
+
+        def flush(self) -> None:
+            return None
+
+        def fileno(self) -> int:
+            return 51
+
+    def validate() -> None:
+        nonlocal validation_calls
+        validation_calls += 1
+        if validation_calls == 2:
+            raise ValueError("forced postcommit validation failure")
+
+    def retain_cleanup(
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+    ) -> bool:
+        del parent_descriptor, expected_identity
+        cleanup_names.append(name)
+        if name == "result.json":
+            raise provenance._RetainedCleanupIdentityError(
+                ".almondlab-quarantine-retained-target"
+            )
+        raise provenance._RetainedCleanupIdentityError(
+            ".almondlab-quarantine-retained-temp"
+        )
+
+    monkeypatch.setattr(provenance, "_open_directory_descriptor", lambda *args, **kwargs: 50)
+    monkeypatch.setattr(
+        provenance, "_require_path_matches_descriptor", lambda *args: (1, 2)
+    )
+    monkeypatch.setattr(provenance.os, "open", lambda *args, **kwargs: 51)
+    monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
+    monkeypatch.setattr(provenance.os, "fdopen", lambda descriptor, mode: FakeHandle())
+    monkeypatch.setattr(provenance.os, "fsync", lambda descriptor: None)
+    monkeypatch.setattr(provenance.os, "link", lambda *args, **kwargs: None)
+    monkeypatch.setattr(provenance.os, "close", lambda descriptor: None)
+    monkeypatch.setattr(provenance, "_unlink_name_if_identity", retain_cleanup)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance._atomic_commit_posix(
+            Path("/sandbox/result.json"),
+            b"created",
+            expected_parent_identity=None,
+            exclusive=True,
+            validator=validate,
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == (
+        Path("/sandbox/.almondlab-quarantine-retained-target"),
+        Path("/sandbox/.almondlab-quarantine-retained-temp"),
+    )
+    assert cleanup_names[0] == "result.json"
+    assert len(cleanup_names) == 2
+    assert cleanup_names[1].startswith(".result.json.")
+    assert cleanup_names[1].endswith(".tmp")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows handle-relative cleanup")
 def test_windows_identity_checked_unlink_never_deletes_attacker_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1917,6 +2358,104 @@ def test_windows_identity_checked_rmdir_never_deletes_attacker_replacement(
     assert target.is_dir()
 
 
+def _assert_posix_quarantine_retains_post_fstat_replacement(
+    monkeypatch: pytest.MonkeyPatch, *, is_directory: bool
+) -> None:
+    """Exercise the real cleanup state machine with deterministic POSIX syscalls."""
+
+    expected_identity = (101, 202)
+    original_descriptor = 10
+    quarantine_descriptor = 11
+    expected_mode = stat.S_IFDIR if is_directory else stat.S_IFREG
+    quarantine_name = ".almondlab-quarantine-" + "0" * 32
+    active_quarantine_identity = "expected"
+    pathname_deletes: list[tuple[str, str]] = []
+
+    def fake_open(
+        name: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        del flags, mode
+        assert dir_fd == 99
+        if name == "temporary":
+            return original_descriptor
+        assert name == quarantine_name
+        return quarantine_descriptor
+
+    def fake_fstat(descriptor: int) -> SimpleNamespace:
+        nonlocal active_quarantine_identity
+        assert descriptor in {original_descriptor, quarantine_descriptor}
+        metadata = SimpleNamespace(
+            st_dev=expected_identity[0],
+            st_ino=expected_identity[1],
+            st_mode=expected_mode,
+        )
+        if descriptor == quarantine_descriptor:
+            # The kernel has returned the expected handle metadata.  Before a
+            # later pathname delete could run, an attacker replaces that name.
+            active_quarantine_identity = "attacker replacement"
+        return metadata
+
+    def fake_rename(
+        parent_descriptor: int, source_name: str, target_name: str
+    ) -> None:
+        assert (parent_descriptor, source_name, target_name) == (
+            99,
+            "temporary",
+            quarantine_name,
+        )
+
+    def record_unlink(
+        name: str, *, dir_fd: int | None = None
+    ) -> None:
+        assert dir_fd == 99
+        pathname_deletes.append((name, active_quarantine_identity))
+
+    def record_rmdir(name: str, *, dir_fd: int | None = None) -> None:
+        assert dir_fd == 99
+        pathname_deletes.append((name, active_quarantine_identity))
+
+    monkeypatch.setattr(provenance.os, "name", "posix")
+    monkeypatch.setattr(provenance.os, "open", fake_open)
+    monkeypatch.setattr(provenance.os, "fstat", fake_fstat)
+    monkeypatch.setattr(provenance.os, "close", lambda descriptor: None)
+    monkeypatch.setattr(provenance.os, "unlink", record_unlink)
+    monkeypatch.setattr(provenance.os, "rmdir", record_rmdir)
+    monkeypatch.setattr(provenance.secrets, "token_hex", lambda count: "0" * 32)
+    monkeypatch.setattr(provenance, "_rename_name_noreplace", fake_rename)
+
+    with pytest.raises(provenance._RetainedCleanupIdentityError) as captured:
+        provenance._remove_name_via_private_quarantine(
+            99,
+            "temporary",
+            expected_identity,
+            is_directory=is_directory,
+        )
+
+    assert captured.value.retained_name == quarantine_name
+    assert active_quarantine_identity == "attacker replacement"
+    assert pathname_deletes == []
+
+
+def test_posix_file_quarantine_never_path_deletes_post_fstat_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_posix_quarantine_retains_post_fstat_replacement(
+        monkeypatch, is_directory=False
+    )
+
+
+def test_posix_directory_quarantine_never_path_deletes_post_fstat_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_posix_quarantine_retains_post_fstat_replacement(
+        monkeypatch, is_directory=True
+    )
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor-relative cleanup")
 def test_posix_identity_checked_unlink_quarantines_racing_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1948,16 +2487,17 @@ def test_posix_identity_checked_unlink_quarantines_racing_replacement(
     )
     parent_descriptor = provenance._open_directory_descriptor(tmp_path)
     try:
-        removed = provenance._unlink_name_if_identity(
-            parent_descriptor, target.name, expected
-        )
+        with pytest.raises(provenance._RetainedCleanupIdentityError) as captured:
+            provenance._unlink_name_if_identity(
+                parent_descriptor, target.name, expected
+            )
     finally:
         os.close(parent_descriptor)
 
     assert attacked is True
-    assert removed is False
     assert displaced.read_bytes() == b"expected temporary"
     assert quarantine is not None
+    assert captured.value.retained_name == quarantine.name
     assert quarantine.read_bytes() == b"attacker replacement"
 
 
@@ -1993,40 +2533,28 @@ def test_posix_identity_checked_rmdir_quarantines_racing_replacement(
     )
     parent_descriptor = provenance._open_directory_descriptor(tmp_path)
     try:
-        removed = provenance._rmdir_name_if_identity(
-            parent_descriptor, target.name, expected
-        )
+        with pytest.raises(provenance._RetainedCleanupIdentityError) as captured:
+            provenance._rmdir_name_if_identity(
+                parent_descriptor, target.name, expected
+            )
     finally:
         os.close(parent_descriptor)
 
     assert attacked is True
-    assert removed is False
     assert displaced.is_dir()
     assert quarantine is not None
+    assert captured.value.retained_name == quarantine.name
     assert (quarantine / "sentinel.txt").read_bytes() == b"attacker replacement"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor-relative cleanup")
-def test_posix_cleanup_retains_and_reports_quarantine_when_delete_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_posix_cleanup_retains_and_reports_verified_quarantine(
+    tmp_path: Path,
 ) -> None:
     target = tmp_path / "temporary"
     target.write_bytes(b"retained expected identity")
     metadata = target.stat(follow_symlinks=False)
     expected = (metadata.st_dev, metadata.st_ino)
-    real_unlink = os.unlink
-
-    def fail_quarantine_delete(
-        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
-        *,
-        dir_fd: int | None = None,
-    ) -> None:
-        if str(path).startswith(".almondlab-quarantine-"):
-            raise OSError("forced quarantine retention")
-        real_unlink(path, dir_fd=dir_fd)
-
-    monkeypatch.setattr(provenance.os, "unlink", fail_quarantine_delete)
-
     with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
         provenance._unlink_path_if_identity(target, expected)
 
@@ -2170,6 +2698,39 @@ def test_run_manifest_schema_accepts_document_and_rejects_boundary_corruptions()
 
     with pytest.raises(ValueError, match="unsupported schema keyword"):
         provenance.check_json_schema_subset({**schema, "inventedKeyword": True})
+
+
+@pytest.mark.parametrize(
+    "reserved_path", ["RUN_MANIFEST.JSON", "nested/Run_Manifest.JsOn"]
+)
+def test_run_manifest_schema_rejects_casefolded_reserved_artifact_components(
+    reserved_path: str,
+) -> None:
+    schema_path = Path(__file__).parents[1] / "schemas" / "run_manifest.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    document = _golden_manifest_document()
+    document["artifact_hashes"] = {reserved_path: "1" * 64}
+
+    with pytest.raises(ValueError, match="schema"):
+        provenance.validate_json_schema_subset(schema, document)
+
+
+@pytest.mark.parametrize(
+    "reserved_path", ["RUN_MANIFEST.JSON", "nested/Run_Manifest.JsOn"]
+)
+def test_run_manifest_document_validator_rejects_casefolded_reserved_artifacts(
+    reserved_path: str,
+) -> None:
+    schema_path = Path(__file__).parents[1] / "schemas" / "run_manifest.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["artifact_hashes"] = {  # type: ignore[index]
+        "$ref": "#/$defs/digest_map"
+    }
+    document = _golden_manifest_document()
+    document["artifact_hashes"] = {reserved_path: "1" * 64}
+
+    with pytest.raises(ValueError, match="hash itself|reserved"):
+        provenance.validate_run_manifest_document(schema, document)
 
 
 def test_run_manifest_document_validator_checks_cross_field_semantics() -> None:

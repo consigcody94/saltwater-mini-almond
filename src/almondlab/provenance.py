@@ -49,6 +49,7 @@ JSON_INTEGER_MAX = 2**53 - 1
 SEED_SEQUENCE_POOL_SIZE = 4
 PORTABLE_COMPONENT_MAX_BYTES = 255
 PORTABLE_PATH_MAX_BYTES = 1024
+RUN_MANIFEST_FILENAME = "run_manifest.json"
 
 
 class _FilesystemLinkRefused(OSError):
@@ -63,6 +64,26 @@ class _RetainedCleanupIdentityError(OSError):
         super().__init__(
             "identity-safe cleanup retained "
             + ("its source" if retained_name is None else retained_name)
+        )
+
+
+class AtomicCleanupRetainedError(OSError):
+    """A pre-commit cleanup retained data without publishing a destination."""
+
+    committed = False
+
+    def __init__(
+        self,
+        destination: str | Path,
+        *,
+        retained_path: str | Path,
+    ) -> None:
+        self.destination = Path(destination)
+        self.retained_path = Path(retained_path)
+        self.retained_paths = (self.retained_path,)
+        super().__init__(
+            "atomic commit did not publish its destination; identity-safe "
+            f"cleanup retained data for recovery at: {self.retained_path}"
         )
 
 
@@ -224,8 +245,11 @@ def validate_run_manifest_document(schema: object, document: object) -> None:
                     f"manifest {mapping_name} keys must be portable paths"
                 )
     artifact_hashes = document["artifact_hashes"]
-    if "run_manifest.json" in artifact_hashes:
-        raise ValueError("manifest cannot hash itself as an artifact")
+    if not isinstance(artifact_hashes, Mapping):
+        raise AssertionError("unreachable")
+    _require_unreserved_artifact_mapping(
+        artifact_hashes, "manifest artifact_hashes"
+    )
     lockfile = document["lockfile"]
     if not isinstance(lockfile, Mapping):
         raise AssertionError("unreachable")
@@ -761,15 +785,19 @@ class AtomicCommitUncertainError(OSError):
         destination: str | Path,
         *,
         retained_path: str | Path | None = None,
+        retained_paths: Sequence[str | Path] = (),
     ) -> None:
         self.destination = Path(destination)
-        self.retained_path = (
-            None if retained_path is None else Path(retained_path)
-        )
+        paths = ([] if retained_path is None else [Path(retained_path)]) + [
+            Path(path) for path in retained_paths
+        ]
+        self.retained_paths = tuple(dict.fromkeys(paths))
+        self.retained_path = self.retained_paths[0] if self.retained_paths else None
         retained = (
             ""
-            if self.retained_path is None
-            else f"; retained path: {self.retained_path}"
+            if not self.retained_paths
+            else "; retained path(s): "
+            + ", ".join(str(path) for path in self.retained_paths)
         )
         super().__init__(
             "atomic commit completed but durability is uncertain: "
@@ -973,8 +1001,9 @@ class RunManifest:
                 self.artifact_hashes, "artifact_hashes", portable_paths=True
             ),
         )
-        if "run_manifest.json" in self.artifact_hashes:
-            raise ValueError("run_manifest.json cannot hash itself as an artifact")
+        _require_unreserved_artifact_mapping(
+            self.artifact_hashes, "artifact_hashes"
+        )
         object.__setattr__(
             self,
             "model_versions",
@@ -1198,12 +1227,14 @@ class RunDirectory:
             root_descriptor = _open_directory_descriptor(root, create=True)
             staging_name = f".claim-{secrets.token_hex(16)}"
             path_identity: tuple[int, int] | None = None
+            staging_created = False
             published = False
             try:
                 root_identity = _require_path_matches_descriptor(
                     root, root_descriptor, None
                 )
                 os.mkdir(staging_name, mode=0o700, dir_fd=root_descriptor)
+                staging_created = True
                 flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                 flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(
                     os, "O_CLOEXEC", 0
@@ -1235,12 +1266,40 @@ class RunDirectory:
                 finally:
                     os.close(child_descriptor)
             except BaseException:
-                if path_identity is not None:
-                    _rmdir_name_if_identity(
-                        root_descriptor,
-                        run_id if published else staging_name,
-                        path_identity,
+                if staging_created and path_identity is None:
+                    raise AtomicCleanupRetainedError(
+                        destination, retained_path=root / staging_name
                     )
+                if path_identity is not None:
+                    cleanup_name = run_id if published else staging_name
+                    try:
+                        removed = _rmdir_name_if_identity(
+                            root_descriptor,
+                            cleanup_name,
+                            path_identity,
+                        )
+                    except _RetainedCleanupIdentityError as cleanup_error:
+                        retained = root / (
+                            cleanup_name
+                            if cleanup_error.retained_name is None
+                            else cleanup_error.retained_name
+                        )
+                        if published:
+                            raise AtomicCommitUncertainError(
+                                destination, retained_path=retained
+                            ) from cleanup_error
+                        raise AtomicCleanupRetainedError(
+                            destination, retained_path=retained
+                        ) from cleanup_error
+                    if not removed:
+                        retained = root / cleanup_name
+                        if published:
+                            raise AtomicCommitUncertainError(
+                                destination, retained_path=retained
+                            )
+                        raise AtomicCleanupRetainedError(
+                            destination, retained_path=retained
+                        )
                 raise
             finally:
                 os.close(root_descriptor)
@@ -1275,7 +1334,9 @@ class RunDirectory:
             )
         except BaseException:
             _rmdir_path_if_identity(
-                destination if published else staging, path_identity
+                destination if published else staging,
+                path_identity,
+                _committed=published,
             )
             raise
 
@@ -1419,8 +1480,15 @@ def _snapshot_artifact_paths(
             raise TypeError("artifact_paths mappings require string keys")
         if not isinstance(relative_path, (str, Path)):
             raise TypeError("artifact_paths values must be strings or Paths")
+        normalized_name = _normalize_artifact_path(name)
         normalized_path = _normalize_artifact_path(relative_path)
-        if name != normalized_path:
+        _require_unreserved_artifact_path(
+            normalized_name, "artifact_paths key"
+        )
+        _require_unreserved_artifact_path(
+            normalized_path, "artifact_paths path"
+        )
+        if normalized_name != normalized_path:
             raise ValueError(
                 "artifact_paths key must equal its portable relative path"
             )
@@ -1451,6 +1519,9 @@ def finalize_manifest(
         raise TypeError("manifest must be a RunManifest")
     if not isinstance(run_directory, RunDirectory):
         raise TypeError("run_directory must be a RunDirectory")
+    _require_unreserved_artifact_mapping(
+        manifest.artifact_hashes, "manifest artifact_hashes"
+    )
     declared = _snapshot_artifact_paths(artifact_paths)
     if manifest.run_id != run_directory.run_id:
         raise ValueError("manifest run_id must match RunDirectory run_id")
@@ -1475,9 +1546,11 @@ def finalize_manifest(
     captured_artifacts: dict[str, FileProvenance] = {}
     for name, relative_path in sorted(declared.items()):
         candidate = run_directory.artifact_path(relative_path)
-        manifest_path = run_directory.artifact_path("run_manifest.json")
+        manifest_path = run_directory.artifact_path(RUN_MANIFEST_FILENAME)
         if candidate == manifest_path:
-            raise ValueError("run_manifest.json cannot hash itself as an artifact")
+            raise ValueError(
+                f"{RUN_MANIFEST_FILENAME} cannot hash itself as an artifact"
+            )
         record = capture_file_provenance(
             candidate, base_directory=run_directory.path
         )
@@ -1511,7 +1584,7 @@ def finalize_manifest(
             raise ValueError(
                 f"artifact {name} changed during manifest finalization"
             )
-    destination = run_directory.artifact_path("run_manifest.json")
+    destination = run_directory.artifact_path(RUN_MANIFEST_FILENAME)
     document = finalized.to_dict()
     schema = _load_run_manifest_schema()
     validate_run_manifest_document(schema, document)
@@ -1610,6 +1683,23 @@ def _normalize_artifact_path(relative_path: str | Path) -> str:
     if any(not _is_portable_component(part) for part in parts):
         raise ValueError("artifact path must contain only portable path components")
     return "/".join(parts)
+
+
+def _require_unreserved_artifact_path(relative_path: str, field_path: str) -> None:
+    if any(
+        component.casefold() == RUN_MANIFEST_FILENAME
+        for component in relative_path.split("/")
+    ):
+        raise ValueError(
+            f"{field_path} contains the reserved {RUN_MANIFEST_FILENAME} component"
+        )
+
+
+def _require_unreserved_artifact_mapping(
+    value: Mapping[str, object], field_path: str
+) -> None:
+    for relative_path in value:
+        _require_unreserved_artifact_path(relative_path, field_path)
 
 
 _WINDOWS_RESERVED_NAMES = {
@@ -1729,12 +1819,19 @@ def _rmdir_name_if_identity(
 
 
 def _rmdir_path_if_identity(
-    path: Path, expected_identity: tuple[int, int]
+    path: Path,
+    expected_identity: tuple[int, int],
+    *,
+    _committed: bool = True,
 ) -> None:
     if os.name == "nt":
-        _windows_delete_path_if_identity(
+        removed = _windows_delete_path_if_identity(
             path, expected_identity, is_directory=True
         )
+        if not removed:
+            if _committed:
+                raise AtomicCommitUncertainError(path, retained_path=path)
+            raise AtomicCleanupRetainedError(path, retained_path=path)
         return
     try:
         parent_descriptor = _open_directory_descriptor(path.parent)
@@ -1742,12 +1839,24 @@ def _rmdir_path_if_identity(
         return
     try:
         try:
-            _rmdir_name_if_identity(parent_descriptor, path.name, expected_identity)
+            removed = _rmdir_name_if_identity(
+                parent_descriptor, path.name, expected_identity
+            )
         except _RetainedCleanupIdentityError as error:
             retained = (
                 path if error.retained_name is None else path.parent / error.retained_name
             )
-            raise AtomicCommitUncertainError(path, retained_path=retained) from error
+            if _committed:
+                raise AtomicCommitUncertainError(
+                    path, retained_path=retained
+                ) from error
+            raise AtomicCleanupRetainedError(
+                path, retained_path=retained
+            ) from error
+        if not removed:
+            if _committed:
+                raise AtomicCommitUncertainError(path, retained_path=path)
+            raise AtomicCleanupRetainedError(path, retained_path=path)
     finally:
         os.close(parent_descriptor)
 
@@ -2927,70 +3036,125 @@ def _atomic_commit_posix(
     temporary_name = f".{target.name}.{secrets.token_hex(16)}.tmp"
     temporary_identity: tuple[int, int] | None = None
     temporary_present = False
-    try:
-        _require_path_matches_descriptor(
-            target.parent, parent_descriptor, expected_parent_identity
+    published = False
+    retained_paths: list[Path] = []
+
+    def record_retained_name(
+        original_name: str, error: _RetainedCleanupIdentityError
+    ) -> None:
+        retained_name = (
+            original_name if error.retained_name is None else error.retained_name
         )
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-        descriptor = os.open(
-            temporary_name, flags, 0o600, dir_fd=parent_descriptor
-        )
-        temporary_present = True
-        temporary_identity = _descriptor_identity(descriptor)
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        _require_path_matches_descriptor(
-            target.parent, parent_descriptor, expected_parent_identity
-        )
-        if exclusive:
-            if validator is not None:
-                validator()
-            os.link(
-                temporary_name,
-                target.name,
-                src_dir_fd=parent_descriptor,
-                dst_dir_fd=parent_descriptor,
-                follow_symlinks=False,
+        retained_paths.append(target.parent / retained_name)
+
+    def cleanup_temporary() -> bool:
+        nonlocal temporary_present
+        if not temporary_present:
+            return True
+        if temporary_identity is None:
+            retained_paths.append(target.parent / temporary_name)
+            temporary_present = False
+            return False
+        try:
+            removed = _unlink_name_if_identity(
+                parent_descriptor, temporary_name, temporary_identity
             )
-            try:
+        except _RetainedCleanupIdentityError as cleanup_error:
+            record_retained_name(temporary_name, cleanup_error)
+            temporary_present = False
+            return False
+        if not removed:
+            retained_paths.append(target.parent / temporary_name)
+        temporary_present = False
+        return removed
+
+    def cleanup_published_target() -> bool:
+        if temporary_identity is None:
+            raise AssertionError("published target lacks its committed identity")
+        try:
+            removed = _unlink_name_if_identity(
+                parent_descriptor, target.name, temporary_identity
+            )
+        except _RetainedCleanupIdentityError as cleanup_error:
+            record_retained_name(target.name, cleanup_error)
+            return False
+        if not removed:
+            retained_paths.append(target)
+        return removed
+
+    try:
+        try:
+            _require_path_matches_descriptor(
+                target.parent, parent_descriptor, expected_parent_identity
+            )
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+            descriptor = os.open(
+                temporary_name, flags, 0o600, dir_fd=parent_descriptor
+            )
+            temporary_present = True
+            temporary_identity = _descriptor_identity(descriptor)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _require_path_matches_descriptor(
+                target.parent, parent_descriptor, expected_parent_identity
+            )
+            if exclusive:
                 if validator is not None:
                     validator()
-            except BaseException as error:
-                if _unlink_name_if_identity(
-                    parent_descriptor, target.name, temporary_identity
-                ):
-                    raise
-                raise AtomicCommitUncertainError(
-                    target, retained_path=target
-                ) from error
-            if committed_identity is not None:
-                committed_identity.append(temporary_identity)
-            if not _unlink_name_if_identity(
-                parent_descriptor, temporary_name, temporary_identity
-            ):
-                raise AtomicCommitUncertainError(
-                    target, retained_path=target.parent / temporary_name
+                os.link(
+                    temporary_name,
+                    target.name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                    follow_symlinks=False,
                 )
-        else:
-            os.replace(
-                temporary_name,
-                target.name,
-                src_dir_fd=parent_descriptor,
-                dst_dir_fd=parent_descriptor,
-            )
-        temporary_present = False
-        try:
-            _fsync_directory(target.parent, expected_parent_identity)
-        except BaseException as error:
-            raise AtomicCommitUncertainError(target) from error
+                published = True
+                try:
+                    if validator is not None:
+                        validator()
+                except BaseException:
+                    cleanup_published_target()
+                    raise
+                if committed_identity is not None:
+                    committed_identity.append(temporary_identity)
+                if not cleanup_temporary():
+                    raise AtomicCommitUncertainError(
+                        target, retained_paths=retained_paths
+                    )
+            else:
+                os.replace(
+                    temporary_name,
+                    target.name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                )
+                published = True
+                temporary_present = False
+            try:
+                _fsync_directory(target.parent, expected_parent_identity)
+            except BaseException as error:
+                raise AtomicCommitUncertainError(target) from error
+        except BaseException as operation_error:
+            cleanup_temporary()
+            if retained_paths:
+                if published:
+                    existing = (
+                        operation_error.retained_paths
+                        if isinstance(operation_error, AtomicCommitUncertainError)
+                        else ()
+                    )
+                    raise AtomicCommitUncertainError(
+                        target,
+                        retained_paths=(*existing, *retained_paths),
+                    ) from operation_error
+                raise AtomicCleanupRetainedError(
+                    target, retained_path=retained_paths[0]
+                ) from operation_error
+            raise
     finally:
-        if temporary_present and temporary_identity is not None:
-            _unlink_name_if_identity(
-                parent_descriptor, temporary_name, temporary_identity
-            )
         os.close(parent_descriptor)
     return target
 
@@ -3015,14 +3179,17 @@ def _remove_name_via_private_quarantine(
     *,
     is_directory: bool,
 ) -> bool:
-    """Remove only a held POSIX identity via an unguessable quarantine name.
+    """Quarantine a held POSIX identity without a later pathname deletion.
 
     A pathname can be replaced after ``open``/``fstat`` and before a subsequent
     ``unlink`` or ``rmdir``.  Move the current name atomically, without
     replacement, to a private random name while the expected handle remains
-    open.  The quarantined name is opened and matched to that handle before it
-    is removed.  Any mismatch or unavailable native no-replace primitive leaves
-    the source/quarantine in place rather than deleting an unverified object.
+    open.  The quarantined name is opened and matched to that handle, then is
+    deliberately retained because Python exposes no portable POSIX primitive
+    that deletes the held object rather than whichever object a pathname names
+    later.  Any mismatch or unavailable native no-replace primitive likewise
+    leaves the source/quarantine in place.  Callers must report the retained
+    recovery path and whether destination publication had already occurred.
     """
 
     if os.name == "nt":
@@ -3079,14 +3246,7 @@ def _remove_name_via_private_quarantine(
                 or not quarantine_kind
             ):
                 raise _RetainedCleanupIdentityError(quarantine_name)
-            try:
-                if is_directory:
-                    os.rmdir(quarantine_name, dir_fd=parent_descriptor)
-                else:
-                    os.unlink(quarantine_name, dir_fd=parent_descriptor)
-            except OSError as error:
-                raise _RetainedCleanupIdentityError(quarantine_name) from error
-            return True
+            raise _RetainedCleanupIdentityError(quarantine_name)
         finally:
             os.close(quarantine_descriptor)
     finally:

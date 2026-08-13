@@ -43,10 +43,18 @@ checks, POSIX cleanup pathname replacement between identity checking and
 deletion, Draft 2020-12 integral-float type semantics, an unbounded NumPy seed
 pool allocation, and filesystem components exceeding portable UTF-8 limits.
 
-The final focused suite contains 137 tests. Boundary tests reject boolean or
-string numeric coercion, nonfinite numbers, non-string keys, path traversal,
-links/reparse points, collisions, inconsistent seed trees, unavailable-state
-inventions, hash corruption, and unsafe finalization.
+The last narrow rereview then reproduced two remaining boundaries before
+repair: replacement of a verified POSIX quarantine name after its handle
+`fstat` but before pathname deletion, and case variants of the reserved
+`run_manifest.json` name in model, snapshot/finalize, document-validator, and
+schema paths. File and directory race regressions fail if a pathname delete is
+attempted after verification.
+
+The final focused suite has 169 passing cases on this Windows host. Boundary
+tests reject boolean or string numeric coercion, nonfinite numbers, non-string
+keys, path traversal, links/reparse points, collisions, inconsistent seed
+trees, unavailable-state inventions, hash corruption, unsafe finalization,
+and every case-insensitive reserved-manifest artifact component.
 
 ## Implemented boundaries
 
@@ -81,8 +89,9 @@ inventions, hash corruption, and unsafe finalization.
   reparse-swap limitation is explicitly exposed by
   `FILESYSTEM_CONFINEMENT_LIMITATION` and tested.
 - Atomic replacement flushes file bytes and, where supported, directory
-  metadata. Replace failures preserve an existing destination and all temporary
-  files are cleaned. Failures after the destination commit raise
+  metadata. Replace failures preserve an existing destination. Cleanup prefers
+  retaining recoverable bytes to deleting an object through a name that could
+  have been replaced. Failures after destination publication raise
   `AtomicCommitUncertainError` with `committed = True`.
 - `RunDirectory` immutably records `creation_root_seed` and
   `creation_config_sha256`; finalization requires the manifest's root seed and
@@ -99,13 +108,28 @@ inventions, hash corruption, and unsafe finalization.
   duplicate items, and case-insensitive portable collisions fail before any
   hashing. Every later capture, held-handle check, and publication step uses
   only that snapshot, so caller mutation cannot remove a check.
+- `run_manifest.json` is reserved as an artifact component by ASCII-portable
+  casefold on every platform. `RunManifest`, the one-shot artifact snapshot,
+  finalization rechecks, the semantic document validator, and the artifact-only
+  JSON Schema reject `RUN_MANIFEST.JSON`, mixed-case variants, and the same
+  component nested within a path. Config/input provenance paths are not
+  over-restricted by the artifact-only schema rule.
 - Windows file/directory cleanup uses delete-by-handle after identity matching;
   POSIX cleanup atomically renames the current descriptor-relative name, with
   no replacement, to an unguessable same-parent quarantine while the original
-  handle remains open; it then opens and matches the quarantine handle before
-  deletion. A mismatch never deletes the replacement. If no native no-replace
-  primitive exists or quarantine deletion cannot be established, the source
-  or quarantine is retained and the retained path is reported as uncertain.
+  handle remains open. It opens and matches the quarantine handle, but performs
+  no later `unlink` or `rmdir` by name because that name can be replaced after
+  `fstat`. The verified quarantine is therefore retained deliberately; a
+  mismatch likewise never deletes the replacement.
+- Cleanup phase is explicit. Before publication, retained staging/temp data
+  raises `AtomicCleanupRetainedError` with `committed = False`. After any target
+  publication, retention or identity ambiguity raises
+  `AtomicCommitUncertainError` with `committed = True`. Both expose exact
+  recovery locations; post-commit errors expose all locations through
+  `retained_paths` and the first through `retained_path`. Recovery must stop
+  concurrent writers, preserve and independently inspect the reported paths,
+  reconcile the destination according to `committed`, and only then remove
+  retained names through an operator-controlled offline procedure.
 - Canonical JSON and every manifest number use the finite interoperable
   magnitude `[-(2^53-1), 2^53-1]`; integers and floats outside it are rejected
   before hashing. The dependency-free validator matches Draft 2020-12's
@@ -137,44 +161,55 @@ canonical_science_hash a996babe2890e75893eb1d51cc5499acd3d7cd4eaad4e214a10688bf7
 manifest_hash          b235d72389fa7ef81433b11de1657ead4803907aba44f674caca0df2db121a78
 ```
 
-## Final verification after exact-base repair
+## Final verification after narrow rereview repair
 
-Focused Task 1 suite after the final cleanup hardening:
+Focused Task 1 suite, with the cache plugin disabled to avoid the workspace's
+pre-existing `.pytest_cache` permission warning:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_provenance.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_provenance.py -q -p no:cacheprovider
 ```
 
 ```text
-150 passed, 3 skipped, 1 warning in 10.04s
+169 passed, 3 skipped in 10.18s
 ```
 
-The three skips are the deterministic POSIX file-replacement,
-directory-replacement, and retained-quarantine cleanup tests on this Windows
-host. They are platform-gated rather than claimed as executed here. The Windows
-delete-by-handle race tests executed and passed. WSL and Docker are unavailable
-in this environment; the POSIX implementation was source-audited against the
-descriptor-relative quarantine design above, but still awaits independent
-execution on a POSIX host.
+The three skips are real-filesystem POSIX integration cases for replacement
+immediately before quarantine rename and verified-quarantine retention. They
+are platform-gated and are not claimed as executed on this Windows host. The
+new file and directory post-`fstat`/pre-delete regressions execute on Windows
+through deterministic syscall emulation and passed; they assert that neither
+pathname `unlink` nor `rmdir` is invoked. Phase-aware retained cleanup for both
+files and run directories also executed through the real state machines with
+controlled syscall boundaries. WSL, Docker, and another POSIX runtime are not
+available here, so the three integration cases remain explicitly scheduled for
+the fresh independent POSIX rereview.
 
-Complete full repository suite on the final owned implementation plus the
-then-current concurrent biology state:
+The combined repository suite was also run against the then-current concurrent
+registry worktree:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 ```
 
 ```text
-912 passed, 3 skipped, 1 warning in 114.28s
+938 passed, 25 failed, 3 skipped in 116.58s
 ```
 
-Dependency-free Draft 2020-12 schema check and optional external gate:
+All 25 failures were in `tests/test_registries.py` against concurrent uncommitted
+registry inputs: placeholder audited hashes, an unresolved candidate identity,
+and stale public PyAPX absence prose. The provenance suite remained green in
+the same tree. This is not reported as a stable full-suite pass; a fresh full
+run is required after the registry repair is committed.
+
+Dependency-free Draft 2020-12 schema coverage is included in the focused suite.
+The optional external gate remains unavailable:
 
 ```text
 dependency-free Draft 2020-12 subset: PASS
 optional external jsonschema gate: NOT INSTALLED (not a locked dependency)
 ```
 
-Python bytecode compilation passed for both implementation and tests. The only
-pytest warning was a pre-existing environment permission warning while writing
-`.pytest_cache`; test execution and temporary test directories were unaffected.
+Python bytecode compilation and owned-file diff checks passed after the narrow
+repair. No biological model, evidence registry, candidate registry, or core
+contract file is part of this Task 1 change.
