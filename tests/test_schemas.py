@@ -35,13 +35,31 @@ def domain_payload() -> dict[str, object]:
     return {
         "model_id": "core_v1",
         "version": "1.0.0",
-        "permitted_label": EvidenceLabel.PHYSICS_CONSTRAINED,
+        "permitted_evidence_label": EvidenceLabel.PHYSICS_CONSTRAINED,
         "ec_ds_m_min": 0.7,
         "ec_ds_m_max": 15.0,
         "osmolality_min": 0.02,
         "osmolality_max": 0.30,
         "temperature_k_min": 291.15,
         "temperature_k_max": 303.15,
+        "required_chemistry_fields": [
+            {
+                "field_name": "ec_ds_m",
+                "observation_kind": "measured",
+                "ec_kind": "ECw",
+            },
+            {"field_name": "ph", "observation_kind": "measured"},
+            {
+                "field_name": "measured_osmolality_osmol_kg",
+                "observation_kind": "measured",
+            },
+            {
+                "field_name": "alkalinity_mmol_c_l",
+                "observation_kind": "measured",
+            },
+            {"field_name": "temperature_k", "observation_kind": "measured"},
+            {"field_name": "sar", "observation_kind": "computed"},
+        ],
         "required_analytes": [
             "na",
             "cl",
@@ -56,7 +74,7 @@ def domain_payload() -> dict[str, object]:
         ],
         "allowed_chassis": ["Vairo"],
         "allowed_life_stages": ["juvenile"],
-        "calibration_datasets": {},
+        "calibration_datasets": [],
         "extrapolation_policy": "deny",
     }
 
@@ -72,6 +90,30 @@ def test_water_rejects_nonfinite_values() -> None:
 
     with pytest.raises(ValidationError):
         WaterChemistry(**payload)
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [True, False, "6.0", math.inf, -math.inf, pytest.param(10**10000, id="overflow")],
+)
+def test_water_rejects_non_real_or_nonfinite_numeric_inputs(bad_value: object) -> None:
+    payload = chemistry_payload()
+    payload["ec_ds_m"] = bad_value
+
+    with pytest.raises(ValidationError) as exc_info:
+        WaterChemistry(**payload)
+
+    assert exc_info.value.errors()[0]["loc"] == ("ec_ds_m",)
+
+
+def test_water_normalizes_ordinary_yaml_integer_literals_to_finite_float() -> None:
+    payload = chemistry_payload()
+    payload["ec_ds_m"] = 6
+
+    water = WaterChemistry(**payload)
+
+    assert water.ec_ds_m == 6.0
+    assert isinstance(water.ec_ds_m, float)
 
 
 def test_water_rejects_negative_solute_stock() -> None:
@@ -126,6 +168,16 @@ def test_domain_bounds_are_ordered() -> None:
         ModelDomain(**payload)
 
 
+def test_domain_requires_explicit_chemistry_field_policy() -> None:
+    payload = domain_payload()
+    payload.pop("required_chemistry_fields")
+
+    with pytest.raises(ValidationError) as exc_info:
+        ModelDomain(**payload)
+
+    assert exc_info.value.errors()[0]["loc"] == ("required_chemistry_fields",)
+
+
 @pytest.mark.parametrize(
     "field_name",
     [
@@ -147,9 +199,25 @@ def test_domain_rejects_negative_physical_bounds(field_name: str) -> None:
     assert any(error["loc"] == (field_name,) for error in exc_info.value.errors())
 
 
+@pytest.mark.parametrize(
+    "bad_value",
+    [True, "0.7", math.nan, math.inf, pytest.param(10**10000, id="overflow")],
+)
+def test_domain_rejects_coercive_or_nonfinite_bounds(bad_value: object) -> None:
+    payload = domain_payload()
+    payload["ec_ds_m_min"] = bad_value
+
+    with pytest.raises(ValidationError) as exc_info:
+        ModelDomain(**payload)
+
+    assert exc_info.value.errors()[0]["loc"] == ("ec_ds_m_min",)
+
+
 def test_domain_rejects_malformed_dataset_hash() -> None:
     payload = domain_payload()
-    payload["calibration_datasets"] = {"dataset_1": "not-a-sha256"}
+    payload["calibration_datasets"] = [
+        {"provenance_id": "dataset_1", "sha256": "not-a-sha256"}
+    ]
 
     with pytest.raises(ValidationError):
         ModelDomain(**payload)
@@ -157,7 +225,7 @@ def test_domain_rejects_malformed_dataset_hash() -> None:
 
 def test_empirical_domain_requires_calibration_data() -> None:
     payload = domain_payload()
-    payload["permitted_label"] = EvidenceLabel.EMPIRICALLY_CALIBRATED
+    payload["permitted_evidence_label"] = EvidenceLabel.EMPIRICALLY_CALIBRATED
 
     with pytest.raises(ValidationError):
         ModelDomain(**payload)
@@ -176,7 +244,7 @@ def test_only_conservation_core_allows_empty_calibration_data(
 ) -> None:
     payload = domain_payload()
     payload["model_id"] = model_id
-    payload["permitted_label"] = label
+    payload["permitted_evidence_label"] = label
 
     with pytest.raises(ValidationError) as exc_info:
         ModelDomain(**payload)
@@ -193,7 +261,15 @@ def test_core_domain_yaml_loads_with_exact_scope() -> None:
     assert (domain.ec_ds_m_min, domain.ec_ds_m_max) == (0.7, 15.0)
     assert (domain.osmolality_min, domain.osmolality_max) == (0.02, 0.30)
     assert (domain.temperature_k_min, domain.temperature_k_max) == (291.15, 303.15)
-    assert domain.permitted_label is EvidenceLabel.PHYSICS_CONSTRAINED
+    assert domain.permitted_evidence_label is EvidenceLabel.PHYSICS_CONSTRAINED
+    assert tuple(field.field_name for field in domain.required_chemistry_fields) == (
+        "ec_ds_m",
+        "ph",
+        "measured_osmolality_osmol_kg",
+        "alkalinity_mmol_c_l",
+        "temperature_k",
+        "sar",
+    )
     assert domain.required_analytes == (
         "na",
         "cl",
@@ -208,8 +284,9 @@ def test_core_domain_yaml_loads_with_exact_scope() -> None:
     )
     assert domain.allowed_chassis == ("Vairo",)
     assert domain.allowed_life_stages == ("juvenile",)
-    assert domain.calibration_datasets == {}
+    assert domain.calibration_datasets == ()
     assert domain.extrapolation_policy == "deny"
+    assert hash(domain)
 
 
 def test_canonical_quantity_converts_to_requested_unit() -> None:

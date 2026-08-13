@@ -23,7 +23,7 @@ from almondlab.chemistry import (
 )
 from almondlab.contracts import ConservedEntity, DataOrigin, ECKind, EvidenceLabel
 from almondlab.errors import AlmondLabError
-from almondlab.hydraulics import HydraulicInputs, hydraulic_uptake
+from almondlab.hydraulics import HydraulicDomain, HydraulicInputs, hydraulic_uptake
 from almondlab.mass_balance import (
     BalanceAudit,
     ExternalFlux,
@@ -1178,36 +1178,73 @@ def _acceptance_05() -> VerificationRecord:
 def _acceptance_13() -> VerificationRecord:
     fixture, digest = _fixture("perfect_na_exclusion.yaml")
     tolerance = load_verification_policy().tolerances[13]["absolute"]
+    domain = HydraulicDomain(**fixture["hydraulic_domain"])  # type: ignore[arg-type]
     common = {
         key: value
         for key, value in fixture.items()
-        if key not in {"fresh_osmolality_osmol_kg", "saline_osmolality_osmol_kg"}
+        if key
+        not in {
+            "fresh_osmolality_osmol_kg",
+            "saline_osmolality_osmol_kg",
+            "hydraulic_domain",
+        }
     }
     fresh = hydraulic_uptake(
         HydraulicInputs(
             osmolality_osmol_kg=float(fixture["fresh_osmolality_osmol_kg"]),
             **common,
-        )
+        ),
+        domain=domain,
     )
     saline = hydraulic_uptake(
         HydraulicInputs(
             osmolality_osmol_kg=float(fixture["saline_osmolality_osmol_kg"]),
             **common,
-        )
+        ),
+        domain=domain,
     )
+    domain_policy = {
+        "model_id": domain.model_id,
+        "version": domain.version,
+        "purpose": domain.purpose,
+        "scope": "numerical_oracle_not_almond_applicability",
+        "sha256": domain.sha256,
+    }
     observed = {
         "fresh_l_day": fresh.actual_l_day,
         "saline_l_day": saline.actual_l_day,
         "ratio": saline.actual_l_day / fresh.actual_l_day,
+        "domain_policy": domain_policy,
     }
-    oracle = {"fresh_l_day": 0.888212, "saline_l_day": 0.455696, "ratio": 0.513049}
+    oracle = {
+        "fresh_l_day": 0.888212,
+        "saline_l_day": 0.455696,
+        "ratio": 0.513049,
+        "domain_policy": domain_policy,
+    }
+    tolerances = {
+        "fresh_l_day": tolerance,
+        "saline_l_day": tolerance,
+        "ratio": tolerance,
+        "domain_policy": _tree_constant(domain_policy, 0.0),
+    }
+    comparison = {
+        "fresh_l_day": "abs_le",
+        "saline_l_day": "abs_le",
+        "ratio": "abs_le",
+        "domain_policy": _tree_constant(domain_policy, "eq"),
+    }
     return _record(
         13,
         digest,
         observed,
         oracle,
-        tolerance,
-        fixture_sha256s={"perfect_na_exclusion.yaml": digest},
+        tolerances,
+        comparison=comparison,
+        fixture_sha256s={
+            "perfect_na_exclusion.yaml": digest,
+            "perfect_na_exclusion.hydraulic_domain": domain.sha256,
+        },
     )
 
 

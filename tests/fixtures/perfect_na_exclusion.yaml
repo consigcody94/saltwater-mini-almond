@@ -6,5 +6,16 @@ adjustment_mpa: 0.0
 root_conductance_l_day_mpa: 0.50
 potential_transpiration_l_day: 1.00
 specific_ion_factor: 1.00
+evidence_label: physics_constrained
+hydraulic_domain:
+  model_id: core_v1.acceptance_13
+  version: 1.0.0
+  purpose: analytic_verification
+  osmolality_min: 0.05
+  osmolality_max: 0.40
+  temperature_k_min: 298.15
+  temperature_k_max: 298.15
+  permitted_label: physics_constrained
+  extrapolation_policy: deny
 fresh_osmolality_osmol_kg: 0.05
 saline_osmolality_osmol_kg: 0.40

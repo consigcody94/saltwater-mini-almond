@@ -38,13 +38,33 @@ def test_core_acceptance_writes_only_owned_records_to_run_directory(tmp_path: Pa
     ]
     payload = json.loads((artifact_directory / "test_13.json").read_text())
     assert payload["fixture_sha256"] == hashlib.sha256(fixture.read_bytes()).hexdigest()
-    assert payload["observed_value"] == pytest.approx(
+    assert {
+        key: payload["observed_value"][key]
+        for key in ("fresh_l_day", "saline_l_day", "ratio")
+    } == pytest.approx(
         {"fresh_l_day": 0.888212, "saline_l_day": 0.455696, "ratio": 0.513049}
     )
-    assert payload["oracle"] == pytest.approx(
+    assert {
+        key: payload["oracle"][key]
+        for key in ("fresh_l_day", "saline_l_day", "ratio")
+    } == pytest.approx(
         {"fresh_l_day": 0.888212, "saline_l_day": 0.455696, "ratio": 0.513049}
     )
-    assert payload["tolerance"] == pytest.approx(1e-6)
+    assert payload["observed_value"]["domain_policy"] == payload["oracle"]["domain_policy"]
+    assert payload["observed_value"]["domain_policy"]["model_id"] == "core_v1.acceptance_13"
+    assert payload["observed_value"]["domain_policy"]["scope"] == (
+        "numerical_oracle_not_almond_applicability"
+    )
+    assert len(payload["observed_value"]["domain_policy"]["sha256"]) == 64
+    assert payload["fixture_sha256s"]["perfect_na_exclusion.hydraulic_domain"] == (
+        payload["observed_value"]["domain_policy"]["sha256"]
+    )
+    assert {
+        key: payload["tolerance"][key]
+        for key in ("fresh_l_day", "saline_l_day", "ratio")
+    } == pytest.approx(
+        {"fresh_l_day": 1e-6, "saline_l_day": 1e-6, "ratio": 1e-6}
+    )
 
     ec_payload = json.loads((artifact_directory / "test_19.json").read_text())
     assert ec_payload["observed_value"]["records_reached_analysis"] == 0
