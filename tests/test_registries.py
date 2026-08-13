@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -742,6 +743,50 @@ def test_public_evidence_surfaces_do_not_repeat_false_pyapx_absence_claims() -> 
     for accession in ("AY282755.1", "DQ146477.2", "MT473962.1"):
         assert accession.lower() in combined
     assert "not construct-ready" in combined
+
+
+def test_public_snapshot_sidecars_hash_current_files_and_describe_mixed_history(
+) -> None:
+    public_readme = (REPO / "data" / "public" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    normalized = " ".join(public_readme.split())
+
+    assert "mixed repository snapshot" in normalized
+    assert "per-file content hashes, not a single commit identity" in normalized
+    assert "byte-identical to downloader integration commit `0c61054`" in normalized
+    assert "byte-identical to accession-extension commit `f739404`" in normalized
+    assert (
+        "acquisition code at downloader integration commit `0c61054`"
+        not in normalized
+    )
+    assert (
+        "documentation at the accession-extension review committed as `f739404`"
+        not in normalized
+    )
+
+    snapshots = (
+        (REPO / "data" / "public" / "local_snapshot.sha256", REPO),
+        (
+            REPO / "scripts" / "public_data" / "phase2" / "local_snapshot.sha256",
+            REPO / "scripts" / "public_data" / "phase2",
+        ),
+    )
+    checked = 0
+    for sidecar, base in snapshots:
+        for line in sidecar.read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith("#"):
+                continue
+            digest, separator, relative_path = line.partition("  ")
+            assert separator == "  ", f"malformed snapshot line in {sidecar}: {line}"
+            assert len(digest) == 64 and all(
+                character in "0123456789abcdef" for character in digest
+            )
+            actual = hashlib.sha256((base / relative_path).read_bytes()).hexdigest()
+            assert actual == digest
+            checked += 1
+
+    assert checked == 13
 
 
 def test_registry_loads_are_defensive_against_caller_mutation() -> None:

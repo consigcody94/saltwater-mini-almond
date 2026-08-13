@@ -1,4 +1,6 @@
-# Locally calculated review snapshot; no remote checksums are represented here.
+# Mixed repository snapshot; each line hashes the current bytes of its named
+# file. Entries may have different Git histories; no commit identity or remote
+# checksum is encoded here.
 2ea33fc803fa914b4922a78d67190fe4dcb4a327ff3992f1025febba1811497b  Acquire-Phase2PublicData.ps1
 e84078f82a3edcbe0c61334aae91d9272cf3722778f0fdd817c73427acaf3769  Phase2PublicData.psm1
 1a701f83ef875b80f9a3cfbcd77834a844360afb71290999184099f0d9a28ced  Test-Phase2PublicData.ps1

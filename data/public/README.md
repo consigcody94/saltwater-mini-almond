@@ -75,14 +75,18 @@ identifier crosswalk or sequence claim is made. Phase 2 does not request SRA,
 ENA, FASTQ, FQ, BAM, CRAM, or any other raw-read payload; the repository still
 has no RNA-seq downloader.
 
-`local_snapshot.sha256` freezes locally calculated hashes for the audited
-manifest, audit, evidence seed, and acquisition code at downloader integration
-commit `0c61054`; it is a historical snapshot rather than an automatically
-updated current-tree manifest. These are repository snapshot hashes, not
-publisher, NCBI, ENA, or other remote checksums.
-The independent `scripts/public_data/phase2/local_snapshot.sha256` freezes the
-Phase 2 acquisition module, entry point, offline tests, and documentation at
-the accession-extension review committed as `f739404`.
+The two `local_snapshot.sha256` files are mixed repository snapshots, not
+whole-tree or single-commit manifests. The public-data sidecar hashes the
+current reviewed manifest, audit, evidence seed, and this README; its five
+unchanged acquisition implementation/documentation entries are byte-identical
+to downloader integration commit `0c61054`. The independent
+`scripts/public_data/phase2/local_snapshot.sha256` hashes the current reviewed
+Phase 2 README; its three unchanged module, entry-point, and offline-test
+entries are byte-identical to accession-extension commit `f739404`. Each
+sidecar records per-file content hashes, not a single commit identity. The Git
+commit references in this explanation describe independently verified file
+history; they are not encoded by the SHA-256 sidecar lines. These are local
+repository hashes, not publisher, NCBI, ENA, or other remote checksums.
 
 ## Completed Phase 2 small snapshot
 
