@@ -1474,7 +1474,7 @@ def plant_fluxes(
     )
     atp_fraction = (
         1.0
-        if efflux_demand == 0.0
+        if atp_demand_amount == 0.0
         else min(
             1.0,
             _ratio(
@@ -2105,6 +2105,66 @@ def _substep_partition(
             )
 
 
+def _registered_target_time(
+    start_time_hours: float,
+    duration_hours: float,
+) -> float:
+    target = _sum(
+        (start_time_hours, duration_hours),
+        "forcing.duration_hours",
+    )
+    if target <= start_time_hours:
+        fail(
+            _NUMERIC_CODE,
+            "positive biology duration must produce a greater finite target time",
+            "forcing.duration_hours",
+            {
+                "start_time_hours": start_time_hours,
+                "duration_hours": duration_hours,
+                "target_time_hours": target,
+            },
+        )
+    return target
+
+
+def _time_targets(
+    start_time_hours: float,
+    final_target: float,
+    durations: tuple[float, ...],
+) -> tuple[float, ...]:
+    """Prevalidate every representable public time before interval evolution."""
+
+    targets: list[float] = []
+    previous = start_time_hours
+    for index in range(len(durations)):
+        if index == len(durations) - 1:
+            target = final_target
+        else:
+            elapsed = _product(
+                float(index + 1),
+                durations[0],
+                field_path="forcing.duration_hours.partition_elapsed",
+            )
+            target = _sum(
+                (start_time_hours, elapsed),
+                "forcing.duration_hours.partition_target_time",
+            )
+        if target <= previous:
+            fail(
+                _NUMERIC_CODE,
+                "each biology substep must produce a greater finite public time",
+                "forcing.duration_hours",
+                {
+                    "substep_index": index,
+                    "previous_time_hours": previous,
+                    "target_time_hours": target,
+                },
+            )
+        targets.append(target)
+        previous = target
+    return tuple(targets)
+
+
 def advance_plant(
     state: PlantState,
     parameters: BiologyParameters,
@@ -2119,6 +2179,19 @@ def advance_plant(
     external = _canonical_forcing(forcing)
     if not isinstance(cursor, LedgerCursor):
         fail("LEDGER_CURSOR_REQUIRED", "cursor must be LedgerCursor", "cursor")
+    interval_start_time = current.time_hours
+    final_target_time = _registered_target_time(
+        interval_start_time,
+        external.duration_hours,
+    )
+    durations = _substep_partition(
+        external.duration_hours, params.integrator_max_step_hours
+    )
+    target_times = _time_targets(
+        interval_start_time,
+        final_target_time,
+        durations,
+    )
     states = [current]
     diagnostics: list[BiologyStepDiagnostics] = []
     ledger: list[LedgerEntry] = []
@@ -2127,10 +2200,6 @@ def advance_plant(
     expected_transactions: list[LedgerTransactionExpectation] = []
     audits: list[BalanceAudit] = []
     next_cursor = cursor
-    interval_start_time = current.time_hours
-    durations = _substep_partition(
-        external.duration_hours, params.integrator_max_step_hours
-    )
     substeps = len(durations)
     for index, duration in enumerate(durations):
         subforcing = replace(external, duration_hours=duration)
@@ -2198,19 +2267,7 @@ def advance_plant(
                 evidence_label=label,
             )
             diagnostic = _dead_diagnostic(current, duration, fluxes, label)
-        target_elapsed = (
-            external.duration_hours
-            if index == substeps - 1
-            else _product(
-                float(index + 1),
-                durations[0],
-                field_path="forcing.duration_hours.partition_elapsed",
-            )
-        )
-        target_time = _sum(
-            (interval_start_time, target_elapsed),
-            "time_hours",
-        )
+        target_time = target_times[index]
         died_this_step = current.alive and not updated.alive
         updated = replace(
             updated,
@@ -2349,17 +2406,64 @@ def _run_forcings(
     return current, tuple(states), tuple(intervals), tuple(ledger), next_cursor, substeps
 
 
-def _state_coordinates(state: PlantState) -> tuple[float, ...]:
+def _state_coordinates(state: PlantState) -> tuple[tuple[str, float], ...]:
     return (
-        state.biomass_g,
-        state.canopy_area_cm2,
-        state.ros_dimensionless,
-        state.injury_dimensionless,
-        state.mannitol_mmol,
-        state.allocatable_energy_atp_eq,
-        state.injury_exposure_hours,
-        *state.network_state.all_values(),
+        ("time_hours", state.time_hours),
+        ("biomass_g", state.biomass_g),
+        ("canopy_area_cm2", state.canopy_area_cm2),
+        ("ros_dimensionless", state.ros_dimensionless),
+        ("injury_dimensionless", state.injury_dimensionless),
+        ("mannitol_mmol", state.mannitol_mmol),
+        ("allocatable_energy_atp_eq", state.allocatable_energy_atp_eq),
+        ("apx_expression_fraction", state.apx_expression_fraction),
+        ("cipk_expression_fraction", state.cipk_expression_fraction),
+        ("injury_exposure_hours", state.injury_exposure_hours),
+        *(
+            (f"network_state.{index}", value)
+            for index, value in enumerate(state.network_state.all_values())
+        ),
     )
+
+
+def _coordinate_comparison(
+    name: str,
+    coarse_value: float,
+    fine_value: float,
+    absolute_tolerance: float,
+    relative_tolerance: float,
+) -> tuple[float, float, bool]:
+    field_path = f"step_halving.coordinates.{name}"
+    difference = abs(
+        _sum((coarse_value, -fine_value), f"{field_path}.difference")
+    )
+    scale = _result(
+        max(abs(coarse_value), abs(fine_value)),
+        f"{field_path}.scale",
+    )
+    # When both coordinates are exactly zero, their difference is also zero;
+    # this coordinate uses the registered absolute tolerance only.
+    scaled_difference = (
+        0.0
+        if scale == 0.0
+        else _ratio(difference, scale, f"{field_path}.scaled_difference")
+    )
+    relative_component = _product(
+        relative_tolerance,
+        scale,
+        field_path=f"{field_path}.tolerance.relative_component",
+    )
+    tolerance = _sum(
+        (absolute_tolerance, relative_component),
+        f"{field_path}.tolerance",
+    )
+    return difference, scaled_difference, difference <= tolerance
+
+
+def _death_adjudication_time(states: tuple[PlantState, ...]) -> float | None:
+    for before, after in zip(states, states[1:]):
+        if before.alive and not after.alive:
+            return after.death_time_hours
+    return states[0].death_time_hours if not states[0].alive else None
 
 
 def simulate_plant(
@@ -2388,25 +2492,52 @@ def simulate_plant(
     fine_state = fine[0]
     coarse_values = _state_coordinates(coarse_state)
     fine_values = _state_coordinates(fine_state)
-    differences = tuple(
-        abs(left - right) for left, right in zip(coarse_values, fine_values)
-    )
-    scaled = tuple(
-        difference / max(abs(left), abs(right), 1e-30)
-        for difference, left, right in zip(differences, coarse_values, fine_values)
-    )
-    maximum_absolute = max(differences, default=0.0)
-    maximum_scaled = max(scaled, default=0.0)
-    converged = (
-        coarse_state.alive is fine_state.alive
-        and all(
-            difference
-            <= params.step_halving_absolute_tolerance
-            + params.step_halving_relative_tolerance * max(abs(left), abs(right))
-            for difference, left, right in zip(
-                differences, coarse_values, fine_values
+    if len(coarse_values) != len(fine_values):
+        fail(
+            _STATE_CODE,
+            "coarse and fine convergence coordinates must have identical lengths",
+            "convergence",
+        )
+    comparison_items: list[tuple[float, float, bool]] = []
+    for (coarse_name, coarse_value), (fine_name, fine_value) in zip(
+        coarse_values, fine_values
+    ):
+        if coarse_name != fine_name:
+            fail(
+                _STATE_CODE,
+                "coarse and fine convergence coordinates must have identical names",
+                "convergence",
+            )
+        comparison_items.append(
+            _coordinate_comparison(
+                coarse_name,
+                coarse_value,
+                fine_value,
+                params.step_halving_absolute_tolerance,
+                params.step_halving_relative_tolerance,
             )
         )
+    comparisons = tuple(comparison_items)
+    differences = tuple(item[0] for item in comparisons)
+    scaled = tuple(item[1] for item in comparisons)
+    maximum_absolute = max(differences, default=0.0)
+    maximum_scaled = max(scaled, default=0.0)
+    coarse_death_time = _death_adjudication_time(coarse[1])
+    fine_death_time = _death_adjudication_time(fine[1])
+    death_types_match = type(coarse_death_time) is type(fine_death_time)
+    # No death-time tolerance is registered, so the trajectories must record
+    # the same exact adjudication boundary as well as the same final status.
+    death_times_match = death_types_match and coarse_death_time == fine_death_time
+    alive_semantics_match = (
+        type(coarse_state.alive) is type(fine_state.alive)
+        and coarse_state.alive is fine_state.alive
+        and type(coarse_state.death_time_hours) is type(fine_state.death_time_hours)
+        and coarse_state.death_time_hours == fine_state.death_time_hours
+        and death_times_match
+    )
+    converged = (
+        alive_semantics_match
+        and all(item[2] for item in comparisons)
     )
     convergence = StepHalvingConvergence(
         converged=converged,
@@ -2425,6 +2556,10 @@ def simulate_plant(
             {
                 "maximum_absolute_difference": maximum_absolute,
                 "maximum_scaled_difference": maximum_scaled,
+                "coarse_alive": coarse_state.alive,
+                "fine_alive": fine_state.alive,
+                "coarse_death_time_hours": coarse_death_time,
+                "fine_death_time_hours": fine_death_time,
             },
         )
     label = compose_evidence_labels(

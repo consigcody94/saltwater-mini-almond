@@ -764,6 +764,29 @@ def test_advance_plant_partitions_float_durations_without_tail_loss(
     assert result.next_cursor.next_ordinal == 19 * expected_substeps
 
 
+def test_advance_plant_rejects_unrepresentable_time_progress_before_flux_work() -> None:
+    """Catches a positive interval that cannot advance binary64 public time."""
+    before = _state(time_hours=1e308)
+    cursor = _cursor()
+    parameters = _parameters(
+        root_area_cm2=1e308,
+        root_na_permeability_l_cm2_h=1e308,
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        advance_plant(
+            before,
+            parameters,
+            _forcing(duration_hours=0.1),
+            cursor=cursor,
+        )
+
+    assert exc_info.value.code == "BIOLOGY_NUMERIC_INVALID"
+    assert exc_info.value.field_path == "forcing.duration_hours"
+    assert before == _state(time_hours=1e308)
+    assert cursor == _cursor()
+
+
 @pytest.mark.parametrize(
     ("duration_hours", "expected_fraction", "expected_energy"),
     [
@@ -807,6 +830,37 @@ def test_zero_efflux_demand_has_full_atp_fraction_and_charges_no_energy() -> Non
     assert fluxes.efflux_demand_mmol_h == 0.0
     assert fluxes.efflux_atp_fraction == 1.0
     assert not any(event.event_id == "efflux-na" for event in fluxes.events)
+    assert result.state.allocatable_energy_atp_eq == 0.0
+
+
+def test_zero_atp_cost_allows_nonzero_ion_demand_with_zero_available_energy() -> None:
+    """Catches treating zero ATP demand as energy-limited nonzero ion demand."""
+    state = _state(allocatable_energy_atp_eq=0.0)
+    parameters = _parameters(
+        atp_cost_per_na_atp_eq_mmol_inv=0.0,
+        na_sequestration_vmax_mmol_h=0.0,
+        na_xylem_loading_l_h=0.0,
+    )
+
+    fluxes = plant_fluxes(state, parameters, _forcing(duration_hours=0.25))
+    result = advance_plant(
+        state,
+        parameters,
+        _forcing(duration_hours=0.25),
+        cursor=_cursor(),
+    )
+    requested = next(event for event in fluxes.events if event.event_id == "efflux-na")
+    applied = next(
+        item
+        for item in result.expected_transactions
+        if item.event_id.endswith("-efflux-na")
+    )
+
+    assert fluxes.efflux_demand_mmol_h == pytest.approx(0.2)
+    assert fluxes.efflux_atp_fraction == 1.0
+    assert requested.rate_per_hour == pytest.approx(0.2)
+    assert applied.amounts[ConservedEntity.NA] == pytest.approx(0.05)
+    assert result.steps[0].applied_na_efflux_mmol_h == pytest.approx(0.2)
     assert result.state.allocatable_energy_atp_eq == 0.0
 
 
@@ -1067,6 +1121,101 @@ def test_simulate_plant_runs_registered_step_halving_convergence_oracle() -> Non
     assert result.substeps == 2
     assert len(result.states) == 3
     assert result.evidence_label is EvidenceLabel.SYNTHETIC_ONLY
+
+
+def test_step_halving_rejects_different_death_adjudication_substeps() -> None:
+    """Catches convergence that ignores coarse/fine death-event timing."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        simulate_plant(
+            _state(biomass_g=0.1),
+            _parameters(
+                maintenance_cost_g_h=10.0,
+                step_halving_absolute_tolerance=1e6,
+                step_halving_relative_tolerance=1e6,
+            ),
+            (_forcing(duration_hours=0.25),),
+            cursor=_cursor(),
+        )
+
+    assert exc_info.value.code == "BIOLOGY_STEP_CONVERGENCE_FAILURE"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["coarse_death_time_hours"] == 0.25
+    assert exc_info.value.details["fine_death_time_hours"] == 0.125
+
+
+def test_step_halving_scaled_difference_uses_the_actual_nonzero_scale() -> None:
+    """Catches an undeclared denominator floor for tiny nonzero coordinates."""
+    parameters = _parameters(
+        root_na_permeability_l_cm2_h=0.0,
+        root_cl_permeability_l_cm2_h=0.0,
+        root_k_permeability_l_cm2_h=0.0,
+        na_efflux_vmax_mmol_h=0.0,
+        na_sequestration_vmax_mmol_h=0.0,
+        cl_sequestration_vmax_mmol_h=0.0,
+        k_sequestration_vmax_mmol_h=0.0,
+        na_vacuole_release_h_inv=0.0,
+        cl_vacuole_release_h_inv=0.0,
+        k_vacuole_release_h_inv=0.0,
+        na_xylem_loading_l_h=0.0,
+        cl_xylem_loading_l_h=0.0,
+        k_xylem_loading_l_h=0.0,
+        na_xylem_retrieval_l_h=0.0,
+        cl_xylem_retrieval_l_h=0.0,
+        k_xylem_retrieval_l_h=0.0,
+        xylem_flow_l_h=0.0,
+        ros_production_h_inv=0.0,
+        ros_clearance_h_inv=0.1,
+        injury_damage_h_inv=0.0,
+        injury_repair_h_inv=0.0,
+        mannitol_vmax_mmol_h=0.0,
+        mannitol_turnover_h_inv=0.0,
+        radiation_use_efficiency_g_mol_apar_inv=0.0,
+        maintenance_cost_g_h=0.0,
+        redox_growth_penalty_h_inv=0.0,
+        cipk_pleiotropy_penalty_h_inv=0.0,
+        biomass_loss_h_inv=0.0,
+        senescence_h_inv=0.0,
+        step_halving_absolute_tolerance=1.0,
+        step_halving_relative_tolerance=1.0,
+    )
+
+    result = simulate_plant(
+        _state(
+            ros_dimensionless=1e-35,
+            injury_dimensionless=0.0,
+            mannitol_mmol=0.0,
+            allocatable_energy_atp_eq=0.0,
+        ),
+        parameters,
+        (_forcing(duration_hours=0.25, apar_mol_h=0.0),),
+        cursor=_cursor(),
+    )
+    coarse_ros = 9.75e-36
+    fine_ros = 9.7515625e-36
+
+    assert result.convergence.maximum_absolute_difference == pytest.approx(
+        fine_ros - coarse_ros
+    )
+    assert result.convergence.maximum_scaled_difference == pytest.approx(
+        (fine_ros - coarse_ros) / fine_ros
+    )
+
+
+def test_step_halving_rejects_overflow_in_registered_tolerance_arithmetic() -> None:
+    """Catches an infinite tolerance silently accepting a finite comparison."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        simulate_plant(
+            _state(),
+            _parameters(
+                step_halving_absolute_tolerance=1e308,
+                step_halving_relative_tolerance=1e308,
+            ),
+            (_forcing(duration_hours=0.25),),
+            cursor=_cursor(),
+        )
+
+    assert exc_info.value.code == "BIOLOGY_NUMERIC_INVALID"
+    assert exc_info.value.field_path.startswith("step_halving.coordinates.")
 
 
 def test_step_halving_metadata_rejects_any_unregistered_half_step_slack() -> None:

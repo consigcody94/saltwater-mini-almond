@@ -198,3 +198,76 @@ food-safety, calibration, or preferred-candidate claim is made.
 
 A fresh independent review will target the exact repair commit after it is
 created.
+
+## Final rereview repair
+
+The exact rereview of `18724f4` plus `7d0a01a` found five remaining numerical
+and input-boundary defects. This repair closes them without changing core
+mass, hydraulics, provenance, registries, candidate identities, or scientific
+claims:
+
+- `advance_plant` now computes and validates the finite registered target time
+  before partitioning, ledger authority, core evolution, or ODE work. A finite
+  positive duration that cannot produce a representably greater public time
+  fails `BIOLOGY_NUMERIC_INVALID` at `forcing.duration_hours`; every substep
+  target must also increase strictly, and the last state is assigned the one
+  prevalidated final target exactly.
+- ATP limitation now branches on the exact interval ATP demand amount. Thus a
+  zero ATP cost with nonzero Na-efflux demand gives `f_ATP = 1`, applies the
+  requested transfer subject only to the canonical source cap, and consumes no
+  energy. Zero ion demand remains separately covered.
+- Step-halving convergence now includes type-exact alive/death semantics and
+  exact trajectory adjudication time. No death-time tolerance is registered,
+  so coarse and fine trajectories must record the same adjudication boundary;
+  the reproduced 0.25 h versus 0.125 h death event is rejected.
+- The synthetic-scenario loader uses a safe, merge-aware unique-key loader.
+  Duplicate explicit keys are rejected at every mapping depth before YAML
+  merge flattening can obscure them, including root, `scenario_id`, and nested
+  parameter duplicates. The repository's legitimate anchors and single
+  explicit merge overrides remain valid.
+- Every convergence difference, scale, relative-tolerance product, and
+  tolerance sum now passes through checked finite arithmetic. The undeclared
+  `1e-30` denominator floor was removed. A coordinate whose two values are
+  exactly zero uses the explicitly documented absolute-only rule; otherwise
+  the actual nonzero magnitude is the relative scale. Overflowing registered
+  tolerance arithmetic fails `BIOLOGY_NUMERIC_INVALID`.
+
+### Final repair RED/GREEN evidence
+
+Eight public-boundary regressions were written first. Before implementation,
+the exact selection failed **8/8** for the intended reasons: time validation
+occurred only after an overflowing flux, zero-cost nonzero demand emitted no
+efflux, different death substeps converged, the hidden denominator floor
+distorted the scaled difference, overflowing tolerance arithmetic was
+accepted, and all three duplicate-YAML depths were collapsed before the
+contract could inspect them. After the minimal changes, the same selection
+passed **8/8** (114 deselected) in 0.73 s.
+
+Fresh focused verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_paper1_contracts.py -q
+```
+
+Result: exit 0; **122 passed in 2.06 s**.
+
+Fresh expanded biology/core verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_hydraulics.py tests\test_mass_balance.py tests\test_paper1_contracts.py tests\test_contracts.py tests\test_core_acceptance.py tests\test_verification_resources.py -q
+```
+
+Result: exit 0; **496 passed in 103.15 s**.
+
+A combined-tree full run was also attempted while the independently owned
+registry repair was deliberately in progress. It produced **942 passed, 3
+POSIX-only skips, and 17 failures in 115.31 s**. Every failure was confined to
+`tests/test_registries.py` and matched that agent's pending accession,
+public-evidence, and content-freeze changes; there were no biology, Paper 1
+contract, core, or provenance failures. This report does not misrepresent that
+concurrent-state run as a whole-suite pass. A stable full run is required after
+the registry repair lands.
+
+No efficacy, survival, yield, food-safety, calibration, or preferred-candidate
+claim is made. A fresh independent scientific/code rereview is requested for
+the exact final repair commit.

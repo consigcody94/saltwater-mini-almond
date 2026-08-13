@@ -524,6 +524,48 @@ def test_synthetic_scenario_document_requires_every_template_anchor_to_be_consum
     assert exc_info.value.field_path == "forcing"
 
 
+@pytest.mark.parametrize(
+    ("mutation", "duplicate_key"),
+    [
+        ("root", "hidden_growth_constant"),
+        ("scenario", "scenario_id"),
+        ("merged_nested", "root_na_permeability_l_cm2_h"),
+    ],
+)
+def test_synthetic_scenario_yaml_rejects_duplicate_keys_before_merge_expansion(
+    tmp_path: Path,
+    mutation: str,
+    duplicate_key: str,
+) -> None:
+    """Catches duplicate YAML keys hidden at root, scenario, or merged nesting."""
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    if mutation == "root":
+        source += "\nhidden_growth_constant: 1.0\nhidden_growth_constant: 2.0\n"
+    elif mutation == "scenario":
+        source = source.replace(
+            "  - scenario_id: perfect_control\n",
+            "  - scenario_id: perfect_control\n    scenario_id: shadowed\n",
+            1,
+        )
+    else:
+        source = source.replace(
+            "      root_na_permeability_l_cm2_h: 0.0\n",
+            "      root_na_permeability_l_cm2_h: 0.0\n"
+            "      root_na_permeability_l_cm2_h: 0.1\n",
+            1,
+        )
+    malformed = tmp_path / f"duplicate-{mutation}.yaml"
+    malformed.write_text(source, encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["duplicate_key"] == duplicate_key
+
+
 def _scenario_payload() -> dict[str, object]:
     raw = yaml.safe_load((CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
