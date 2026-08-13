@@ -41,6 +41,31 @@ BIOLOGY_ENTITIES = frozenset(
 )
 
 
+def _merge_power_sequence(
+    *,
+    prefix: str,
+    base_pair: str,
+    levels: int,
+    extra_powers: tuple[int, ...] = (),
+    indent: str,
+) -> str:
+    """Build a compact acyclic merge DAG with hand-selected power costs."""
+
+    lines = [f"{indent}<<:", f"{indent}  - &{prefix}0 {{{base_pair}}}"]
+    for level in range(1, levels):
+        lines.append(
+            f"{indent}  - &{prefix}{level} "
+            f"{{<<: [*{prefix}{level - 1}, *{prefix}{level - 1}]}}"
+        )
+    lines.extend(f"{indent}  - *{prefix}{level}" for level in extra_powers)
+    return "\n".join(lines) + "\n"
+
+
+def _candidate_source_with_c1_merge(sequence: str) -> str:
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    return source.replace("  C1:\n", "  C1:\n" + sequence, 1)
+
+
 def test_biology_surrogate_module_is_available() -> None:
     """Catches omission of the registered Paper 1 biology module."""
     import almondlab.biology_surrogate as biology_surrogate
@@ -1917,6 +1942,115 @@ def test_candidate_effect_yaml_rejects_self_referential_merge_alias(tmp_path: Pa
     assert exc_info.value.field_path == "candidate_effects"
     assert exc_info.value.details is not None
     assert exc_info.value.details["cause_type"] == "YamlAliasCycleError"
+
+
+def test_candidate_effect_yaml_rejects_compact_exponential_merge_before_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a 30-map DAG reaching PyYAML's exponential merge flattener."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    sequence = _merge_power_sequence(
+        prefix="candidate_bomb_",
+        base_pair="na_efflux_vmax_multiplier: 1.0",
+        levels=30,
+        indent="    ",
+    )
+    malformed = tmp_path / "candidate-merge-expansion.yaml"
+    malformed.write_text(
+        _candidate_source_with_c1_merge(sequence),
+        encoding="utf-8",
+    )
+
+    construction_calls = 0
+
+    def record_construction(*args: object, **kwargs: object) -> object:
+        nonlocal construction_calls
+        construction_calls += 1
+        return {}
+
+    monkeypatch.setattr(
+        biology_surrogate._StrictSafeLoader,
+        "construct_mapping",
+        record_construction,
+    )
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert construction_calls == 0
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details == {"cause_type": "YamlResourceLimitError"}
+
+
+def test_candidate_effect_yaml_accepts_exact_expanded_merge_pair_budget(
+    tmp_path: Path,
+) -> None:
+    """Catches an inclusive 10,000-pair limit being implemented as exclusive."""
+    sequence = _merge_power_sequence(
+        prefix="candidate_limit_",
+        base_pair="na_efflux_vmax_multiplier: 1.0",
+        levels=13,
+        # Definitions cost 8,191; these aliases cost 1,807; C1 has two
+        # explicit pairs: 8,191 + 1,807 + 2 = 10,000.
+        extra_powers=(10, 9, 8, 3, 2, 1, 0),
+        indent="    ",
+    )
+    fixture = tmp_path / "candidate-merge-at-limit.yaml"
+    fixture.write_text(_candidate_source_with_c1_merge(sequence), encoding="utf-8")
+
+    effects = load_candidate_effects(fixture)
+
+    assert effects["C1"].parameters == {
+        "na_efflux_vmax_multiplier": 1.35,
+        "atp_cost_per_na": 2.40,
+    }
+
+
+def test_candidate_effect_yaml_rejects_expanded_merge_pair_limit_plus_one(
+    tmp_path: Path,
+) -> None:
+    """Catches a 10,001-pair merge graph passing raw alias/node budgets."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    sequence = _merge_power_sequence(
+        prefix="candidate_over_",
+        base_pair="na_efflux_vmax_multiplier: 1.0",
+        levels=13,
+        extra_powers=(10, 9, 8, 3, 2, 1, 0, 0),
+        indent="    ",
+    )
+    source = _candidate_source_with_c1_merge(sequence)
+    fixture = tmp_path / "candidate-merge-over-limit.yaml"
+    fixture.write_text(source, encoding="utf-8")
+
+    with pytest.raises(biology_surrogate.YamlResourceLimitError) as direct:
+        biology_surrogate._strict_yaml_load(source)
+    assert direct.value.resource == "expanded_merge_pairs"
+    assert direct.value.limit == 10_000
+    assert direct.value.observed == 10_001
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(fixture)
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details == {"cause_type": "YamlResourceLimitError"}
+
+
+def test_strict_yaml_does_not_charge_shared_nonmerge_aliases_as_merge_expansion() -> None:
+    """Catches ordinary sequence aliases being multiplied like merge children."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    shared_pairs = ", ".join(f"k{index}: {index}" for index in range(60))
+    aliases = ", ".join("*shared" for _ in range(200))
+    payload = biology_surrogate._strict_yaml_load(
+        f"shared: &shared {{{shared_pairs}}}\ncopies: [{aliases}]\n"
+    )
+
+    assert isinstance(payload, dict)
+    assert len(payload["copies"]) == 200
+    assert payload["copies"][0]["k59"] == 59
 
 
 @pytest.mark.parametrize(

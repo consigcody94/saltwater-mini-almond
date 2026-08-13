@@ -123,6 +123,10 @@ MAX_INTEGRATOR_SUBSTEPS: Final[int] = 20_000
 MAX_YAML_DEPTH: Final[int] = 64
 MAX_YAML_NODES: Final[int] = 10_000
 MAX_YAML_ALIAS_REFERENCES: Final[int] = 256
+# Bounds the number of mapping pairs PyYAML can materialize when recursively
+# flattening one composed merge mapping.  Raw node/alias limits cannot detect
+# compact acyclic merge DAGs whose repeated children expand exponentially.
+MAX_YAML_EXPANDED_MERGE_PAIRS: Final[int] = 10_000
 
 
 class YamlDuplicateKeyError(yaml.YAMLError):
@@ -156,9 +160,12 @@ class YamlKeyTypeError(yaml.YAMLError):
 class YamlResourceLimitError(yaml.YAMLError):
     """A YAML stream or graph exceeds a code-owned resource budget."""
 
-    def __init__(self, limit_name: str, limit: int, observed: int) -> None:
-        super().__init__(f"YAML {limit_name} exceeds {limit}")
-        self.limit_name = limit_name
+    def __init__(self, resource: str, limit: int, observed: int) -> None:
+        super().__init__(f"YAML {resource} exceeds {limit}")
+        self.resource = resource
+        # Retain the original attribute for callers of the preceding public
+        # resource-limit contract while publishing the clearer resource name.
+        self.limit_name = resource
         self.limit = limit
         self.observed = observed
 
@@ -213,6 +220,7 @@ class _StrictSafeLoader(yaml.SafeLoader):
 
     def construct_document(self, node: yaml.nodes.Node) -> object:
         self._validate_graph(node)
+        self._validate_expanded_merge_pairs(node)
         return super().construct_document(node)
 
     def _validate_graph(self, root: yaml.nodes.Node) -> None:
@@ -262,6 +270,80 @@ class _StrictSafeLoader(yaml.SafeLoader):
                 children.extend(node.value)
             for child in reversed(children):
                 stack.append((child, depth + 1, False))
+
+    def _validate_expanded_merge_pairs(self, root: yaml.nodes.Node) -> None:
+        """Bound recursive PyYAML merge flattening before construction.
+
+        Mapping costs are memoized on the composed DAG. An ordinary nested or
+        aliased value is traversed and validated once but does not contribute
+        to its parent's merge cost. A mapping used as a merge child contributes
+        its full expanded cost for every occurrence, including duplicates in a
+        merge sequence. Arithmetic saturates at the first rejected value so a
+        compact exponential DAG never constructs a giant Python integer.
+        """
+
+        saturation = MAX_YAML_EXPANDED_MERGE_PAIRS + 1
+        costs: dict[int, int] = {}
+        complete: set[int] = set()
+        stack: list[tuple[yaml.nodes.Node, bool]] = [(root, False)]
+        while stack:
+            node, exiting = stack.pop()
+            identity = id(node)
+            if identity in complete:
+                continue
+            if not exiting:
+                stack.append((node, True))
+                children: Sequence[yaml.nodes.Node]
+                if isinstance(node, yaml.nodes.MappingNode):
+                    children = tuple(value for _, value in node.value)
+                elif isinstance(node, yaml.nodes.SequenceNode):
+                    children = tuple(node.value)
+                else:
+                    children = ()
+                for child in reversed(children):
+                    if id(child) not in complete:
+                        stack.append((child, False))
+                continue
+
+            if isinstance(node, yaml.nodes.MappingNode):
+                cost = min(
+                    saturation,
+                    sum(
+                        1
+                        for key_node, _ in node.value
+                        if key_node.tag != "tag:yaml.org,2002:merge"
+                    ),
+                )
+                if cost == saturation:
+                    raise YamlResourceLimitError(
+                        "expanded_merge_pairs",
+                        MAX_YAML_EXPANDED_MERGE_PAIRS,
+                        saturation,
+                    )
+                for key_node, value_node in node.value:
+                    if key_node.tag != "tag:yaml.org,2002:merge":
+                        continue
+                    if isinstance(value_node, yaml.nodes.MappingNode):
+                        merge_children = (value_node,)
+                    elif isinstance(value_node, yaml.nodes.SequenceNode):
+                        merge_children = tuple(value_node.value)
+                    else:
+                        # PyYAML will translate an invalid merge value through
+                        # the public loader boundary during construction.
+                        merge_children = ()
+                    for child in merge_children:
+                        if not isinstance(child, yaml.nodes.MappingNode):
+                            continue
+                        child_cost = costs[id(child)]
+                        cost = min(saturation, cost + child_cost)
+                        if cost == saturation:
+                            raise YamlResourceLimitError(
+                                "expanded_merge_pairs",
+                                MAX_YAML_EXPANDED_MERGE_PAIRS,
+                                saturation,
+                            )
+                costs[identity] = cost
+            complete.add(identity)
 
 
 def _strict_yaml_load(stream: str) -> object:

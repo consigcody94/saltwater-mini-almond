@@ -323,6 +323,74 @@ food-safety, calibration, or preferred-candidate claim is made.
 A fresh independent review will target the exact repair commit after it is
 created.
 
+## Final rereview repair J - expanded YAML merge work
+
+The exact rereview confirmed all preceding numerical, ledger, simulation-domain,
+canopy, schema, and basic YAML findings closed, but found that raw token, node,
+alias, depth, and visited-once graph budgets did not bound PyYAML's recursive
+merge flattening. A compact acyclic chain in which every mapping merged the
+preceding mapping twice expanded exponentially while remaining below every
+existing resource count.
+
+### RED evidence
+
+Candidate and scenario public-loader regressions were written before the
+production change. The candidate compact 30-map chain reached the deterministic
+construction hook once instead of failing before construction (**1 failed, 116
+deselected in 1.11 s**). Its separate at/over-boundary selection produced **1
+failed, 2 passed, 114 deselected in 1.13 s**: exactly 10,000 expanded pairs and
+200 shared non-merge aliases were the passing controls, while 10,001 pairs did
+not raise. The scenario selection similarly produced **2 failed, 2 passed, 60
+deselected in 0.91 s**: its compact construction hook and 10,001-pair boundary
+failed, while the exact-10,000 and legal merge-sequence/explicit-override
+controls passed. A direct unguarded compact-chain run was deliberately stopped
+after the 20-second command bound rather than allowing exponential allocation.
+
+### Implementation
+
+- `MAX_YAML_EXPANDED_MERGE_PAIRS = 10_000` now publishes and documents the
+  code-owned maximum mapping-pair work for any mapping PyYAML may flatten.
+- After iterative cycle, key, node, and depth validation but before
+  `super().construct_document`, a second iterative DAG pass memoizes the
+  expanded cost of each composed mapping. An explicit non-merge pair costs one;
+  every mapping in a merge value or merge sequence contributes its expanded
+  cost once per occurrence, including duplicate aliases. Nested mapping and
+  sequence values are traversed without charging ordinary non-merge aliases.
+  Legal explicit overrides remain explicit pairs and retain standard YAML
+  precedence.
+- Every addition saturates at `limit + 1`; over-budget graphs therefore reject
+  as `YamlResourceLimitError(resource="expanded_merge_pairs", limit=10000,
+  observed=10001)` without constructing a giant integer, mutating nodes, or
+  invoking PyYAML mapping construction. Candidate payloads translate this to
+  `CANDIDATE_PARAMETER_VIOLATION` at `candidate_effects`; scenarios translate
+  it to `SYNTHETIC_SCENARIO_INVALID` at `yaml`. Existing cycle validation runs
+  first and retains `YamlAliasCycleError` authority.
+
+### GREEN and verification evidence
+
+The combined merge-expansion, exact-boundary, ordinary-alias, legal-precedence,
+and public-translation selection passed **8 passed, 173 deselected in 1.07 s**.
+Fresh focused biology and Paper 1 contract verification passed **181 passed in
+4.07 s**. Fresh expanded biology/core verification passed **555 passed in
+103.72 s**.
+
+A complete repository run was also executed after the independently owned
+registry round-three commits but during the provenance agent's deliberate RED
+window. It produced **1071 passed, 3 POSIX-only skips, and 6 provenance-only
+failures in 122.65 s**. All six were the provenance agent's newly added
+precommit-cleanup race regressions; that agent subsequently reported their
+exact selection GREEN 6/6. There were no biology, Paper 1 contract, registry,
+mass, or hydraulics failures. This report does not misstate the overlapping
+run as a stable whole-repository pass; provenance will rerun full verification
+after this biology commit on the stable combined tree.
+
+Static verification passed over the owned source and tests, and scoped
+`git diff --check` passed over all owned paths. No registry, public-data,
+provenance, visualization, mass-balance, or hydraulics path was changed by this
+repair. No scientific efficacy, survival, yield, food-safety, calibration, or
+preferred-candidate claim is made. A fresh independent review will target the
+exact repair commit.
+
 ## Final rereview repair
 
 The exact rereview of `18724f4` plus `7d0a01a` found five remaining numerical

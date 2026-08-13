@@ -25,6 +25,31 @@ from almondlab.paper1_contracts import (
 
 CONFIGS = Path(__file__).parents[1] / "configs"
 
+
+def _scenario_merge_power_sequence(
+    *,
+    prefix: str,
+    levels: int,
+    extra_powers: tuple[int, ...] = (),
+) -> str:
+    """Build an acyclic merge DAG using one overridden registered key."""
+
+    lines = ["  <<:", f"    - &{prefix}0 {{root_area_cm2: 1.0}}"]
+    for level in range(1, levels):
+        lines.append(
+            f"    - &{prefix}{level} "
+            f"{{<<: [*{prefix}{level - 1}, *{prefix}{level - 1}]}}"
+        )
+    lines.extend(f"    - *{prefix}{level}" for level in extra_powers)
+    return "\n".join(lines) + "\n"
+
+
+def _scenario_source_with_biology_merge(sequence: str) -> str:
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    marker = "biology_parameters: &biology_parameters\n"
+    return source.replace(marker, marker + sequence, 1)
+
+
 EXPECTED_CANDIDATE_IDENTITIES = {
     "C1": {
         "construct_name": "PyKPA1",
@@ -618,7 +643,8 @@ def test_synthetic_scenario_yaml_accepts_merge_sequence_with_explicit_override(
     source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
     source = source.replace(
         "      <<: *biology_parameters\n",
-        "      <<: [*biology_parameters]\n",
+        "      <<: [*biology_parameters, "
+        "{root_cl_permeability_l_cm2_h: 99.0}]\n",
         1,
     )
     legal = tmp_path / "merge-sequence.yaml"
@@ -628,6 +654,91 @@ def test_synthetic_scenario_yaml_accepts_merge_sequence_with_explicit_override(
 
     assert scenarios[1].parameters.root_na_permeability_l_cm2_h == 0.0
     assert scenarios[1].parameters.root_cl_permeability_l_cm2_h == 0.02
+
+
+def test_scenario_yaml_rejects_compact_exponential_merge_before_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a 30-map DAG reaching PyYAML's exponential merge flattener."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    sequence = _scenario_merge_power_sequence(
+        prefix="scenario_bomb_",
+        levels=30,
+    )
+    malformed = tmp_path / "scenario-merge-expansion.yaml"
+    malformed.write_text(
+        _scenario_source_with_biology_merge(sequence),
+        encoding="utf-8",
+    )
+
+    construction_calls = 0
+
+    def record_construction(*args: object, **kwargs: object) -> object:
+        nonlocal construction_calls
+        construction_calls += 1
+        return {}
+
+    monkeypatch.setattr(
+        biology_surrogate._StrictSafeLoader,
+        "construct_mapping",
+        record_construction,
+    )
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert construction_calls == 0
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details == {"cause_type": "YamlResourceLimitError"}
+
+
+def test_scenario_yaml_accepts_exact_expanded_merge_pair_budget(
+    tmp_path: Path,
+) -> None:
+    """Catches an inclusive 10,000-pair scenario merge limit being exclusive."""
+    sequence = _scenario_merge_power_sequence(
+        prefix="scenario_limit_",
+        levels=13,
+        # Definitions cost 8,191 and aliases 1,734, so biology costs
+        # 9,999 with its 74 explicit pairs. A scenario's explicit override
+        # makes its expanded mapping cost exactly 10,000.
+        extra_powers=(10, 9, 7, 6, 2, 1),
+    )
+    fixture = tmp_path / "scenario-merge-at-limit.yaml"
+    fixture.write_text(
+        _scenario_source_with_biology_merge(sequence),
+        encoding="utf-8",
+    )
+
+    scenarios = load_synthetic_scenarios(fixture)
+
+    assert scenarios[1].parameters.root_area_cm2 == 10.0
+    assert scenarios[1].parameters.root_na_permeability_l_cm2_h == 0.0
+
+
+def test_scenario_yaml_rejects_expanded_merge_pair_limit_plus_one(
+    tmp_path: Path,
+) -> None:
+    """Catches a downstream scenario merge expanding to 10,001 pairs."""
+    sequence = _scenario_merge_power_sequence(
+        prefix="scenario_over_",
+        levels=13,
+        extra_powers=(10, 9, 7, 6, 2, 1, 0),
+    )
+    fixture = tmp_path / "scenario-merge-over-limit.yaml"
+    fixture.write_text(
+        _scenario_source_with_biology_merge(sequence),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(fixture)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details == {"cause_type": "YamlResourceLimitError"}
 
 
 def test_synthetic_scenario_yaml_translates_malformed_parser_input(
