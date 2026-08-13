@@ -1,6 +1,9 @@
 from math import isclose
 
-from almondlab.hydraulics import HydraulicInputs, hydraulic_uptake
+import pytest
+
+from almondlab.errors import AlmondLabError
+from almondlab.hydraulics import HydraulicDomain, HydraulicInputs, hydraulic_uptake
 
 
 def test_perfect_na_exclusion_keeps_osmotic_penalty() -> None:
@@ -21,3 +24,54 @@ def test_perfect_na_exclusion_keeps_osmotic_penalty() -> None:
     assert isclose(fresh.actual_l_day, 0.888212, abs_tol=1e-6)
     assert isclose(saline.actual_l_day, 0.455696, abs_tol=1e-6)
     assert isclose(saline.actual_l_day / fresh.actual_l_day, 0.513049, abs_tol=1e-6)
+
+
+def _inputs(**updates: object) -> HydraulicInputs:
+    values: dict[str, object] = {
+        "osmolality_osmol_kg": 0.05,
+        "temperature_k": 298.15,
+        "water_density_kg_l": 0.997,
+        "matric_mpa": -0.10,
+        "leaf_critical_mpa": -2.00,
+        "adjustment_mpa": 0.0,
+        "root_conductance_l_day_mpa": 0.50,
+        "potential_transpiration_l_day": 1.00,
+        "specific_ion_factor": 1.00,
+    }
+    values.update(updates)
+    return HydraulicInputs(**values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("osmolality_osmol_kg", float("nan"), "HYDRAULIC_NONFINITE"),
+        ("temperature_k", float("inf"), "HYDRAULIC_NONFINITE"),
+        ("water_density_kg_l", float("-inf"), "HYDRAULIC_NONFINITE"),
+        ("specific_ion_factor", 1.01, "HYDRAULIC_INVALID_ION_FACTOR"),
+        ("adjustment_mpa", 0.51, "HYDRAULIC_INVALID_ADJUSTMENT"),
+    ],
+)
+def test_hydraulic_gate_rejects_malformed_or_out_of_range_inputs(
+    field: str, value: float, code: str
+) -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        hydraulic_uptake(_inputs(**{field: value}))
+
+    assert exc_info.value.code == code
+
+
+def test_hydraulic_gate_rejects_invalid_evidence_label_and_domain_violation() -> None:
+    with pytest.raises(AlmondLabError) as label_error:
+        hydraulic_uptake(_inputs(evidence_label="not-an-evidence-label"))
+    assert label_error.value.code == "HYDRAULIC_INVALID_EVIDENCE_LABEL"
+
+    domain = HydraulicDomain(
+        osmolality_min=0.01,
+        osmolality_max=0.10,
+        temperature_k_min=290.0,
+        temperature_k_max=305.0,
+    )
+    with pytest.raises(AlmondLabError) as domain_error:
+        hydraulic_uptake(_inputs(osmolality_osmol_kg=0.11), domain=domain)
+    assert domain_error.value.code == "HYDRAULIC_DOMAIN_VIOLATION"

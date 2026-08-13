@@ -65,6 +65,7 @@ class VerificationRecord:
     passed: bool
     code_version: str
     evidence_label: EvidenceLabel
+    fixture_sha256s: Mapping[str, str] | None = None
     validity: Literal["valid", "invalid"] = "valid"
     censored: bool = False
     reason_code: str | None = None
@@ -72,9 +73,13 @@ class VerificationRecord:
     def __post_init__(self) -> None:
         if not isinstance(self.evidence_label, EvidenceLabel):
             raise TypeError("evidence_label must be an EvidenceLabel")
+        if self.validity == "invalid" and self.passed:
+            raise ValueError("invalid record cannot be marked passed")
         object.__setattr__(self, "observed_value", _freeze_json(self.observed_value))
         object.__setattr__(self, "oracle", _freeze_json(self.oracle))
         object.__setattr__(self, "tolerance", _freeze_json(self.tolerance))
+        hashes = {"primary": self.fixture_sha256} if self.fixture_sha256s is None else dict(self.fixture_sha256s)
+        object.__setattr__(self, "fixture_sha256s", MappingProxyType(hashes))
 
     def validate(self) -> None:
         if self.acceptance_test not in range(1, 23):
@@ -83,6 +88,9 @@ class VerificationRecord:
             character not in "0123456789abcdefABCDEF" for character in self.fixture_sha256
         ):
             raise ValueError("fixture_sha256 must be an exact SHA-256 hex digest")
+        for name, digest in self.fixture_sha256s.items():
+            if not name or len(digest) != 64 or any(character not in "0123456789abcdefABCDEF" for character in digest):
+                raise ValueError("fixture_sha256s must contain exact named SHA-256 hex digests")
         if not self.code_version.strip():
             raise ValueError("code_version must be supplied from metadata or an explicit unavailable gate")
         if self.validity not in {"valid", "invalid"}:
@@ -91,6 +99,8 @@ class VerificationRecord:
             raise ValueError("an invalid numerical run cannot be a physical censoring result")
         if (self.censored or self.validity == "invalid") and not self.reason_code:
             raise ValueError("censored or invalid records require a reason_code")
+        if self.validity == "invalid" and self.passed:
+            raise ValueError("invalid record cannot be marked passed")
         _json_value(self.observed_value, "observed_value")
         _json_value(self.oracle, "oracle")
         _json_value(self.tolerance, "tolerance")
@@ -100,6 +110,7 @@ class VerificationRecord:
         return {
             "acceptance_test": self.acceptance_test,
             "fixture_sha256": self.fixture_sha256.lower(),
+            "fixture_sha256s": {name: digest.lower() for name, digest in self.fixture_sha256s.items()},
             "observed_value": _json_value(self.observed_value, "observed_value"),
             "oracle": _json_value(self.oracle, "oracle"),
             "tolerance": _json_value(self.tolerance, "tolerance"),
@@ -121,25 +132,90 @@ class RunStopStatus:
     reason_code: str | None
 
 
+@dataclass(frozen=True)
+class PhysicalStop:
+    """A fixture-labeled physical boundary, distinct from numerical validity."""
+
+    minimum: float | None
+    maximum: float | None
+    evidence_label: EvidenceLabel
+
+
+@dataclass
+class AnalysisBoundary:
+    """Minimal executable analysis boundary that only admits validated chemistry."""
+
+    accepted_records: int = 0
+
+    def submit(
+        self, source: WaterBatch, measurement: BlendMeasurement
+    ) -> None:
+        blend_by_volume([source], [1.0], measurement=measurement)
+        self.accepted_records += 1
+
+
+def load_physical_stops(path: Path) -> Mapping[str, PhysicalStop]:
+    """Load bounded, weakly labeled physical fixture stops from YAML."""
+    payload = yaml.safe_load(path.read_bytes())
+    if not isinstance(payload, dict) or not isinstance(payload.get("physical_stops"), dict):
+        raise ValueError("physical_stops configuration is required")
+    stops: dict[str, PhysicalStop] = {}
+    for name, raw in payload["physical_stops"].items():
+        if not isinstance(raw, dict):
+            raise ValueError(f"physical_stops.{name} must be a mapping")
+        try:
+            label = EvidenceLabel(raw["evidence_label"])
+        except (KeyError, ValueError) as error:
+            raise ValueError(f"physical_stops.{name}.evidence_label is invalid") from error
+        if label not in {EvidenceLabel.SYNTHETIC_ONLY, EvidenceLabel.HYPOTHESIS_PRIOR}:
+            raise ValueError(f"physical_stops.{name}.evidence_label must be synthetic_only or hypothesis_prior")
+        minimum = raw.get("minimum")
+        maximum = raw.get("maximum")
+        if minimum is None and maximum is None:
+            raise ValueError(f"physical_stops.{name} requires minimum or maximum")
+        if minimum is not None and not isfinite(float(minimum)):
+            raise ValueError(f"physical_stops.{name}.minimum must be finite")
+        if maximum is not None and not isfinite(float(maximum)):
+            raise ValueError(f"physical_stops.{name}.maximum must be finite")
+        if minimum is not None and maximum is not None and float(minimum) > float(maximum):
+            raise ValueError(f"physical_stops.{name} minimum exceeds maximum")
+        stops[str(name)] = PhysicalStop(
+            None if minimum is None else float(minimum),
+            None if maximum is None else float(maximum),
+            label,
+        )
+    return MappingProxyType(stops)
+
+
 def evaluate_run_stops(
     *,
     numerical_values: Mapping[str, float],
     stocks: Mapping[str, float],
     ledger_relative_residuals: Mapping[str, float],
     physical_values: Mapping[str, float],
-    physical_maxima: Mapping[str, float],
+    physical_stops: Mapping[str, PhysicalStop],
 ) -> RunStopStatus:
     """Keep numerical invalidity separate from configured physical censoring."""
     if any(not isfinite(float(value)) for value in numerical_values.values()):
         return RunStopStatus(False, False, "NONFINITE_STATE")
+    if any(not isfinite(float(value)) for value in stocks.values()):
+        return RunStopStatus(False, False, "NONFINITE_STOCK")
+    if any(not isfinite(float(value)) for value in ledger_relative_residuals.values()):
+        return RunStopStatus(False, False, "NONFINITE_LEDGER_RESIDUAL")
     if any(float(value) < -NEGATIVE_TOLERANCE for value in stocks.values()):
         return RunStopStatus(False, False, "STOCK_BELOW_NUMERICAL_TOLERANCE")
     if any(abs(float(value)) > LEDGER_RESIDUAL_TOLERANCE for value in ledger_relative_residuals.values()):
         return RunStopStatus(False, False, "LEDGER_RESIDUAL_EXCEEDED")
-    for name, maximum in physical_maxima.items():
+    for name, stop in physical_stops.items():
         value = physical_values.get(name)
-        if value is not None and float(value) > float(maximum):
-            return RunStopStatus(True, True, f"PHYSICAL_STOP_{name.upper()}")
+        if value is None:
+            continue
+        if not isfinite(float(value)):
+            return RunStopStatus(False, False, "NONFINITE_STATE")
+        if stop.minimum is not None and float(value) <= stop.minimum:
+            return RunStopStatus(True, True, f"PHYSICAL_STOP_{name.upper()}_MINIMUM")
+        if stop.maximum is not None and float(value) >= stop.maximum:
+            return RunStopStatus(True, True, f"PHYSICAL_STOP_{name.upper()}_MAXIMUM")
     return RunStopStatus(True, False, None)
 
 
@@ -196,7 +272,7 @@ def _state(initial: Mapping[str, object]) -> NetworkState:
 def _record(
     acceptance_test: int, fixture_sha256: str, observed: object, oracle: object,
     tolerance: object, passed: bool, *, reason_code: str | None = None,
-    censored: bool = False,
+    censored: bool = False, fixture_sha256s: Mapping[str, str] | None = None,
 ) -> VerificationRecord:
     return VerificationRecord(
         acceptance_test=acceptance_test,
@@ -207,6 +283,7 @@ def _record(
         passed=passed,
         code_version=_code_version(),
         evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
+        fixture_sha256s=fixture_sha256s,
         reason_code=reason_code,
         censored=censored,
     )
@@ -251,15 +328,22 @@ def _acceptance_03() -> VerificationRecord:
     oracle_concentration = float(fixture["c0"]) + float(fixture["m_dot"]) * expected_stop / float(fixture["volume"])
     concentration_error = abs(observed_concentration - oracle_concentration)
     observed = max(stop_error, concentration_error)
+    stop = evaluate_run_stops(
+        numerical_values={"concentration": observed_concentration},
+        stocks={"na": result.state.total_stock("na")},
+        ledger_relative_residuals=audit_ledger(before, result.state, result.ledger).relative_residuals,
+        physical_values={"concentration_mmol_l": observed_concentration},
+        physical_stops=load_physical_stops(_repo_root() / "configs" / "thresholds.yaml"),
+    )
     return _record(
         3,
         digest,
         observed,
         0.0,
         1e-6,
-        observed <= 1e-6,
-        censored=True,
-        reason_code="PHYSICAL_STOP_CONCENTRATION_MMOL_L",
+        observed <= 1e-6 and stop.valid and stop.censored,
+        censored=stop.censored,
+        reason_code=stop.reason_code,
     )
 
 
@@ -305,14 +389,19 @@ def _acceptance_05() -> VerificationRecord:
     blend = fixture["blend"]  # type: ignore[index]
     result = blend_by_volume(sources, blend["volumes_l"], measurement=measurement)
     mass_error = max(abs(getattr(result.chemistry, field) - value) for field, value in blend["expected"].items())
-    sar_error = abs(sodium_adsorption_ratio(10.0, 4.0, 2.0) - 5.773502692)
+    observed_sar = sodium_adsorption_ratio(10.0, 4.0, 2.0)
+    sar_error = abs(observed_sar - 5.773502692)
     try:
         ro_split(1.0, {"na": 1.0}, 0.5, {"ECw": 0.5})
     except AlmondLabError as error:
         ec_rejected = error.code == "RO_EC_REJECTION_FORBIDDEN"
     else:
         ec_rejected = False
-    observed = {"mass_blend_error": mass_error, "sar_error": sar_error, "ec_to_mass_rejected": ec_rejected}
+    observed = {
+        "mass_blend_error": mass_error,
+        "sar": observed_sar,
+        "ec_to_mass_rejected": ec_rejected,
+    }
     passed = mass_error <= 1e-10 and sar_error <= 1e-9 and ec_rejected
     return _record(5, digest, observed, {"mass_blend_error": 0.0, "sar": 5.773502692, "ec_to_mass_rejected": True}, {"mass_blend_error": 1e-10, "sar": 1e-9}, passed)
 
@@ -335,7 +424,8 @@ def _acceptance_13() -> VerificationRecord:
 def _acceptance_19() -> VerificationRecord:
     _, fixture, digest = _fixture("chemistry_handcheck.yaml")
     source_payload = fixture["blend"]["source_a"]  # type: ignore[index]
-    rejected = 0
+    boundary = AnalysisBoundary()
+    cases: list[dict[str, object]] = []
     for source_kind in ECKind:
         for measurement_kind in ECKind:
             if source_kind is measurement_kind:
@@ -345,35 +435,143 @@ def _acceptance_19() -> VerificationRecord:
             source = WaterBatch(water_batch_id="ec-source", chemistry=WaterChemistry(**payload), data_origin=DataOrigin.SYNTHETIC, evidence_label=EvidenceLabel.SYNTHETIC_ONLY, schema_version="1.0")
             measurement = BlendMeasurement(measurement_id="ec-substitution", ec_kind=measurement_kind, ec_ds_m=1.0, temperature_k=298.15, measured_osmolality_osmol_kg=0.1, ph=7.0, data_origin=DataOrigin.SYNTHETIC, evidence_label=EvidenceLabel.SYNTHETIC_ONLY)
             try:
-                blend_by_volume([source], [1.0], measurement=measurement)
+                boundary.submit(source, measurement)
             except AlmondLabError as error:
-                rejected += int(error.code == "EC_TYPE_MISMATCH")
+                cases.append(
+                    {
+                        "source_ec_kind": source_kind.value,
+                        "measurement_ec_kind": measurement_kind.value,
+                        "code": error.code,
+                    }
+                )
+            else:
+                cases.append(
+                    {
+                        "source_ec_kind": source_kind.value,
+                        "measurement_ec_kind": measurement_kind.value,
+                        "code": "ACCEPTED",
+                    }
+                )
     expected_substitutions = 6
-    observed = {"rejected_substitutions": rejected, "records_reached_analysis": 0}
-    oracle = {"rejected_substitutions": expected_substitutions, "records_reached_analysis": 0}
-    return _record(19, digest, observed, oracle, 0.0, observed == oracle)
+    observed = {"cases": cases, "records_reached_analysis": boundary.accepted_records}
+    oracle = {"rejected_substitutions": expected_substitutions, "records_reached_analysis": 0, "required_code": "EC_TYPE_MISMATCH"}
+    passed = (
+        len(cases) == expected_substitutions
+        and boundary.accepted_records == 0
+        and all(case["code"] == "EC_TYPE_MISMATCH" for case in cases)
+    )
+    return _record(19, digest, observed, oracle, 0.0, passed)
 
 
 def _acceptance_20() -> VerificationRecord:
-    _, fixture, digest = _fixture("ions_conservative.yaml")
-    entities = {entity.value: float(index + 1) for index, entity in enumerate(ConservedEntity) if entity is not ConservedEntity.WATER}
-    before = NetworkState.from_dict({"source": 100.0, "receiving": 0.0}, {"source": entities, "receiving": {entity: 0.0 for entity in entities}})
-    result = step_state(before, [Flow("source", "receiving", 10.0)], [], 2.0)
-    audit = audit_ledger(before, result.state, result.ledger)
-    ro = ro_split(100.0, entities, 0.6, {entity: 0.9 for entity in entities})
-    ro_residual = max(abs(ro.permeate_stock_mmol[entity] + ro.concentrate_stock_mmol[entity] - stock) for entity, stock in entities.items())
-    water_residual = max(
-        audit.relative_residuals["water"],
-        abs(ro.permeate_volume_l + ro.concentrate_volume_l - ro.feed_volume_l),
+    _, fixture, digest = _fixture("all_conserved_entities.yaml")
+    _, ions_fixture, ions_digest = _fixture("ions_conservative.yaml")
+    _, chemistry_fixture, chemistry_digest = _fixture("chemistry_handcheck.yaml")
+    before = _state(fixture["initial"])  # type: ignore[arg-type]
+    result = step_state(
+        before,
+        [Flow(**fixture["flow"])],  # type: ignore[arg-type]
+        [],
+        float(fixture["duration_hours"]),
     )
-    sources, measurement = _chemistry_sources(_fixture("chemistry_handcheck.yaml")[1])
-    blend = blend_by_volume(sources, [5.0, 3.0], measurement=measurement)
-    blend_bound_error = max(abs(getattr(blend.chemistry, field) - value) for field, value in _fixture("chemistry_handcheck.yaml")[1]["blend"]["expected"].items())
+    audit = audit_ledger(before, result.state, result.ledger)
+    entities = dict(before.stocks_mmol["source"])
+    ro = ro_split(
+        float(fixture["ro"]["feed_volume_l"]),  # type: ignore[index]
+        entities,
+        float(fixture["ro"]["recovery"]),  # type: ignore[index]
+        {entity: float(fixture["ro"]["rejection"]) for entity in entities},  # type: ignore[index]
+    )
+    ions_before = _state(ions_fixture["initial"])  # type: ignore[arg-type]
+    ions_result = step_state(
+        ions_before,
+        [Flow(**ions_fixture["flow"])],  # type: ignore[arg-type]
+        [],
+        float(ions_fixture["duration_hours"]),
+    )
+    ions_audit = audit_ledger(ions_before, ions_result.state, ions_result.ledger)
+    sources, measurement = _chemistry_sources(chemistry_fixture)
+    blend_data = chemistry_fixture["blend"]  # type: ignore[index]
+    blend = blend_by_volume(sources, blend_data["volumes_l"], measurement=measurement)
+    blend_bounds = {
+        field: abs(getattr(blend.chemistry, field) - value)
+        for field, value in blend_data["expected"].items()
+    }
     state_values = list(result.state.all_values())
-    stop = evaluate_run_stops(numerical_values={f"value_{index}": value for index, value in enumerate(state_values)}, stocks={entity: result.state.total_stock(entity) for entity in entities}, ledger_relative_residuals=audit.relative_residuals, physical_values={}, physical_maxima={})
-    observed = {"minimum_state": min(state_values), "transfer_residual": max(audit.relative_residuals.values()), "water_residual": water_residual, "ro_residual": ro_residual, "blend_error": blend_bound_error, "registered_entities": len(entities) + 1}
-    passed = stop.valid and not stop.censored and observed["minimum_state"] >= -1e-12 and observed["transfer_residual"] <= 1e-10 and water_residual <= 1e-10 and ro_residual <= 1e-10 and blend_bound_error <= 1e-10 and set(entities) == {entity.value for entity in ConservedEntity if entity is not ConservedEntity.WATER}
-    return _record(20, digest, observed, {"minimum_state": -1e-12, "residual": 0.0, "registered_entities": len(ConservedEntity)}, {"minimum_state": -1e-12, "residual": 1e-10}, passed)
+    stop = evaluate_run_stops(
+        numerical_values={f"value_{index}": value for index, value in enumerate(state_values)},
+        stocks={entity: result.state.total_stock(entity) for entity in entities},
+        ledger_relative_residuals=audit.relative_residuals,
+        physical_values={},
+        physical_stops=load_physical_stops(_repo_root() / "configs" / "thresholds.yaml"),
+    )
+    entity_observed = {
+        "water": {
+            "transfer_residual": audit.relative_residuals["water"],
+            "ro_feed_permeate_concentrate_residual": abs(
+                ro.permeate_volume_l + ro.concentrate_volume_l - ro.feed_volume_l
+            ),
+        },
+        **{
+            entity: {
+                "transfer_residual": audit.relative_residuals[entity],
+                "ro_feed_permeate_concentrate_residual": abs(
+                    ro.permeate_stock_mmol[entity]
+                    + ro.concentrate_stock_mmol[entity]
+                    - stock
+                ),
+            }
+            for entity, stock in entities.items()
+        },
+    }
+    entity_oracle = {
+        entity: {
+            "transfer_residual": 0.0,
+            "ro_feed_permeate_concentrate_residual": 0.0,
+        }
+        for entity in entity_observed
+    }
+    entity_tolerance = {
+        entity: {
+            "transfer_residual": 1e-10,
+            "ro_feed_permeate_concentrate_residual": 1e-10,
+        }
+        for entity in entity_observed
+    }
+    observed = {
+        "minimum_state": min(state_values),
+        "entities": entity_observed,
+        "water_residual": entity_observed["water"]["ro_feed_permeate_concentrate_residual"],
+        "ions_fixture_transfer_residual": max(ions_audit.relative_residuals.values()),
+        "blend_bounds": blend_bounds,
+        "registered_entities": len(entity_observed),
+    }
+    passed = (
+        stop.valid
+        and not stop.censored
+        and observed["minimum_state"] >= -1e-12
+        and all(
+            value <= 1e-10
+            for measurements in entity_observed.values()
+            for value in measurements.values()
+        )
+        and observed["ions_fixture_transfer_residual"] <= 1e-10
+        and all(value <= 1e-10 for value in blend_bounds.values())
+        and set(entity_observed) == {entity.value for entity in ConservedEntity}
+    )
+    return _record(
+        20,
+        digest,
+        observed,
+        {"minimum_state": -1e-12, "entities": entity_oracle, "blend_bounds": {field: 0.0 for field in blend_bounds}},
+        {"minimum_state": -1e-12, "entities": entity_tolerance, "blend_bounds": {field: 1e-10 for field in blend_bounds}},
+        passed,
+        fixture_sha256s={
+            "all_conserved_entities.yaml": digest,
+            "ions_conservative.yaml": ions_digest,
+            "chemistry_handcheck.yaml": chemistry_digest,
+        },
+    )
 
 
 def run_core_acceptance(run_directory: Path) -> tuple[VerificationRecord, ...]:

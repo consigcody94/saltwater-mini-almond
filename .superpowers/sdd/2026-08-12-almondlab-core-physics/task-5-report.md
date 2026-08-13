@@ -54,4 +54,16 @@ $env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
 
 Result: `133 passed`.
 
+## Fix round 1
+
+Addressed the Task 5 review findings with failing tests first. The focused RED run exposed the missing `HydraulicDomain` and `load_physical_stops` interfaces; subsequent RED runs caught the stale Test 20 stop invocation and the invalid-record/pass inconsistency. The implementation now rejects nonfinite values in all numerical inputs, loads only `synthetic_only` or `hypothesis_prior` physical stops from configuration, applies both inclusive minimum and maximum censoring, and derives Test 3's censored state from the actual simulated concentration.
+
+Test 19 now submits all six mismatched directional EC substitutions through an executable analysis boundary and records each `EC_TYPE_MISMATCH`; its accepted-record count is observed rather than stamped. Test 20 uses the independent all-conserved-entities fixture, names each entity's transfer and RO residuals, and carries hashes for every fixture it uses. Test 5 records raw SAR alongside the independent literal oracle.
+
+Focused result: `13 passed`.
+
+Required core suite result: `108 passed`.
+
+Full suite result: `142 passed`.
+
 The placeholder-pattern scan (`TODO|TBD|FIXME|placeholder|not implemented`) returned no matches in `src`, `tests`, or `configs` outside this report/checklist context. `git diff --check` was clean.
