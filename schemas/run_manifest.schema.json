@@ -9,6 +9,7 @@
     "run_id",
     "deterministic_demo_id",
     "root_seed",
+    "creation_config_sha256",
     "seed_tree",
     "started_at",
     "ended_at",
@@ -25,10 +26,15 @@
     "manifest_hash"
   ],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "run_id": {"$ref": "#/$defs/run_id"},
     "deterministic_demo_id": {"type": "boolean"},
-    "root_seed": {"type": "integer", "minimum": 0},
+    "root_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "creation_config_sha256": {"$ref": "#/$defs/sha256"},
     "seed_tree": {"$ref": "#/$defs/seed_tree"},
     "started_at": {"$ref": "#/$defs/utc_timestamp"},
     "ended_at": {
@@ -67,20 +73,21 @@
   "$defs": {
     "sha256": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
     },
     "git_sha": {
       "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
+      "pattern": "^[0-9a-f]{40}(?![\\s\\S])"
     },
     "run_id": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      "maxLength": 128,
+      "pattern": "^(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|(?![\\s\\S])))[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*(?![\\s\\S])"
     },
     "utc_timestamp": {
       "type": "string",
       "format": "date-time",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z(?![\\s\\S])"
     },
     "digest_map": {
       "type": "object",
@@ -90,7 +97,7 @@
     "portable_path": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[<>:\"\\\\|?*\\u0000-\\u001F])(?!.*/$).+$"
+      "pattern": "^(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|(?![\\s\\S])))(?!.*\\/(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|(?![\\s\\S])))[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*(?:/[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*)*(?![\\s\\S])"
     },
     "file_provenance": {
       "type": "object",
@@ -112,7 +119,11 @@
         },
         "size_bytes": {
           "anyOf": [
-            {"type": "integer", "minimum": 0},
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
             {"type": "null"}
           ]
         },
@@ -239,7 +250,11 @@
       "required": ["algorithm", "root_seed", "root"],
       "properties": {
         "algorithm": {"const": "numpy.random.SeedSequence"},
-        "root_seed": {"type": "integer", "minimum": 0},
+        "root_seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
         "root": {"$ref": "#/$defs/seed_node"}
       }
     },
@@ -258,9 +273,13 @@
       "properties": {
         "name": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
         },
-        "entropy": {"type": "integer", "minimum": 0},
+        "entropy": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
         "spawn_key": {
           "type": "array",
           "items": {
@@ -269,8 +288,16 @@
             "maximum": 4294967295
           }
         },
-        "pool_size": {"type": "integer", "minimum": 4},
-        "n_children_spawned": {"type": "integer", "minimum": 0},
+        "pool_size": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 9007199254740991
+        },
+        "n_children_spawned": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
         "state": {
           "type": "array",
           "minItems": 4,
@@ -285,7 +312,7 @@
           "type": "object",
           "propertyNames": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
           },
           "additionalProperties": {"$ref": "#/$defs/seed_node"}
         }
@@ -295,8 +322,12 @@
       "anyOf": [
         {"type": "null"},
         {"type": "boolean"},
-        {"type": "integer"},
-        {"type": "number"},
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {"type": "number", "not": {"type": "integer"}},
         {"type": "string"},
         {
           "type": "array",

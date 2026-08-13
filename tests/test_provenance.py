@@ -53,6 +53,21 @@ def test_canonical_json_preserves_utf8_and_recursively_sorts_keys() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        2**53,
+        -(2**53),
+        {"nested": [10**5000]},
+    ],
+)
+def test_canonical_json_rejects_integers_outside_interoperable_range(
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="integer|interoperable"):
+        provenance.canonical_json_bytes(value)
+
+
 def test_sha256_file_hashes_exact_file_bytes(tmp_path: Path) -> None:
     source = tmp_path / "source.bin"
     source.write_bytes(b"science\r\n\x00")
@@ -186,8 +201,9 @@ def test_seed_tree_children_are_deeply_immutable() -> None:
 
 
 def test_seed_node_defensively_freezes_direct_constructor_sequences() -> None:
+    generated = provenance.SeedTree.from_seed(7, {"analysis": None})
     spawn_key = [0]
-    state = [1, 2, 3, 4]
+    state = list(generated.node("analysis").state)
     child = provenance.SeedNode(
         name="analysis",
         entropy=7,
@@ -204,7 +220,7 @@ def test_seed_node_defensively_freezes_direct_constructor_sequences() -> None:
         spawn_key=(),
         pool_size=4,
         n_children_spawned=1,
-        state=(5, 6, 7, 8),
+        state=generated.root.state,
         children=children,
     )
     spawn_key.append(999)
@@ -212,9 +228,22 @@ def test_seed_node_defensively_freezes_direct_constructor_sequences() -> None:
     children.clear()
 
     assert child.spawn_key == (0,)
-    assert child.state == (1, 2, 3, 4)
+    assert child.state == generated.node("analysis").state
     assert root.children == {"analysis": child}
     assert isinstance(root.children, MappingProxyType)
+
+
+def test_seed_node_rejects_invented_seedsequence_state() -> None:
+    with pytest.raises(ValueError, match="state|SeedSequence"):
+        provenance.SeedNode(
+            name="root",
+            entropy=7,
+            spawn_key=(),
+            pool_size=4,
+            n_children_spawned=0,
+            state=(1, 2, 3, 4),
+            children={},
+        )
 
 
 @pytest.mark.parametrize(
@@ -399,7 +428,7 @@ def test_git_provenance_captures_exact_head_dirty_state_and_status_hash(
 
     assert dirty.commit_sha == expected_commit
     assert dirty.dirty is True
-    assert dirty.status_sha256 == "cc6bcd9f62c7f1871ab107caba031d2228692027bb91e43632d33ad464c55183"
+    assert dirty.status_sha256 == "7138fe5f9075b57cd3722a52f7476b97004b7cb9c29b783ea1e408c129c693e9"
     assert dirty.unavailable == ()
 
 
@@ -452,6 +481,55 @@ def test_git_provenance_hash_identifies_hidden_staged_contents(tmp_path: Path) -
     assert first.dirty is True
     assert second.dirty is True
     assert first.commit_sha == second.commit_sha
+    assert first.status_sha256 != second.status_sha256
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="Git executable unavailable")
+def test_git_provenance_fails_closed_on_assume_unchanged_tracked_mutation(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "--quiet")
+    _git(repository, "config", "user.email", "test@example.invalid")
+    _git(repository, "config", "user.name", "Provenance Test")
+    tracked = repository / "tracked.txt"
+    tracked.write_bytes(b"baseline\n")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "--quiet", "-m", "fixture")
+    _git(repository, "update-index", "--assume-unchanged", "tracked.txt")
+    tracked.write_bytes(b"hidden mutation\n")
+
+    record = provenance.capture_git_provenance(repository)
+
+    assert record.state == "unavailable"
+    assert record.unavailable_reason == "special_index_flags"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="Git executable unavailable")
+def test_git_provenance_hashes_tracked_bytes_without_trusting_textconv(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "--quiet")
+    _git(repository, "config", "user.email", "test@example.invalid")
+    _git(repository, "config", "user.name", "Provenance Test")
+    (repository / ".gitattributes").write_bytes(b"tracked.txt diff=constant\n")
+    (repository / "constant.sh").write_bytes(b"#!/bin/sh\nprintf 'same\\n'\n")
+    tracked = repository / "tracked.txt"
+    tracked.write_bytes(b"baseline\n")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "--quiet", "-m", "fixture")
+    _git(repository, "config", "diff.constant.textconv", "sh constant.sh")
+
+    tracked.write_bytes(b"first hidden by textconv\n")
+    first = provenance.capture_git_provenance(repository)
+    tracked.write_bytes(b"second hidden by textconv\n")
+    second = provenance.capture_git_provenance(repository)
+
+    assert first.state == second.state == "available"
+    assert first.dirty is second.dirty is True
     assert first.status_sha256 != second.status_sha256
 
 
@@ -592,6 +670,43 @@ def test_run_manifest_rejects_permissive_or_noncanonical_values(
         _manifest(**changes)
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"root_seed": 2**53},
+        {"bayesian_raw_draws": {"chain": [[10**5000]]}},
+    ],
+)
+def test_run_manifest_rejects_out_of_range_integers_at_construction(
+    changes: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="integer|interoperable|root_seed"):
+        _manifest(**changes)
+
+
+@pytest.mark.parametrize(
+    "run_id", ["CON", "con.txt", "name.", "a..b", "valid\n"]
+)
+def test_run_manifest_rejects_nonportable_run_ids(run_id: str) -> None:
+    with pytest.raises(ValueError, match="run_id|portable"):
+        _manifest(run_id=run_id)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "configs//experiment.yaml",
+        "configs/./experiment.yaml",
+        "configs/con.txt",
+        "configs/name.",
+        "configs/trailing ",
+    ],
+)
+def test_run_manifest_rejects_every_nonportable_path_segment(path: str) -> None:
+    with pytest.raises(ValueError, match="portable|path"):
+        _manifest(config_hashes={path: "1" * 64})
+
+
 def test_canonical_science_hash_excludes_only_declared_volatile_fields() -> None:
     base = _manifest()
     volatile = _manifest(
@@ -709,6 +824,8 @@ def test_run_directory_generates_utc_identity_hash_under_outputs_runs(
     assert run.path.is_dir()
     assert run.runs_root == runs_root
     assert run.deterministic_demo_id is False
+    assert run.creation_root_seed == 42
+    assert run.creation_config_sha256 == "1" * 64
 
 
 def test_run_directory_refuses_generated_and_deterministic_collisions(
@@ -1060,6 +1177,43 @@ def test_finalize_manifest_refuses_mismatched_run_identity_before_write(
     assert list(run.path.iterdir()) == []
 
 
+def test_finalize_manifest_binds_claimed_root_seed_and_config_digest(
+    tmp_path: Path,
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+
+    with pytest.raises(ValueError, match="root_seed|creation"):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                root_seed=43,
+                seed_tree=provenance.SeedTree.from_seed(
+                    43, {"simulation": None}
+                ),
+                artifact_hashes={},
+            ),
+            run,
+        )
+    with pytest.raises(ValueError, match="config|creation"):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                creation_config_sha256="2" * 64,
+                artifact_hashes={},
+            ),
+            run,
+        )
+
+    assert list(run.path.iterdir()) == []
+
+
 def test_finalize_manifest_exclusive_commit_failure_leaves_no_manifest_or_temp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1250,6 +1404,140 @@ def test_finalize_manifest_rechecks_artifacts_immediately_before_commit(
     assert not (run.path / "run_manifest.json").exists()
 
 
+def test_finalize_manifest_validates_inside_exclusive_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    artifact = run.artifact_path("tables/result.csv")
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"first\n")
+    real_create = provenance.atomic_create_bytes
+
+    def mutate_immediately_before_create(
+        destination: str | Path,
+        payload: bytes,
+        **keywords: object,
+    ) -> Path:
+        artifact.write_bytes(b"second\n")
+        return real_create(destination, payload, **keywords)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        provenance, "atomic_create_bytes", mutate_immediately_before_create
+    )
+
+    with pytest.raises(ValueError, match="changed|artifact"):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                artifact_hashes={},
+            ),
+            run,
+            artifact_paths={"tables/result.csv": "tables/result.csv"},
+        )
+
+    assert not (run.path / "run_manifest.json").exists()
+
+
+def test_finalize_manifest_revalidates_after_exclusive_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    artifact = run.artifact_path("tables/result.csv")
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"first\n")
+    real_create = provenance.atomic_create_bytes
+
+    def mutate_immediately_after_create(
+        destination: str | Path,
+        payload: bytes,
+        **keywords: object,
+    ) -> Path:
+        result = real_create(destination, payload, **keywords)  # type: ignore[arg-type]
+        artifact.write_bytes(b"second\n")
+        return result
+
+    monkeypatch.setattr(
+        provenance, "atomic_create_bytes", mutate_immediately_after_create
+    )
+
+    with pytest.raises(
+        (ValueError, provenance.AtomicCommitUncertainError),
+        match="changed|artifact|uncertain",
+    ):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                artifact_hashes={},
+            ),
+            run,
+            artifact_paths={"tables/result.csv": "tables/result.csv"},
+        )
+
+    assert not (run.path / "run_manifest.json").exists()
+
+
+def test_finalize_manifest_validates_emitted_document_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+
+    def refuse_document(schema: object, document: object) -> None:
+        raise ValueError("manifest schema refusal")
+
+    monkeypatch.setattr(provenance, "validate_run_manifest_document", refuse_document)
+
+    with pytest.raises(ValueError, match="schema"):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                artifact_hashes={},
+            ),
+            run,
+        )
+
+    assert not (run.path / "run_manifest.json").exists()
+
+
+def test_finalize_manifest_always_revalidates_seed_tree_semantics(
+    tmp_path: Path,
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    manifest = _manifest(
+        run_id="SYN_demo",
+        deterministic_demo_id=True,
+        artifact_hashes={},
+    )
+    object.__setattr__(manifest.seed_tree.root, "state", (0, 0, 0, 0))
+
+    with pytest.raises(ValueError, match="state|SeedSequence|manifest"):
+        provenance.finalize_manifest(manifest, run)
+
+    assert not (run.path / "run_manifest.json").exists()
+
+
 def test_finalize_manifest_refuses_to_overwrite_existing_manifest(
     tmp_path: Path,
 ) -> None:
@@ -1325,6 +1613,101 @@ def test_atomic_create_temp_cleanup_failure_is_explicitly_postcommit(
     assert list(tmp_path.iterdir()) == [destination]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle-relative cleanup")
+def test_windows_identity_checked_unlink_never_deletes_attacker_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "temporary"
+    displaced = tmp_path / "displaced"
+    target.write_bytes(b"original")
+    metadata = target.stat(follow_symlinks=False)
+    expected = (metadata.st_dev, metadata.st_ino)
+    replacement = b"attacker replacement"
+    attacked = False
+    real_path_stat = Path.stat
+    real_handle_identity = getattr(provenance, "_windows_handle_identity", None)
+
+    def attack() -> None:
+        nonlocal attacked
+        if attacked:
+            return
+        attacked = True
+        target.rename(displaced)
+        target.write_bytes(replacement)
+
+    def attacked_path_stat(
+        path: Path, *args: object, **kwargs: object
+    ) -> os.stat_result:
+        result = real_path_stat(path, *args, **kwargs)
+        if path == target:
+            attack()
+        return result
+
+    def attacked_handle_identity(handle: object) -> tuple[int, int]:
+        assert real_handle_identity is not None
+        result = real_handle_identity(handle)
+        attack()
+        return result
+
+    monkeypatch.setattr(Path, "stat", attacked_path_stat)
+    if real_handle_identity is not None:
+        monkeypatch.setattr(
+            provenance, "_windows_handle_identity", attacked_handle_identity
+        )
+
+    provenance._unlink_path_if_identity(target, expected)
+
+    assert attacked is True
+    assert target.read_bytes() == replacement
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle-relative cleanup")
+def test_windows_identity_checked_rmdir_never_deletes_attacker_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "temporary"
+    displaced = tmp_path / "displaced"
+    target.mkdir()
+    metadata = target.stat(follow_symlinks=False)
+    expected = (metadata.st_dev, metadata.st_ino)
+    attacked = False
+    real_path_stat = Path.stat
+    real_handle_identity = getattr(provenance, "_windows_handle_identity", None)
+
+    def attack() -> None:
+        nonlocal attacked
+        if attacked:
+            return
+        attacked = True
+        target.rename(displaced)
+        target.mkdir()
+
+    def attacked_path_stat(
+        path: Path, *args: object, **kwargs: object
+    ) -> os.stat_result:
+        result = real_path_stat(path, *args, **kwargs)
+        if path == target:
+            attack()
+        return result
+
+    def attacked_handle_identity(handle: object) -> tuple[int, int]:
+        assert real_handle_identity is not None
+        result = real_handle_identity(handle)
+        attack()
+        return result
+
+    monkeypatch.setattr(Path, "stat", attacked_path_stat)
+    if real_handle_identity is not None:
+        monkeypatch.setattr(
+            provenance, "_windows_handle_identity", attacked_handle_identity
+        )
+
+    provenance._rmdir_path_if_identity(target, expected)
+
+    assert attacked is True
+    assert target.is_dir()
+
+
 def test_run_manifest_schema_accepts_document_and_rejects_boundary_corruptions() -> None:
     schema_path = Path(__file__).parents[1] / "schemas" / "run_manifest.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -1338,12 +1721,21 @@ def test_run_manifest_schema_accepts_document_and_rejects_boundary_corruptions()
     corruptions = [
         {**document, "root_seed": True},
         {**document, "root_seed": "42"},
+        {**document, "root_seed": 2**53},
         {**document, "deterministic_demo_id": 1},
         {**document, "started_at": "2026-08-12T12:00:00+00:00"},
+        {**document, "started_at": "2026-08-12T12:00:00Z\n"},
         {**document, "started_at": "2026-02-30T12:00:00Z"},
         {
             **document,
             "git": {**document["git"], "dirty": "false"},  # type: ignore[dict-item]
+        },
+        {
+            **document,
+            "git": {  # type: ignore[dict-item]
+                **document["git"],
+                "commit_sha": "4" * 40 + "\n",
+            },
         },
         {
             **document,
@@ -1367,7 +1759,17 @@ def test_run_manifest_schema_accepts_document_and_rejects_boundary_corruptions()
             },
         },
         {**document, "config_hashes": {"": "1" * 64}},
+        {**document, "config_hashes": {"config.yaml": "1" * 64 + "\n"}},
         {**document, "config_hashes": {"../config.yaml": "1" * 64}},
+        {**document, "config_hashes": {"configs//config.yaml": "1" * 64}},
+        {**document, "config_hashes": {"configs/con.txt": "1" * 64}},
+        {**document, "config_hashes": {"configs/name.": "1" * 64}},
+        {**document, "run_id": "CON"},
+        {**document, "run_id": "con.txt"},
+        {**document, "run_id": "name."},
+        {**document, "run_id": "a..b"},
+        {**document, "run_id": "valid\n"},
+        {**document, "bayesian_raw_draws": {"chain": [[10**5000]]}},
         {
             **document,
             "lockfile": {  # type: ignore[dict-item]
@@ -1435,11 +1837,11 @@ def test_manifest_matches_independent_golden_document_and_hashes() -> None:
     assert manifest.to_dict() == _golden_manifest_document()
     assert (
         manifest.canonical_science_hash
-        == "3469c461bc90cbdcf077d595935f14ba6294b142e201c5212d632dc350c830ff"
+        == "a996babe2890e75893eb1d51cc5499acd3d7cd4eaad4e214a10688bf73a00c40"
     )
     assert (
         manifest.manifest_hash
-        == "1c11151c196dcb8650fd5b462260eddcdee8277435aeb6f4ee03c81943fdcbf4"
+        == "b235d72389fa7ef81433b11de1657ead4803907aba44f674caca0df2db121a78"
     )
 
 
@@ -1478,10 +1880,11 @@ def _remove_directory_link(link: Path) -> None:
 
 def _golden_manifest_document() -> dict[str, object]:
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "run_id": "20260812T120000Z-123456789abc",
         "deterministic_demo_id": False,
         "root_seed": 42,
+        "creation_config_sha256": "1" * 64,
         "seed_tree": {
             "algorithm": "numpy.random.SeedSequence",
             "root_seed": 42,
@@ -1535,10 +1938,10 @@ def _golden_manifest_document() -> dict[str, object]:
         "evidence_labels": ["synthetic_only"],
         "bayesian_raw_draws": {"chain": [[0.25, 0.5]]},
         "canonical_science_hash": (
-            "3469c461bc90cbdcf077d595935f14ba6294b142e201c5212d632dc350c830ff"
+            "a996babe2890e75893eb1d51cc5499acd3d7cd4eaad4e214a10688bf73a00c40"
         ),
         "manifest_hash": (
-            "1c11151c196dcb8650fd5b462260eddcdee8277435aeb6f4ee03c81943fdcbf4"
+            "b235d72389fa7ef81433b11de1657ead4803907aba44f674caca0df2db121a78"
         ),
     }
 
@@ -1553,6 +1956,7 @@ def _manifest(**changes: object) -> provenance.RunManifest:
         "run_id": "20260812T120000Z-123456789abc",
         "deterministic_demo_id": False,
         "root_seed": root_seed,
+        "creation_config_sha256": "1" * 64,
         "seed_tree": seed_tree,
         "started_at": datetime(2026, 8, 12, 12, tzinfo=timezone.utc),
         "ended_at": datetime(2026, 8, 12, 14, tzinfo=timezone.utc),

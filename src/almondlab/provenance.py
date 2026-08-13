@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import base64
 import hashlib
 import json
 import math
@@ -13,13 +14,14 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import platform
 from types import MappingProxyType
-from typing import Literal
+from typing import BinaryIO, Literal
 
 import numpy as np
 
@@ -39,6 +41,11 @@ FILESYSTEM_CONFINEMENT_LIMITATION = (
         "eliminated without a native handle-relative backend."
     )
 )
+
+# RFC 7493/I-JSON's interoperable integer domain: every accepted integer is
+# represented exactly by common IEEE-754 based JSON consumers.
+JSON_INTEGER_MIN = -(2**53 - 1)
+JSON_INTEGER_MAX = 2**53 - 1
 
 
 class _FilesystemLinkRefused(OSError):
@@ -71,11 +78,24 @@ def _strict_json_value(value: object, field_path: str = "$") -> object:
             _strict_json_value(item, f"{field_path}[{index}]")
             for index, item in enumerate(value)
         ]
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"{field_path} must contain only finite numbers")
-    if value is None or isinstance(value, (str, bool, int, float)):
+    if type(value) is int:
+        _require_interoperable_integer(value, field_path)
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"{field_path} must contain only finite numbers")
+        return value
+    if value is None or type(value) in (str, bool):
         return value
     raise TypeError(f"{field_path} is not a JSON value")
+
+
+def _require_interoperable_integer(value: int, field_path: str) -> int:
+    if not JSON_INTEGER_MIN <= value <= JSON_INTEGER_MAX:
+        raise ValueError(
+            f"{field_path} integer is outside the interoperable JSON range"
+        )
+    return value
 
 
 _JSON_SCHEMA_DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
@@ -92,10 +112,12 @@ _SUPPORTED_SCHEMA_KEYWORDS = frozenset(
         "format",
         "items",
         "maximum",
+        "maxLength",
         "maxItems",
         "minimum",
         "minItems",
         "minLength",
+        "not",
         "oneOf",
         "pattern",
         "properties",
@@ -307,6 +329,8 @@ def _check_json_schema_node(
                 )
     if "items" in node:
         _check_json_schema_node(node["items"], root, f"{field_path}.items")
+    if "not" in node:
+        _check_json_schema_node(node["not"], root, f"{field_path}.not")
     if "enum" in node:
         enum = node["enum"]
         if not isinstance(enum, list) or not enum:
@@ -321,7 +345,7 @@ def _check_json_schema_node(
             raise ValueError(f"schema definition at {field_path}.enum has duplicates")
     if "const" in node:
         _assert_json_document_value(node["const"], f"{field_path}.const")
-    for integer_keyword in ("minItems", "maxItems", "minLength"):
+    for integer_keyword in ("minItems", "maxItems", "minLength", "maxLength"):
         if integer_keyword in node and (
             type(node[integer_keyword]) is not int or node[integer_keyword] < 0
         ):
@@ -334,6 +358,12 @@ def _check_json_schema_node(
         and node["minItems"] > node["maxItems"]
     ):
         raise ValueError(f"schema definition at {field_path} has inverted item bounds")
+    if (
+        "minLength" in node
+        and "maxLength" in node
+        and node["minLength"] > node["maxLength"]
+    ):
+        raise ValueError(f"schema definition at {field_path} has inverted length bounds")
     if "uniqueItems" in node and type(node["uniqueItems"]) is not bool:
         raise ValueError(f"schema definition at {field_path}.uniqueItems must be boolean")
     if "pattern" in node:
@@ -405,6 +435,14 @@ def _validate_json_schema_node(
                 f"{composite} branch",
             )
 
+    if "not" in node:
+        try:
+            _validate_json_schema_node(node["not"], instance, root, field_path)
+        except ValueError:
+            pass
+        else:
+            _raise_schema_validation(field_path, "must not match the excluded schema")
+
     if isinstance(instance, Mapping):
         if any(type(name) is not str for name in instance):
             _raise_schema_validation(field_path, "object keys must be strings")
@@ -458,6 +496,8 @@ def _validate_json_schema_node(
     if type(instance) is str:
         if "minLength" in node and len(instance) < node["minLength"]:
             _raise_schema_validation(field_path, "is shorter than minLength")
+        if "maxLength" in node and len(instance) > node["maxLength"]:
+            _raise_schema_validation(field_path, "is longer than maxLength")
         if "pattern" in node and re.search(node["pattern"], instance) is None:
             _raise_schema_validation(field_path, "does not match pattern")
         if node.get("format") == "date-time":
@@ -520,7 +560,15 @@ def _assert_json_document_value(value: object, field_path: str) -> None:
         for index, child in enumerate(value):
             _assert_json_document_value(child, f"{field_path}[{index}]")
         return
-    if value is None or type(value) in (str, bool, int):
+    if type(value) is int:
+        try:
+            _require_interoperable_integer(value, field_path)
+        except ValueError as error:
+            raise ValueError(
+                f"schema definition at {field_path} has a non-interoperable integer"
+            ) from error
+        return
+    if value is None or type(value) in (str, bool):
         return
     if type(value) is float and math.isfinite(value):
         return
@@ -631,10 +679,24 @@ class AtomicCommitUncertainError(OSError):
 
     committed = True
 
-    def __init__(self, destination: str | Path) -> None:
+    def __init__(
+        self,
+        destination: str | Path,
+        *,
+        retained_path: str | Path | None = None,
+    ) -> None:
         self.destination = Path(destination)
+        self.retained_path = (
+            None if retained_path is None else Path(retained_path)
+        )
+        retained = (
+            ""
+            if self.retained_path is None
+            else f"; retained path: {self.retained_path}"
+        )
         super().__init__(
-            f"atomic commit completed but durability is uncertain: {self.destination}"
+            "atomic commit completed but durability is uncertain: "
+            f"{self.destination}{retained}"
         )
 
 
@@ -656,7 +718,10 @@ class FileProvenance:
         if self.state == "available":
             if not _is_sha256(self.sha256):
                 raise ValueError("available file provenance requires an exact SHA-256")
-            if type(self.size_bytes) is not int or self.size_bytes < 0:
+            if (
+                type(self.size_bytes) is not int
+                or not 0 <= self.size_bytes <= JSON_INTEGER_MAX
+            ):
                 raise ValueError("available file provenance requires a byte size")
             if self.unavailable_reason is not None:
                 raise ValueError("available file provenance cannot have an unavailable reason")
@@ -765,6 +830,7 @@ class RunManifest:
     run_id: str
     deterministic_demo_id: bool
     root_seed: int
+    creation_config_sha256: str
     seed_tree: SeedTree
     started_at: datetime
     ended_at: datetime | None
@@ -777,19 +843,20 @@ class RunManifest:
     runtime: RuntimeProvenance
     evidence_labels: tuple[str, ...]
     bayesian_raw_draws: object
-    schema_version: str = "1.0.0"
+    schema_version: str = "1.1.0"
 
     def __post_init__(self) -> None:
-        if not isinstance(self.run_id, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.run_id
-        ):
-            raise ValueError("run_id must be one safe path component")
+        _validate_run_id(self.run_id)
         if type(self.deterministic_demo_id) is not bool:
             raise TypeError("deterministic_demo_id must be a boolean without coercion")
         if type(self.root_seed) is not int:
             raise TypeError("root_seed must be an integer without coercion")
-        if self.root_seed < 0:
-            raise ValueError("root_seed must be nonnegative")
+        if not 0 <= self.root_seed <= JSON_INTEGER_MAX:
+            raise ValueError("root_seed must be an interoperable nonnegative integer")
+        if not _is_sha256(self.creation_config_sha256):
+            raise ValueError(
+                "creation_config_sha256 must be an exact lowercase SHA-256"
+            )
         if not isinstance(self.seed_tree, SeedTree):
             raise TypeError("seed_tree must be a SeedTree")
         if self.seed_tree.root_seed != self.root_seed:
@@ -857,8 +924,8 @@ class RunManifest:
             "bayesian_raw_draws",
             _deep_freeze_json(self.bayesian_raw_draws, "bayesian_raw_draws"),
         )
-        if type(self.schema_version) is not str or self.schema_version != "1.0.0":
-            raise ValueError("schema_version must be exactly 1.0.0")
+        if type(self.schema_version) is not str or self.schema_version != "1.1.0":
+            raise ValueError("schema_version must be exactly 1.1.0")
 
     def canonical_science_payload(self) -> dict[str, object]:
         """Return the manifest fields allowed to define deterministic science."""
@@ -907,6 +974,7 @@ class RunManifest:
             "run_id": self.run_id,
             "deterministic_demo_id": self.deterministic_demo_id,
             "root_seed": self.root_seed,
+            "creation_config_sha256": self.creation_config_sha256,
             "seed_tree": self.seed_tree.to_dict(),
             "started_at": _format_utc(self.started_at),
             "ended_at": None if self.ended_at is None else _format_utc(self.ended_at),
@@ -930,6 +998,8 @@ class RunDirectory:
     path: Path
     run_id: str
     deterministic_demo_id: bool
+    creation_root_seed: int
+    creation_config_sha256: str
     _root_identity: tuple[int, int]
     _path_identity: tuple[int, int]
 
@@ -940,6 +1010,8 @@ class RunDirectory:
         path: Path,
         run_id: str,
         deterministic_demo_id: bool,
+        creation_root_seed: int = 0,
+        creation_config_sha256: str = "",
     ) -> None:
         raise TypeError("RunDirectory instances must be claimed with RunDirectory.create")
 
@@ -951,6 +1023,8 @@ class RunDirectory:
         path: Path,
         run_id: str,
         deterministic_demo_id: bool,
+        creation_root_seed: int,
+        creation_config_sha256: str,
         root_identity: tuple[int, int],
         path_identity: tuple[int, int],
     ) -> "RunDirectory":
@@ -960,6 +1034,10 @@ class RunDirectory:
         object.__setattr__(instance, "run_id", run_id)
         object.__setattr__(
             instance, "deterministic_demo_id", deterministic_demo_id
+        )
+        object.__setattr__(instance, "creation_root_seed", creation_root_seed)
+        object.__setattr__(
+            instance, "creation_config_sha256", creation_config_sha256
         )
         object.__setattr__(instance, "_root_identity", root_identity)
         object.__setattr__(instance, "_path_identity", path_identity)
@@ -973,6 +1051,13 @@ class RunDirectory:
         _validate_run_id(self.run_id)
         if type(self.deterministic_demo_id) is not bool:
             raise TypeError("deterministic_demo_id must be a boolean without coercion")
+        if (
+            type(self.creation_root_seed) is not int
+            or not 0 <= self.creation_root_seed <= JSON_INTEGER_MAX
+        ):
+            raise ValueError("creation_root_seed must be an interoperable root seed")
+        if not _is_sha256(self.creation_config_sha256):
+            raise ValueError("creation_config_sha256 must be an exact SHA-256")
         if path.parent != root or path.name != self.run_id:
             raise ValueError("RunDirectory path must remain directly inside outputs/runs")
         _assert_no_links(root)
@@ -1013,8 +1098,8 @@ class RunDirectory:
             raise ValueError("config_sha256 must be an exact lowercase SHA-256")
         if type(root_seed) is not int:
             raise TypeError("root_seed must be an integer without coercion")
-        if root_seed < 0:
-            raise ValueError("root_seed must be nonnegative")
+        if not 0 <= root_seed <= JSON_INTEGER_MAX:
+            raise ValueError("root_seed must be an interoperable nonnegative integer")
         if deterministic_run_id is None:
             instant = datetime.now(timezone.utc) if timestamp is None else _utc_datetime(
                 timestamp, "timestamp"
@@ -1065,6 +1150,8 @@ class RunDirectory:
                         path=destination,
                         run_id=run_id,
                         deterministic_demo_id=deterministic_demo_id,
+                        creation_root_seed=root_seed,
+                        creation_config_sha256=config_sha256,
                         root_identity=root_identity,
                         path_identity=path_identity,
                     )
@@ -1104,6 +1191,8 @@ class RunDirectory:
                 path=destination,
                 run_id=run_id,
                 deterministic_demo_id=deterministic_demo_id,
+                creation_root_seed=root_seed,
+                creation_config_sha256=config_sha256,
                 root_identity=root_identity,
                 path_identity=path_identity,
             )
@@ -1126,6 +1215,102 @@ class RunDirectory:
         return candidate
 
 
+@dataclass(slots=True)
+class _HeldArtifact:
+    name: str
+    path: Path
+    handle: BinaryIO
+    baseline_signature: tuple[int, int, int, int, int]
+    baseline_record: FileProvenance
+
+    def require_unchanged(self) -> None:
+        record, signature = _capture_held_artifact(
+            self.name, self.path, self.handle
+        )
+        if record != self.baseline_record or signature != self.baseline_signature:
+            raise ValueError(
+                f"artifact {self.name} changed during manifest finalization"
+            )
+
+
+def _open_held_artifact(name: str, path: Path) -> _HeldArtifact:
+    if os.name != "nt":
+        descriptor = _open_regular_file_descriptor(path)
+    else:
+        if _path_is_link(path) or _contains_link(path.parent, stop_at=None):
+            raise ValueError(f"artifact {name} cannot be a filesystem link")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        descriptor = os.open(path, flags)
+    handle = os.fdopen(descriptor, "rb")
+    try:
+        record, signature = _capture_held_artifact(name, path, handle)
+    except BaseException:
+        handle.close()
+        raise
+    return _HeldArtifact(name, path, handle, signature, record)
+
+
+def _capture_held_artifact(
+    name: str, path: Path, handle: BinaryIO
+) -> tuple[FileProvenance, tuple[int, int, int, int, int]]:
+    try:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"artifact {name} is not a regular file")
+        handle.seek(0)
+        digest = hashlib.sha256()
+        size = 0
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+        after = os.fstat(handle.fileno())
+        path_metadata = path.stat(follow_symlinks=False)
+    except OSError as error:
+        raise ValueError(f"artifact {name} became unavailable") from error
+    signature = (
+        int(after.st_dev),
+        int(after.st_ino),
+        int(after.st_size),
+        int(after.st_mtime_ns),
+        int(after.st_ctime_ns),
+    )
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+        or size != after.st_size
+        or path_metadata.st_dev != after.st_dev
+        or path_metadata.st_ino != after.st_ino
+        or path_metadata.st_size != after.st_size
+        or not stat.S_ISREG(path_metadata.st_mode)
+        or _path_is_link(path)
+    ):
+        raise ValueError(f"artifact {name} changed during manifest finalization")
+    return (
+        FileProvenance(
+            path=name,
+            sha256=digest.hexdigest(),
+            size_bytes=size,
+            state="available",
+            unavailable_reason=None,
+        ),
+        signature,
+    )
+
+
+def _load_run_manifest_schema() -> Mapping[str, object]:
+    schema_path = Path(__file__).resolve().parents[2] / "schemas" / "run_manifest.schema.json"
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("run manifest schema is unavailable or invalid") from error
+    if not isinstance(schema, Mapping):
+        raise ValueError("run manifest schema must be an object")
+    return schema
+
+
 def finalize_manifest(
     manifest: RunManifest,
     run_directory: RunDirectory,
@@ -1144,6 +1329,12 @@ def finalize_manifest(
     if manifest.deterministic_demo_id is not run_directory.deterministic_demo_id:
         raise ValueError(
             "manifest deterministic_demo_id must match RunDirectory creation mode"
+        )
+    if manifest.root_seed != run_directory.creation_root_seed:
+        raise ValueError("manifest root_seed must match RunDirectory creation root_seed")
+    if manifest.creation_config_sha256 != run_directory.creation_config_sha256:
+        raise ValueError(
+            "manifest creation_config_sha256 must match the claimed run directory"
         )
     declared = {} if artifact_paths is None else artifact_paths
     if not isinstance(declared, Mapping):
@@ -1203,11 +1394,61 @@ def finalize_manifest(
                 f"artifact {name} changed during manifest finalization"
             )
     destination = run_directory.artifact_path("run_manifest.json")
-    atomic_create_bytes(
-        destination,
-        canonical_json_bytes(finalized.to_dict()) + b"\n",
-        _expected_parent_identity=run_directory._path_identity,
-    )
+    document = finalized.to_dict()
+    schema = _load_run_manifest_schema()
+    validate_run_manifest_document(schema, document)
+    payload = canonical_json_bytes(document) + b"\n"
+
+    with ExitStack() as held_stack:
+        held_artifacts: list[_HeldArtifact] = []
+        for name, relative_path in sorted(declared.items()):
+            held = _open_held_artifact(
+                name, run_directory.artifact_path(relative_path)
+            )
+            held_stack.callback(held.handle.close)
+            if held.baseline_record != captured_artifacts[name]:
+                raise ValueError(
+                    f"artifact {name} changed during manifest finalization"
+                )
+            held_artifacts.append(held)
+
+        def validate_publication_state() -> None:
+            run_directory._validate_claim()
+            validate_run_manifest_document(schema, document)
+            for held in held_artifacts:
+                held.require_unchanged()
+
+        validate_publication_state()
+        committed_manifest_identity: list[tuple[int, int]] = []
+        atomic_create_bytes(
+            destination,
+            payload,
+            _expected_parent_identity=run_directory._path_identity,
+            _validator=validate_publication_state,
+            _committed_identity=committed_manifest_identity,
+        )
+        if len(committed_manifest_identity) != 1:
+            raise AtomicCommitUncertainError(
+                destination, retained_path=destination
+            )
+        manifest_identity = committed_manifest_identity[0]
+        try:
+            manifest_record = capture_file_provenance(
+                destination, base_directory=run_directory.path
+            )
+            if (
+                manifest_record.state != "available"
+                or manifest_record.sha256 != sha256_bytes(payload)
+                or manifest_record.size_bytes != len(payload)
+            ):
+                raise ValueError("published manifest changed during finalization")
+            validate_publication_state()
+        except BaseException as error:
+            if _unlink_path_if_identity(destination, manifest_identity):
+                raise
+            raise AtomicCommitUncertainError(
+                destination, retained_path=destination
+            ) from error
     return finalized
 
 
@@ -1228,17 +1469,21 @@ def _validate_run_id(run_id: object) -> None:
 def _normalize_artifact_path(relative_path: str | Path) -> str:
     if not isinstance(relative_path, (str, Path)):
         raise TypeError("artifact path must be a string or Path")
-    relative = Path(relative_path)
+    raw = relative_path if isinstance(relative_path, str) else relative_path.as_posix()
     if (
-        not str(relative_path)
-        or relative.is_absolute()
-        or bool(relative.drive)
-        or any(part in {"", ".", ".."} for part in relative.parts)
+        not raw
+        or "\\" in raw
+        or raw.startswith("/")
+        or raw.endswith("/")
+        or re.match(r"^[A-Za-z]:", raw) is not None
     ):
         raise ValueError("artifact path must be a nonempty relative path without traversal")
-    if any(not _is_portable_component(part) for part in relative.parts):
+    parts = raw.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("artifact path must be a nonempty relative path without traversal")
+    if any(not _is_portable_component(part) for part in parts):
         raise ValueError("artifact path must contain only portable path components")
-    return relative.as_posix()
+    return "/".join(parts)
 
 
 _WINDOWS_RESERVED_NAMES = {
@@ -1250,11 +1495,16 @@ _WINDOWS_RESERVED_NAMES = {
     *(f"LPT{index}" for index in range(1, 10)),
 }
 
+_PORTABLE_COMPONENT_PATTERN = re.compile(
+    r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
+)
+
 
 def _is_portable_component(component: str) -> bool:
-    if not component or component.endswith((".", " ")):
-        return False
-    if any(ord(character) < 32 or character in '<>:"/\\|?*' for character in component):
+    if (
+        type(component) is not str
+        or _PORTABLE_COMPONENT_PATTERN.fullmatch(component) is None
+    ):
         return False
     stem = component.split(".", 1)[0].upper()
     return stem not in _WINDOWS_RESERVED_NAMES
@@ -1357,12 +1607,19 @@ def _rmdir_name_if_identity(
 def _rmdir_path_if_identity(
     path: Path, expected_identity: tuple[int, int]
 ) -> None:
+    if os.name == "nt":
+        _windows_delete_path_if_identity(
+            path, expected_identity, is_directory=True
+        )
+        return
     try:
-        if _directory_identity(path) != expected_identity:
-            return
+        parent_descriptor = _open_directory_descriptor(path.parent)
     except (FileNotFoundError, OSError, ValueError):
         return
-    path.rmdir()
+    try:
+        _rmdir_name_if_identity(parent_descriptor, path.name, expected_identity)
+    finally:
+        os.close(parent_descriptor)
 
 
 def _rename_directory_noreplace(
@@ -1503,9 +1760,14 @@ def _deep_freeze_json(value: object, field_path: str) -> object:
             _deep_freeze_json(item, f"{field_path}[{index}]")
             for index, item in enumerate(value)
         )
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"{field_path} must contain only finite numbers")
-    if value is None or isinstance(value, (str, bool, int, float)):
+    if type(value) is int:
+        _require_interoperable_integer(value, field_path)
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"{field_path} must contain only finite numbers")
+        return value
+    if value is None or type(value) in (str, bool):
         return value
     raise TypeError(f"{field_path} is not a JSON value")
 
@@ -1688,58 +1950,38 @@ def capture_git_provenance(repository: str | Path) -> GitProvenance:
     except (OSError, subprocess.CalledProcessError):
         return _unavailable_git("git_unavailable")
     try:
-        root_result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=working_directory,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
+        root_result = _git_run(
+            working_directory, "rev-parse", "--show-toplevel"
         )
         root = Path(root_result.stdout.decode("utf-8", errors="strict").strip())
     except (OSError, UnicodeError, subprocess.CalledProcessError):
         return _unavailable_git("not_a_git_repository")
     try:
-        commit_result = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD"],
-            cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-        )
-        commit_sha = commit_result.stdout.decode("ascii", errors="strict").strip()
+        commit_sha = _git_output(
+            root, "rev-parse", "--verify", "HEAD^{commit}"
+        ).decode("ascii", errors="strict").strip()
         if not _is_git_sha(commit_sha):
             return _unavailable_git("invalid_head")
-        first_snapshot = _capture_git_snapshot(root)
-        second_snapshot = _capture_git_snapshot(root)
-        final_commit = _git_output(root, "rev-parse", "--verify", "HEAD").decode(
-            "ascii", errors="strict"
-        ).strip()
+        object_format = _git_output(
+            root, "rev-parse", "--show-object-format=storage"
+        ).decode("ascii", errors="strict").strip()
+        if object_format != "sha1":
+            return _unavailable_git("unsupported_object_format")
+        first_snapshot = _capture_git_snapshot(root, commit_sha)
+        second_snapshot = _capture_git_snapshot(root, commit_sha)
+        final_commit = _git_output(
+            root, "rev-parse", "--verify", "HEAD^{commit}"
+        ).decode("ascii", errors="strict").strip()
     except _GitSnapshotUnavailable as error:
         return _unavailable_git(error.reason)
     except (OSError, UnicodeError, subprocess.CalledProcessError):
         return _unavailable_git("capture_failed")
     if first_snapshot != second_snapshot or final_commit != commit_sha:
         return _unavailable_git("changed_during_capture")
-    (
-        status_bytes,
-        index_diff_bytes,
-        worktree_diff_bytes,
-        untracked_records,
-    ) = first_snapshot
-    if status_bytes:
-        status_identity = canonical_json_bytes(
-            {
-                "porcelain_sha256": sha256_bytes(status_bytes),
-                "index_diff_sha256": sha256_bytes(index_diff_bytes),
-                "worktree_diff_sha256": sha256_bytes(worktree_diff_bytes),
-                "untracked": untracked_records,
-            }
-        )
-    else:
-        status_identity = b""
+    dirty, status_identity = first_snapshot
     return GitProvenance(
         commit_sha=commit_sha,
-        dirty=bool(status_bytes),
+        dirty=dirty,
         status_sha256=sha256_bytes(status_identity),
         state="available",
         unavailable_reason=None,
@@ -1753,71 +1995,319 @@ class _GitSnapshotUnavailable(Exception):
 
 
 def _capture_git_snapshot(
-    root: Path,
-) -> tuple[bytes, bytes, bytes, tuple[dict[str, object], ...]]:
+    root: Path, commit_sha: str
+) -> tuple[bool, bytes]:
     _require_clean_submodules(root)
-    status_bytes = _git_output(
+    git_directory_text = _git_output(root, "rev-parse", "--git-dir").decode(
+        "utf-8", errors="strict"
+    ).strip()
+    git_directory = Path(git_directory_text)
+    if not git_directory.is_absolute():
+        git_directory = root / git_directory
+    if (git_directory / "index.lock").exists():
+        raise _GitSnapshotUnavailable("index_locked")
+
+    verbose_index = _git_output(
         root,
-        "-c",
-        "core.quotepath=false",
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-        "--ignore-submodules=none",
-    )
-    index_diff_bytes = _git_output(
-        root,
-        "-c",
-        "core.quotepath=false",
-        "diff",
+        "ls-files",
         "--cached",
-        "--binary",
-        "--full-index",
-        "--no-ext-diff",
-        "--no-renames",
-        "--ignore-submodules=none",
-        "HEAD",
+        "--stage",
+        "--full-name",
+        "-v",
+        "-z",
         "--",
     )
-    worktree_diff_bytes = _git_output(
+    fsmonitor_index = _git_output(
         root,
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--binary",
-        "--full-index",
-        "--no-ext-diff",
-        "--no-renames",
-        "--ignore-submodules=none",
+        "ls-files",
+        "--cached",
+        "--stage",
+        "--full-name",
+        "-f",
+        "-z",
         "--",
+    )
+    verbose_entries = _parse_git_index_listing(verbose_index)
+    fsmonitor_entries = _parse_git_index_listing(fsmonitor_index)
+    if [entry[1:] for entry in verbose_entries] != [
+        entry[1:] for entry in fsmonitor_entries
+    ]:
+        raise _GitSnapshotUnavailable("index_changed_during_capture")
+    if any(
+        tag.islower() or tag.upper() == b"S"
+        for tag, *_rest in verbose_entries
+    ) or any(tag.islower() for tag, *_rest in fsmonitor_entries):
+        raise _GitSnapshotUnavailable("special_index_flags")
+
+    index_entries = [entry[1:] for entry in verbose_entries]
+    head_entries = _parse_git_tree_listing(
+        _git_output(
+            root,
+            "--no-replace-objects",
+            "ls-tree",
+            "-r",
+            "-z",
+            "--full-tree",
+            commit_sha,
+        )
+    )
+    resolve_undo = _git_output(
+        root, "ls-files", "--resolve-undo", "--full-name", "-z", "--"
     )
     untracked_bytes = _git_output(
         root,
         "-c",
-        "core.quotepath=false",
+        f"core.excludesFile={os.devnull}",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
         "ls-files",
         "--others",
-        "--exclude-standard",
+        "--exclude-per-directory=.gitignore",
+        "--full-name",
         "-z",
+        "--",
     )
-    records: list[dict[str, object]] = []
+
+    head_identity = [
+        {
+            "mode": mode.decode("ascii"),
+            "type": object_type.decode("ascii"),
+            "oid": oid.decode("ascii"),
+            "path_b64": _git_path_identity(path),
+        }
+        for mode, object_type, oid, path in head_entries
+    ]
+    index_identity: list[dict[str, object]] = []
+    worktree_deltas: list[dict[str, object]] = []
+    for mode, oid, stage, encoded_path in index_entries:
+        mode_text = mode.decode("ascii", errors="strict")
+        oid_text = oid.decode("ascii", errors="strict")
+        stage_number = int(stage)
+        if mode_text not in {"100644", "100755", "120000", "160000"}:
+            raise _GitSnapshotUnavailable("unsupported_index_mode")
+        if len(oid_text) != 40 or re.fullmatch(r"[0-9a-f]{40}", oid_text) is None:
+            raise _GitSnapshotUnavailable("invalid_index_object")
+        index_identity.append(
+            {
+                "mode": mode_text,
+                "oid": oid_text,
+                "stage": stage_number,
+                "path_b64": _git_path_identity(encoded_path),
+            }
+        )
+        if stage_number != 0:
+            continue
+        if mode_text == "160000":
+            continue
+        expected_bytes = _git_output(
+            root, "--no-replace-objects", "cat-file", "blob", oid_text
+        )
+        expected_digest = sha256_bytes(expected_bytes)
+        actual = _capture_git_worktree_entry(root, encoded_path)
+        expected_kind = "symlink" if mode_text == "120000" else "regular"
+        mismatch = (
+            actual["kind"] != expected_kind
+            or actual.get("sha256") != expected_digest
+            or actual.get("size_bytes") != len(expected_bytes)
+        )
+        if (
+            not mismatch
+            and os.name != "nt"
+            and expected_kind == "regular"
+            and actual.get("executable") != (mode_text == "100755")
+        ):
+            mismatch = True
+        if mismatch:
+            worktree_deltas.append(
+                {
+                    "path_b64": _git_path_identity(encoded_path),
+                    "expected_mode": mode_text,
+                    "expected_sha256": expected_digest,
+                    "expected_size_bytes": len(expected_bytes),
+                    "actual": actual,
+                }
+            )
+
+    head_index_projection = [
+        (mode, oid, path)
+        for mode, object_type, oid, path in head_entries
+        if object_type in {b"blob", b"commit"}
+    ]
+    index_projection = [
+        (mode, oid, path)
+        for mode, oid, stage, path in index_entries
+        if stage == b"0"
+    ]
+    staged_dirty = head_index_projection != index_projection or any(
+        stage != b"0" for _mode, _oid, stage, _path in index_entries
+    )
+
+    untracked_records: list[dict[str, object]] = []
     for encoded_path in untracked_bytes.split(b"\0"):
         if not encoded_path:
             continue
-        try:
-            relative_path = encoded_path.decode("utf-8", errors="strict")
-        except UnicodeError as error:
-            raise _GitSnapshotUnavailable("untracked_path_not_utf8") from error
-        record = capture_file_provenance(
-            root / relative_path, base_directory=root
+        record = _capture_git_worktree_entry(root, encoded_path)
+        if record["kind"] not in {"regular", "symlink"}:
+            raise _GitSnapshotUnavailable("untracked_file_unavailable")
+        untracked_records.append(
+            {"path_b64": _git_path_identity(encoded_path), **record}
         )
-        if record.state != "available":
-            raise _GitSnapshotUnavailable(
-                f"untracked_file_{record.unavailable_reason}"
-            )
-        records.append(record.to_dict())
-    return status_bytes, index_diff_bytes, worktree_diff_bytes, tuple(records)
+
+    dirty = bool(
+        staged_dirty or worktree_deltas or untracked_records or resolve_undo
+    )
+    if not dirty:
+        return False, b""
+    identity = canonical_json_bytes(
+        {
+            "head": head_identity,
+            "index": index_identity,
+            "resolve_undo_sha256": sha256_bytes(resolve_undo),
+            "worktree_deltas": worktree_deltas,
+            "untracked": untracked_records,
+        }
+    )
+    return True, identity
+
+
+def _parse_git_index_listing(
+    payload: bytes,
+) -> list[tuple[bytes, bytes, bytes, bytes, bytes]]:
+    entries: list[tuple[bytes, bytes, bytes, bytes, bytes]] = []
+    for record in payload.split(b"\0"):
+        if not record:
+            continue
+        tag, tag_separator, body = record.partition(b" ")
+        metadata, path_separator, path = body.partition(b"\t")
+        fields = metadata.split(b" ")
+        if (
+            tag_separator != b" "
+            or path_separator != b"\t"
+            or len(tag) != 1
+            or len(fields) != 3
+            or not path
+        ):
+            raise _GitSnapshotUnavailable("invalid_index_listing")
+        mode, oid, stage = fields
+        if stage not in {b"0", b"1", b"2", b"3"}:
+            raise _GitSnapshotUnavailable("invalid_index_stage")
+        _validate_raw_git_path(path)
+        entries.append((tag, mode, oid, stage, path))
+    return entries
+
+
+def _parse_git_tree_listing(
+    payload: bytes,
+) -> list[tuple[bytes, bytes, bytes, bytes]]:
+    entries: list[tuple[bytes, bytes, bytes, bytes]] = []
+    for record in payload.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, path = record.partition(b"\t")
+        fields = metadata.split(b" ")
+        if separator != b"\t" or len(fields) != 3 or not path:
+            raise _GitSnapshotUnavailable("invalid_head_tree")
+        mode, object_type, oid = fields
+        if object_type not in {b"blob", b"commit"}:
+            raise _GitSnapshotUnavailable("unsupported_head_object")
+        _validate_raw_git_path(path)
+        entries.append((mode, object_type, oid, path))
+    return entries
+
+
+def _validate_raw_git_path(path: bytes) -> None:
+    if (
+        not path
+        or path.startswith(b"/")
+        or path.endswith(b"/")
+        or b"\\" in path
+        or any(part in {b"", b".", b".."} for part in path.split(b"/"))
+    ):
+        raise _GitSnapshotUnavailable("invalid_git_path")
+
+
+def _git_path_identity(path: bytes) -> str:
+    _validate_raw_git_path(path)
+    return base64.b64encode(path).decode("ascii")
+
+
+def _capture_git_worktree_entry(root: Path, encoded_path: bytes) -> dict[str, object]:
+    _validate_raw_git_path(encoded_path)
+    try:
+        relative_text = (
+            encoded_path.decode("utf-8", errors="strict")
+            if os.name == "nt"
+            else os.fsdecode(encoded_path)
+        )
+    except UnicodeError as error:
+        raise _GitSnapshotUnavailable("git_path_not_utf8") from error
+    candidate = root.joinpath(*relative_text.split("/"))
+    if _contains_link(candidate.parent, stop_at=root):
+        raise _GitSnapshotUnavailable("tracked_parent_link")
+    try:
+        before_path = candidate.lstat()
+    except FileNotFoundError:
+        return {"kind": "missing"}
+    except OSError as error:
+        raise _GitSnapshotUnavailable("worktree_entry_unreadable") from error
+    if stat.S_ISLNK(before_path.st_mode):
+        try:
+            target = os.readlink(candidate)
+            after_path = candidate.lstat()
+        except OSError as error:
+            raise _GitSnapshotUnavailable("worktree_entry_changed") from error
+        if (
+            before_path.st_dev != after_path.st_dev
+            or before_path.st_ino != after_path.st_ino
+            or before_path.st_mtime_ns != after_path.st_mtime_ns
+            or before_path.st_ctime_ns != after_path.st_ctime_ns
+        ):
+            raise _GitSnapshotUnavailable("worktree_entry_changed")
+        target_bytes = os.fsencode(target)
+        return {
+            "kind": "symlink",
+            "sha256": sha256_bytes(target_bytes),
+            "size_bytes": len(target_bytes),
+        }
+    if not stat.S_ISREG(before_path.st_mode):
+        return {"kind": "other"}
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        descriptor = os.open(candidate, flags)
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+            after = os.fstat(handle.fileno())
+        repeated = candidate.lstat()
+    except OSError as error:
+        raise _GitSnapshotUnavailable("worktree_entry_unreadable") from error
+    if (
+        before_path.st_dev != before.st_dev
+        or before_path.st_ino != before.st_ino
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+        or repeated.st_dev != after.st_dev
+        or repeated.st_ino != after.st_ino
+        or repeated.st_size != after.st_size
+        or size != after.st_size
+    ):
+        raise _GitSnapshotUnavailable("worktree_entry_changed")
+    return {
+        "kind": "regular",
+        "sha256": digest.hexdigest(),
+        "size_bytes": size,
+        "executable": bool(before.st_mode & stat.S_IXUSR),
+    }
 
 
 def _require_clean_submodules(root: Path) -> None:
@@ -1839,42 +2329,50 @@ def _require_clean_submodules(root: Path) -> None:
         submodule = root / relative_path
         if not submodule.is_dir() or _contains_link(submodule, stop_at=root):
             raise _GitSnapshotUnavailable("submodule_unavailable")
-        try:
-            top_level = Path(
-                _git_output(submodule, "rev-parse", "--show-toplevel")
-                .decode("utf-8", errors="strict")
-                .strip()
-            ).absolute()
-            actual_commit = _git_output(
-                submodule, "rev-parse", "--verify", "HEAD"
-            ).strip()
-            status = _git_output(
-                submodule,
-                "-c",
-                "core.quotepath=false",
-                "status",
-                "--porcelain=v1",
-                "-z",
-                "--untracked-files=all",
-                "--ignore-submodules=none",
+        record = capture_git_provenance(submodule)
+        if record.state != "available":
+            reason = (
+                "dirty_submodule"
+                if record.unavailable_reason == "special_index_flags"
+                else "submodule_unavailable"
             )
-        except (OSError, UnicodeError, subprocess.CalledProcessError) as error:
-            raise _GitSnapshotUnavailable("submodule_unavailable") from error
-        if top_level != submodule.absolute():
-            raise _GitSnapshotUnavailable("submodule_unavailable")
-        if actual_commit != expected_commit or status:
+            raise _GitSnapshotUnavailable(reason)
+        if (
+            record.commit_sha is None
+            or record.commit_sha.encode("ascii") != expected_commit
+            or record.dirty is not False
+        ):
             raise _GitSnapshotUnavailable("dirty_submodule")
-        _require_clean_submodules(submodule)
 
 
 def _git_output(root: Path, *arguments: str) -> bytes:
+    return _git_run(root, *arguments).stdout
+
+
+def _git_run(root: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith("GIT_")
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "LC_ALL": "C",
+        }
+    )
     return subprocess.run(
         ["git", *arguments],
         cwd=root,
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=True,
-    ).stdout
+    )
 
 
 def _portable_file_path(
@@ -1946,8 +2444,13 @@ class SeedNode:
     def __post_init__(self) -> None:
         if type(self.name) is not str or not _SEED_NAME_PATTERN.fullmatch(self.name):
             raise ValueError("seed node name is invalid")
-        if type(self.entropy) is not int or self.entropy < 0:
-            raise TypeError("seed entropy must be a nonnegative integer without coercion")
+        if (
+            type(self.entropy) is not int
+            or not 0 <= self.entropy <= JSON_INTEGER_MAX
+        ):
+            raise TypeError(
+                "seed entropy must be an interoperable nonnegative integer without coercion"
+            )
         spawn_key = _freeze_seed_integers(self.spawn_key, "seed spawn_key")
         if type(self.pool_size) is not int or self.pool_size < 4:
             raise TypeError("seed pool_size must be an integer of at least four")
@@ -1974,6 +2477,18 @@ class SeedNode:
                 raise ValueError("seed children must share parent entropy and pool size")
             if child.spawn_key != spawn_key + (index,):
                 raise ValueError("seed child spawn keys must match sorted name order")
+        sequence = np.random.SeedSequence(
+            entropy=self.entropy,
+            spawn_key=spawn_key,
+            pool_size=self.pool_size,
+            n_children_spawned=self.n_children_spawned,
+        )
+        expected_state = tuple(
+            int(item)
+            for item in sequence.generate_state(4, dtype=np.uint32).tolist()
+        )
+        if state != expected_state:
+            raise ValueError("seed state must exactly match its NumPy SeedSequence")
         object.__setattr__(self, "spawn_key", spawn_key)
         object.__setattr__(self, "state", state)
         object.__setattr__(
@@ -2021,8 +2536,8 @@ class SeedTree:
     def __init__(self, root_seed: int, structure: object) -> None:
         if type(root_seed) is not int:
             raise TypeError("root_seed must be an integer without coercion")
-        if root_seed < 0:
-            raise ValueError("root_seed must be nonnegative")
+        if not 0 <= root_seed <= JSON_INTEGER_MAX:
+            raise ValueError("root_seed must be an interoperable nonnegative integer")
         normalized = _normalize_seed_structure(structure)
         root_sequence = np.random.SeedSequence(root_seed)
         object.__setattr__(self, "root_seed", root_seed)
@@ -2172,6 +2687,7 @@ def atomic_write_bytes(
             payload,
             expected_parent_identity=_expected_parent_identity,
             exclusive=False,
+            validator=None,
         )
     target.parent.mkdir(parents=True, exist_ok=True)
     _require_directory_identity(target.parent, _expected_parent_identity)
@@ -2202,6 +2718,8 @@ def atomic_create_bytes(
     payload: bytes,
     *,
     _expected_parent_identity: tuple[int, int] | None = None,
+    _validator: Callable[[], None] | None = None,
+    _committed_identity: list[tuple[int, int]] | None = None,
 ) -> Path:
     """Atomically create a new file, refusing every pre-existing destination."""
 
@@ -2212,6 +2730,8 @@ def atomic_create_bytes(
             payload,
             expected_parent_identity=_expected_parent_identity,
             exclusive=True,
+            validator=_validator,
+            committed_identity=_committed_identity,
         )
     target.parent.mkdir(parents=True, exist_ok=True)
     _require_directory_identity(target.parent, _expected_parent_identity)
@@ -2227,9 +2747,22 @@ def atomic_create_bytes(
             handle.flush()
             os.fsync(handle.fileno())
         _require_directory_identity(target.parent, _expected_parent_identity)
+        if _validator is not None:
+            _validator()
         os.link(temporary, target, follow_symlinks=False)
+        try:
+            if _validator is not None:
+                _validator()
+        except BaseException as error:
+            if _unlink_path_if_identity(target, temporary_identity):
+                raise
+            raise AtomicCommitUncertainError(
+                target, retained_path=target
+            ) from error
+        if _committed_identity is not None:
+            _committed_identity.append(temporary_identity)
         if not _unlink_path_if_identity(temporary, temporary_identity):
-            raise AtomicCommitUncertainError(target)
+            raise AtomicCommitUncertainError(target, retained_path=temporary)
         try:
             _fsync_directory(target.parent, _expected_parent_identity)
         except BaseException as error:
@@ -2245,6 +2778,8 @@ def _atomic_commit_posix(
     *,
     expected_parent_identity: tuple[int, int] | None,
     exclusive: bool,
+    validator: Callable[[], None] | None,
+    committed_identity: list[tuple[int, int]] | None = None,
 ) -> Path:
     parent_descriptor = _open_directory_descriptor(target.parent, create=True)
     temporary_name = f".{target.name}.{secrets.token_hex(16)}.tmp"
@@ -2269,6 +2804,8 @@ def _atomic_commit_posix(
             target.parent, parent_descriptor, expected_parent_identity
         )
         if exclusive:
+            if validator is not None:
+                validator()
             os.link(
                 temporary_name,
                 target.name,
@@ -2276,10 +2813,25 @@ def _atomic_commit_posix(
                 dst_dir_fd=parent_descriptor,
                 follow_symlinks=False,
             )
+            try:
+                if validator is not None:
+                    validator()
+            except BaseException as error:
+                if _unlink_name_if_identity(
+                    parent_descriptor, target.name, temporary_identity
+                ):
+                    raise
+                raise AtomicCommitUncertainError(
+                    target, retained_path=target
+                ) from error
+            if committed_identity is not None:
+                committed_identity.append(temporary_identity)
             if not _unlink_name_if_identity(
                 parent_descriptor, temporary_name, temporary_identity
             ):
-                raise AtomicCommitUncertainError(target)
+                raise AtomicCommitUncertainError(
+                    target, retained_path=target.parent / temporary_name
+                )
         else:
             os.replace(
                 temporary_name,
@@ -2331,18 +2883,132 @@ def _unlink_name_if_identity(
 def _unlink_path_if_identity(
     path: Path, expected_identity: tuple[int, int]
 ) -> bool:
+    if os.name == "nt":
+        return _windows_delete_path_if_identity(
+            path, expected_identity, is_directory=False
+        )
     try:
-        metadata = path.stat(follow_symlinks=False)
+        parent_descriptor = _open_directory_descriptor(path.parent)
     except FileNotFoundError:
         return True
-    if (metadata.st_dev, metadata.st_ino) == expected_identity:
-        try:
-            path.unlink()
-        except OSError:
-            return False
-        else:
+    except OSError:
+        return False
+    try:
+        return _unlink_name_if_identity(
+            parent_descriptor, path.name, expected_identity
+        )
+    finally:
+        os.close(parent_descriptor)
+
+
+def _windows_delete_path_if_identity(
+    path: Path,
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+) -> bool:
+    """Delete the opened Windows object, never a later pathname replacement."""
+
+    if os.name != "nt":
+        raise NotImplementedError("Windows handle deletion is Windows-only")
+    import ctypes
+    from ctypes import wintypes
+
+    delete_access = 0x00010000
+    file_read_attributes = 0x00000080
+    share_all = 0x00000001 | 0x00000002 | 0x00000004
+    open_existing = 3
+    open_reparse_point = 0x00200000
+    backup_semantics = 0x02000000
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    flags = open_reparse_point | (backup_semantics if is_directory else 0)
+    handle = kernel32.CreateFileW(
+        str(path.absolute()),
+        delete_access | file_read_attributes,
+        share_all,
+        None,
+        open_existing,
+        flags,
+        None,
+    )
+    invalid_handle = ctypes.c_void_p(-1).value
+    if handle == invalid_handle:
+        error_number = ctypes.get_last_error()
+        if error_number in {2, 3}:
             return True
-    return False
+        return False
+    try:
+        actual = _windows_handle_identity(handle)
+        if actual != expected_identity:
+            return False
+
+        class FileDispositionInformation(ctypes.Structure):
+            _fields_ = [("DeleteFile", ctypes.c_ubyte)]
+
+        disposition = FileDispositionInformation(1)
+        kernel32.SetFileInformationByHandle.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.SetFileInformationByHandle.restype = wintypes.BOOL
+        if not kernel32.SetFileInformationByHandle(
+            handle,
+            4,  # FileDispositionInfo
+            ctypes.byref(disposition),
+            ctypes.sizeof(disposition),
+        ):
+            return False
+        return True
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _windows_handle_identity(handle: object) -> tuple[int, int]:
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.DuplicateHandle.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.DuplicateHandle.restype = wintypes.BOOL
+    process = kernel32.GetCurrentProcess()
+    duplicate = wintypes.HANDLE()
+    if not kernel32.DuplicateHandle(
+        process,
+        handle,
+        process,
+        ctypes.byref(duplicate),
+        0,
+        False,
+        2,  # DUPLICATE_SAME_ACCESS
+    ):
+        raise OSError(ctypes.get_last_error(), "DuplicateHandle failed")
+    descriptor = msvcrt.open_osfhandle(duplicate.value, os.O_RDONLY)
+    try:
+        metadata = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    return (int(metadata.st_dev), int(metadata.st_ino))
 
 
 def _require_directory_identity(
