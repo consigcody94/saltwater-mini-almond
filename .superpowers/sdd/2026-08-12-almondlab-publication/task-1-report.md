@@ -50,7 +50,21 @@ repair: replacement of a verified POSIX quarantine name after its handle
 schema paths. File and directory race regressions fail if a pathname delete is
 attempted after verification.
 
-The final focused suite has 172 passing cases on this Windows host. Boundary
+The first identity/phase rereview of the no-replace-rename repair then exposed
+two high-priority publication windows and one test-platform gap. The staged
+descriptor was not held through native publication, a native helper that
+renamed and then raised could escape with the wrong phase classification, and
+the legacy hardlink-failure test was not restricted to the Windows fallback.
+The deterministic file schedule was RED with 9 failures and 2 controls passing;
+the equivalent run-directory schedule was RED with 8 failures. Later narrow
+RED slices reproduced a setup-time run-claim cleanup leak (1 failure, 1 control
+pass), three `fdopen`-failure descriptor leaks, and two stale recovery-path
+reports after an fsync-time target disappearance. Each slice was made green
+before the combined suite ran. A final audit also reproduced two successful
+native returns that left both target and staged names bound to the same inode;
+both file and run-directory paths now refuse that non-consuming publication.
+
+The final focused suite has 202 passing cases on this Windows host. Boundary
 tests reject boolean or string numeric coercion, nonfinite numbers, non-string
 keys, path traversal, links/reparse points, collisions, inconsistent seed
 trees, unavailable-state inventions, hash corruption, unsafe finalization,
@@ -88,6 +102,27 @@ and every case-insensitive reserved-manifest artifact component.
   handle-relative no-follow creation; this residual privileged concurrent
   reparse-swap limitation is explicitly exposed by
   `FILESYSTEM_CONFINEMENT_LIMITATION` and tested.
+- POSIX file publication holds the descriptor returned by exclusive temporary
+  creation through write, flush, file `fsync`, both validation phases, native
+  publication, and target reconciliation. Immediately before rename it opens
+  the temporary name descriptor-relative with `O_NOFOLLOW|O_CLOEXEC`, requires
+  a regular file, and matches the held `(st_dev, st_ino)` identity. Immediately
+  after rename it opens the target the same way, matches that identity, and
+  keeps the verified target handle through post-publication validation and
+  directory `fsync`. The committed-identity out-parameter is populated only
+  after a final target-name identity proof. Run-directory claims use the same
+  protocol with directory descriptors and retain their child/target handles
+  through `_from_claim` validation and root-directory `fsync`.
+- Every return and exception from the native POSIX rename helper is reconciled
+  against both names and the held staged identity. An exact target is
+  classified as published; an absent or provably different target together
+  with the exact staged temporary is prepublication; all other combinations
+  are committed-uncertain. Thus a helper that renames and then raises cannot
+  leak a raw exception, an exception before rename and an ordinary collision
+  remain `committed=False`, an unrelated concurrent target is preserved, and
+  missing/replaced/ambiguous names never yield success or a stale committed
+  identity. Recovery paths are reported only after handle-based observation of
+  the object currently at that name.
 - Atomic replacement flushes file bytes and, where supported, directory
   metadata. Replace failures preserve an existing destination. Cleanup prefers
   retaining recoverable bytes to deleting an object through a name that could
@@ -167,7 +202,7 @@ canonical_science_hash a996babe2890e75893eb1d51cc5499acd3d7cd4eaad4e214a10688bf7
 manifest_hash          b235d72389fa7ef81433b11de1657ead4803907aba44f674caca0df2db121a78
 ```
 
-## Final verification after narrow rereview repair
+## Final verification after identity-bound phase repair
 
 Focused Task 1 suite, with the cache plugin disabled to avoid the workspace's
 pre-existing `.pytest_cache` permission warning:
@@ -177,7 +212,7 @@ pre-existing `.pytest_cache` permission warning:
 ```
 
 ```text
-172 passed, 3 skipped in 10.64s
+202 passed, 3 skipped in 11.01s
 ```
 
 The three skips are real-filesystem POSIX integration cases for replacement
@@ -187,31 +222,40 @@ new file and directory post-`fstat`/pre-delete regressions execute on Windows
 through deterministic syscall emulation and passed; they assert that neither
 pathname `unlink` nor `rmdir` is invoked. Phase-aware retained cleanup for both
 files and run directories also executed through the real state machines with
-controlled syscall boundaries. Deterministic syscall emulation additionally
-exercised normal POSIX `atomic_create_bytes` and `finalize_manifest` publication:
-both consumed the temporary name through no-replace rename, performed both
-validation phases, made no hardlink call, retained no temporary, and returned
-success. The unavailable-native-primitive schedule failed before publication
-with `committed=False`. WSL, Docker, and another POSIX runtime are not available
-here, so the three integration cases remain explicitly scheduled for the fresh
-independent POSIX rereview.
+controlled syscall boundaries. Deterministic forced-POSIX schedules additionally
+exercised normal `atomic_create_bytes`, `finalize_manifest`, and `RunDirectory`
+publication. They proved held staged and verified-target descriptors, exact
+pre/post identity checks, two file-validation phases, successful no-replace
+rename with no hardlink and no retained temporary, same-byte new-inode swaps,
+directory/symlink swaps, the precheck-to-rename race, helper exceptions before
+and after rename, collisions, target replacement, both names missing, and
+fsync-time target disappearance. The unavailable-native-primitive schedule
+failed before publication with `committed=False` and an exact retained recovery
+path. The legacy `os.link` failure regression is now Windows-only, while the
+forced-POSIX suite fails immediately if `os.link` is invoked. Four forced-POSIX
+replacement schedules additionally prove successful overwrite, exception
+before replacement with the old target preserved, exception after replacement,
+and post-replacement target substitution.
 
-The combined repository suite was also run against the then-current concurrent
-biology-repair worktree:
+WSL, Docker, and another POSIX runtime are not available here. The three real
+POSIX integration cases therefore remain platform-skipped on this Windows host;
+Linux `renameat2(RENAME_NOREPLACE)` and macOS `renameatx_np(RENAME_EXCL)` still
+require fresh native-POSIX execution/review rather than being claimed here.
+
+The combined repository suite was also run against the current concurrent
+biology/registry repair worktree:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 ```
 
 ```text
-972 passed, 13 failed, 3 skipped in 117.12s
+1063 passed, 3 skipped in 120.58s
 ```
 
-All 13 failures were in concurrent uncommitted biology-surrogate and Paper 1
-contract repair tests (duration partition/domain boundaries, large-value canopy
-AUC, and duplicate/recursive YAML mappings). The provenance suite remained
-green in the same tree. This is not reported as a stable full-suite pass; a
-fresh full run is required after the biology repair is committed.
+This final combined run used committed biology and registry repairs plus the
+unstaged Task 1 provenance diff. Exact-index verification, native-POSIX
+execution, and a fresh independent Task 1 rereview remain required.
 
 Dependency-free Draft 2020-12 schema coverage is included in the focused suite.
 The optional external gate remains unavailable:

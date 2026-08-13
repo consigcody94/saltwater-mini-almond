@@ -1226,81 +1226,253 @@ class RunDirectory:
         if os.name != "nt":
             root_descriptor = _open_directory_descriptor(root, create=True)
             staging_name = f".claim-{secrets.token_hex(16)}"
+            staging_path = root / staging_name
             path_identity: tuple[int, int] | None = None
-            staging_created = False
-            published = False
+            retained_paths: list[Path] = []
+
+            def record_retained_run_name(
+                original_name: str, error: _RetainedCleanupIdentityError
+            ) -> None:
+                retained_name = (
+                    original_name
+                    if error.retained_name is None
+                    else error.retained_name
+                )
+                retained_paths.append(root / retained_name)
+
+            def cleanup_staging() -> bool:
+                if path_identity is None:
+                    return False
+                try:
+                    return _rmdir_name_if_identity(
+                        root_descriptor, staging_name, path_identity
+                    )
+                except _RetainedCleanupIdentityError as cleanup_error:
+                    record_retained_run_name(staging_name, cleanup_error)
+                    return False
+
+            def cleanup_published_run() -> bool:
+                if path_identity is None:
+                    return False
+                try:
+                    removed = _rmdir_name_if_identity(
+                        root_descriptor, run_id, path_identity
+                    )
+                except _RetainedCleanupIdentityError as cleanup_error:
+                    record_retained_run_name(run_id, cleanup_error)
+                    return False
+                if not removed:
+                    observed = _observe_posix_name(
+                        root_descriptor,
+                        run_id,
+                        path_identity,
+                        is_directory=True,
+                    )
+                    try:
+                        if (
+                            observed.state in {"exact", "different"}
+                            and observed.identity is not None
+                        ):
+                            retained_paths.append(destination)
+                    finally:
+                        observed.close()
+                return removed
+
+            def raise_run_prepublication_failure(
+                operation_error: BaseException,
+            ) -> None:
+                removed = cleanup_staging()
+                if retained_paths:
+                    raise AtomicCleanupRetainedError(
+                        destination, retained_path=retained_paths[0]
+                    ) from operation_error
+                if not removed:
+                    raise AtomicCommitUncertainError(destination) from operation_error
+                raise operation_error
+
+            def raise_run_uncertain_publication(
+                reconciliation: _PosixPublicationReconciliation,
+                operation_error: BaseException,
+            ) -> None:
+                raise AtomicCommitUncertainError(
+                    destination,
+                    retained_paths=_uncertain_recovery_paths(
+                        destination,
+                        staging_path,
+                        reconciliation,
+                    ),
+                ) from operation_error
+
             try:
                 root_identity = _require_path_matches_descriptor(
                     root, root_descriptor, None
                 )
                 os.mkdir(staging_name, mode=0o700, dir_fd=root_descriptor)
-                staging_created = True
                 flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                 flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(
                     os, "O_CLOEXEC", 0
                 )
-                child_descriptor = os.open(
-                    staging_name, flags, dir_fd=root_descriptor
-                )
                 try:
-                    path_identity = _descriptor_identity(child_descriptor)
-                    _require_path_matches_descriptor(
-                        root, root_descriptor, root_identity
+                    child_descriptor = os.open(
+                        staging_name, flags, dir_fd=root_descriptor
                     )
-                    _rename_directory_noreplace(
-                        root_descriptor, staging_name, run_id
+                except BaseException as identity_error:
+                    raise AtomicCleanupRetainedError(
+                        destination, retained_path=staging_path
+                    ) from identity_error
+                try:
+                    try:
+                        path_identity = _require_descriptor_object(
+                            child_descriptor,
+                            expected_identity=None,
+                            is_directory=True,
+                        )
+                    except BaseException as identity_error:
+                        raise AtomicCleanupRetainedError(
+                            destination, retained_path=staging_path
+                        ) from identity_error
+                    try:
+                        _require_descriptor_object(
+                            child_descriptor,
+                            expected_identity=path_identity,
+                            is_directory=True,
+                        )
+                        _require_path_matches_descriptor(
+                            root, root_descriptor, root_identity
+                        )
+                    except BaseException as setup_error:
+                        raise_run_prepublication_failure(setup_error)
+
+                    prepublication = _observe_posix_name(
+                        root_descriptor,
+                        staging_name,
+                        path_identity,
+                        is_directory=True,
                     )
-                    published = True
-                    if _directory_identity(destination) != path_identity:
-                        raise RuntimeError("run directory identity was replaced")
-                    return cls._from_claim(
-                        runs_root=root,
-                        path=destination,
-                        run_id=run_id,
-                        deterministic_demo_id=deterministic_demo_id,
-                        creation_root_seed=root_seed,
-                        creation_config_sha256=config_sha256,
-                        root_identity=root_identity,
-                        path_identity=path_identity,
-                    )
+                    try:
+                        if prepublication.state != "exact":
+                            precheck_error = RuntimeError(
+                                "staged run identity changed before publication"
+                            )
+                            reconciliation = _reconcile_posix_publication(
+                                root_descriptor,
+                                staging_name,
+                                run_id,
+                                path_identity,
+                                is_directory=True,
+                            )
+                            try:
+                                if reconciliation.state == "not_published":
+                                    raise_run_prepublication_failure(precheck_error)
+                                raise_run_uncertain_publication(
+                                    reconciliation, precheck_error
+                                )
+                            finally:
+                                reconciliation.close()
+
+                        native_error: BaseException | None = None
+                        try:
+                            _rename_directory_noreplace(
+                                root_descriptor, staging_name, run_id
+                            )
+                        except BaseException as error:
+                            native_error = error
+
+                        reconciliation = _reconcile_posix_publication(
+                            root_descriptor,
+                            staging_name,
+                            run_id,
+                            path_identity,
+                            is_directory=True,
+                        )
+                        try:
+                            if native_error is not None:
+                                if reconciliation.state == "not_published":
+                                    raise_run_prepublication_failure(native_error)
+                                raise_run_uncertain_publication(
+                                    reconciliation, native_error
+                                )
+                            if reconciliation.state == "not_published":
+                                raise_run_prepublication_failure(
+                                    RuntimeError(
+                                        "native run publication returned without "
+                                        "publishing the staged identity"
+                                    )
+                                )
+                            if reconciliation.state == "uncertain":
+                                raise_run_uncertain_publication(
+                                    reconciliation,
+                                    RuntimeError(
+                                        "native run publication returned with an "
+                                        "ambiguous identity"
+                                    ),
+                                )
+                            if reconciliation.temporary.state != "absent":
+                                raise_run_uncertain_publication(
+                                    reconciliation,
+                                    RuntimeError(
+                                        "native run publication did not prove that "
+                                        "the staged name was absent"
+                                    ),
+                                )
+
+                            try:
+                                claimed = cls._from_claim(
+                                    runs_root=root,
+                                    path=destination,
+                                    run_id=run_id,
+                                    deterministic_demo_id=deterministic_demo_id,
+                                    creation_root_seed=root_seed,
+                                    creation_config_sha256=config_sha256,
+                                    root_identity=root_identity,
+                                    path_identity=path_identity,
+                                )
+                            except BaseException as validation_error:
+                                cleanup_published_run()
+                                raise AtomicCommitUncertainError(
+                                    destination, retained_paths=retained_paths
+                                ) from validation_error
+                            try:
+                                os.fsync(root_descriptor)
+                            except BaseException as sync_error:
+                                raise AtomicCommitUncertainError(
+                                    destination,
+                                    retained_paths=_observed_posix_recovery_paths(
+                                        root_descriptor,
+                                        run_id,
+                                        path_identity,
+                                        is_directory=True,
+                                        path=destination,
+                                    ),
+                                ) from sync_error
+                            final_target = _observe_posix_name(
+                                root_descriptor,
+                                run_id,
+                                path_identity,
+                                is_directory=True,
+                            )
+                            try:
+                                if final_target.state != "exact":
+                                    final_paths = (
+                                        (destination,)
+                                        if final_target.state == "different"
+                                        and final_target.descriptor is not None
+                                        else ()
+                                    )
+                                    raise AtomicCommitUncertainError(
+                                        destination, retained_paths=final_paths
+                                    ) from RuntimeError(
+                                        "published run identity changed before return"
+                                    )
+                                return claimed
+                            finally:
+                                final_target.close()
+                        finally:
+                            reconciliation.close()
+                    finally:
+                        prepublication.close()
                 finally:
                     os.close(child_descriptor)
-            except BaseException:
-                if staging_created and path_identity is None:
-                    raise AtomicCleanupRetainedError(
-                        destination, retained_path=root / staging_name
-                    )
-                if path_identity is not None:
-                    cleanup_name = run_id if published else staging_name
-                    try:
-                        removed = _rmdir_name_if_identity(
-                            root_descriptor,
-                            cleanup_name,
-                            path_identity,
-                        )
-                    except _RetainedCleanupIdentityError as cleanup_error:
-                        retained = root / (
-                            cleanup_name
-                            if cleanup_error.retained_name is None
-                            else cleanup_error.retained_name
-                        )
-                        if published:
-                            raise AtomicCommitUncertainError(
-                                destination, retained_path=retained
-                            ) from cleanup_error
-                        raise AtomicCleanupRetainedError(
-                            destination, retained_path=retained
-                        ) from cleanup_error
-                    if not removed:
-                        retained = root / cleanup_name
-                        if published:
-                            raise AtomicCommitUncertainError(
-                                destination, retained_path=retained
-                            )
-                        raise AtomicCleanupRetainedError(
-                            destination, retained_path=retained
-                        )
-                raise
             finally:
                 os.close(root_descriptor)
 
@@ -1783,6 +1955,167 @@ def _open_directory_descriptor(path: Path, *, create: bool = False) -> int:
 def _descriptor_identity(descriptor: int) -> tuple[int, int]:
     metadata = os.fstat(descriptor)
     return (metadata.st_dev, metadata.st_ino)
+
+
+@dataclass(slots=True)
+class _PosixNameObservation:
+    state: Literal["absent", "exact", "different", "ambiguous"]
+    descriptor: int | None = None
+    identity: tuple[int, int] | None = None
+
+    def close(self) -> None:
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+            self.descriptor = None
+
+
+@dataclass(slots=True)
+class _PosixPublicationReconciliation:
+    state: Literal["published", "not_published", "uncertain"]
+    target: _PosixNameObservation
+    temporary: _PosixNameObservation
+
+    def close(self) -> None:
+        self.target.close()
+        self.temporary.close()
+
+
+def _require_descriptor_object(
+    descriptor: int,
+    *,
+    expected_identity: tuple[int, int] | None,
+    is_directory: bool,
+) -> tuple[int, int]:
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError as error:
+        raise RuntimeError("held filesystem identity became unavailable") from error
+    identity = (metadata.st_dev, metadata.st_ino)
+    expected_kind = (
+        stat.S_ISDIR(metadata.st_mode)
+        if is_directory
+        else stat.S_ISREG(metadata.st_mode)
+    )
+    if not expected_kind:
+        raise RuntimeError("held filesystem object has the wrong kind")
+    if expected_identity is not None and identity != expected_identity:
+        raise RuntimeError("held filesystem object identity changed")
+    return identity
+
+
+def _observe_posix_name(
+    parent_descriptor: int,
+    name: str,
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+) -> _PosixNameObservation:
+    """Open and classify one descriptor-relative name without following links."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    if is_directory:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+    except FileNotFoundError:
+        return _PosixNameObservation("absent")
+    except OSError as error:
+        if error.errno in {
+            getattr(errno, "ELOOP", 40),
+            getattr(errno, "ENOTDIR", 20),
+        }:
+            return _PosixNameObservation("different")
+        return _PosixNameObservation("ambiguous")
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError:
+        os.close(descriptor)
+        return _PosixNameObservation("ambiguous")
+    identity = (metadata.st_dev, metadata.st_ino)
+    expected_kind = (
+        stat.S_ISDIR(metadata.st_mode)
+        if is_directory
+        else stat.S_ISREG(metadata.st_mode)
+    )
+    state: Literal["exact", "different"] = (
+        "exact"
+        if identity == expected_identity and expected_kind
+        else "different"
+    )
+    return _PosixNameObservation(state, descriptor, identity)
+
+
+def _reconcile_posix_publication(
+    parent_descriptor: int,
+    temporary_name: str,
+    target_name: str,
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+) -> _PosixPublicationReconciliation:
+    target = _observe_posix_name(
+        parent_descriptor,
+        target_name,
+        expected_identity,
+        is_directory=is_directory,
+    )
+    temporary = _observe_posix_name(
+        parent_descriptor,
+        temporary_name,
+        expected_identity,
+        is_directory=is_directory,
+    )
+    if target.state == "exact":
+        state: Literal["published", "not_published", "uncertain"] = "published"
+    elif temporary.state == "exact" and target.state in {"absent", "different"}:
+        state = "not_published"
+    else:
+        state = "uncertain"
+    return _PosixPublicationReconciliation(state, target, temporary)
+
+
+def _uncertain_recovery_paths(
+    target: Path,
+    temporary: Path,
+    reconciliation: _PosixPublicationReconciliation,
+) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    if (
+        reconciliation.target.state in {"exact", "different"}
+        and reconciliation.target.descriptor is not None
+    ):
+        paths.append(target)
+    if reconciliation.temporary.state == "exact":
+        paths.append(temporary)
+    return tuple(paths)
+
+
+def _observed_posix_recovery_paths(
+    parent_descriptor: int,
+    name: str,
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+    path: Path,
+) -> tuple[Path, ...]:
+    """Report a path only after handle-based classification of its current object."""
+
+    observed = _observe_posix_name(
+        parent_descriptor,
+        name,
+        expected_identity,
+        is_directory=is_directory,
+    )
+    try:
+        if (
+            observed.state in {"exact", "different"}
+            and observed.descriptor is not None
+        ):
+            return (path,)
+        return ()
+    finally:
+        observed.close()
 
 
 def _require_descriptor_identity(
@@ -3034,9 +3367,9 @@ def _atomic_commit_posix(
 ) -> Path:
     parent_descriptor = _open_directory_descriptor(target.parent, create=True)
     temporary_name = f".{target.name}.{secrets.token_hex(16)}.tmp"
+    temporary_path = target.parent / temporary_name
     temporary_identity: tuple[int, int] | None = None
     temporary_present = False
-    published = False
     retained_paths: list[Path] = []
 
     def record_retained_name(
@@ -3063,8 +3396,6 @@ def _atomic_commit_posix(
             record_retained_name(temporary_name, cleanup_error)
             temporary_present = False
             return False
-        if not removed:
-            retained_paths.append(target.parent / temporary_name)
         temporary_present = False
         return removed
 
@@ -3079,79 +3410,227 @@ def _atomic_commit_posix(
             record_retained_name(target.name, cleanup_error)
             return False
         if not removed:
-            retained_paths.append(target)
+            observed = _observe_posix_name(
+                parent_descriptor,
+                target.name,
+                temporary_identity,
+                is_directory=False,
+            )
+            try:
+                if (
+                    observed.state in {"exact", "different"}
+                    and observed.identity is not None
+                ):
+                    retained_paths.append(target)
+            finally:
+                observed.close()
         return removed
 
+    def raise_prepublication_failure(operation_error: BaseException) -> None:
+        removed = cleanup_temporary()
+        if retained_paths:
+            raise AtomicCleanupRetainedError(
+                target, retained_path=retained_paths[0]
+            ) from operation_error
+        if not removed:
+            raise AtomicCommitUncertainError(target) from operation_error
+        raise operation_error
+
+    def raise_uncertain_publication(
+        reconciliation: _PosixPublicationReconciliation,
+        operation_error: BaseException,
+    ) -> None:
+        raise AtomicCommitUncertainError(
+            target,
+            retained_paths=_uncertain_recovery_paths(
+                target,
+                temporary_path,
+                reconciliation,
+            ),
+        ) from operation_error
+
     try:
+        _require_path_matches_descriptor(
+            target.parent, parent_descriptor, expected_parent_identity
+        )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        descriptor = os.open(
+            temporary_name, flags, 0o600, dir_fd=parent_descriptor
+        )
+        temporary_present = True
         try:
-            _require_path_matches_descriptor(
-                target.parent, parent_descriptor, expected_parent_identity
-            )
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-            descriptor = os.open(
-                temporary_name, flags, 0o600, dir_fd=parent_descriptor
-            )
-            temporary_present = True
-            temporary_identity = _descriptor_identity(descriptor)
-            with os.fdopen(descriptor, "wb") as handle:
+            handle = os.fdopen(descriptor, "wb")
+        except BaseException as open_error:
+            try:
+                try:
+                    temporary_identity = _require_descriptor_object(
+                        descriptor, expected_identity=None, is_directory=False
+                    )
+                except BaseException:
+                    retained_paths.append(temporary_path)
+                    temporary_present = False
+                    raise AtomicCleanupRetainedError(
+                        target, retained_path=temporary_path
+                    ) from open_error
+                raise_prepublication_failure(open_error)
+            finally:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        with handle:
+            try:
+                temporary_identity = _require_descriptor_object(
+                    handle.fileno(), expected_identity=None, is_directory=False
+                )
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
-            _require_path_matches_descriptor(
-                target.parent, parent_descriptor, expected_parent_identity
-            )
-            if exclusive:
+                temporary_identity = _require_descriptor_object(
+                    handle.fileno(),
+                    expected_identity=temporary_identity,
+                    is_directory=False,
+                )
+                _require_path_matches_descriptor(
+                    target.parent, parent_descriptor, expected_parent_identity
+                )
                 if validator is not None:
                     validator()
-                _rename_name_noreplace(
+            except BaseException as setup_error:
+                raise_prepublication_failure(setup_error)
+
+            prepublication = _observe_posix_name(
+                parent_descriptor,
+                temporary_name,
+                temporary_identity,
+                is_directory=False,
+            )
+            try:
+                if prepublication.state != "exact":
+                    precheck_error = RuntimeError(
+                        "staged temporary identity changed before publication"
+                    )
+                    reconciliation = _reconcile_posix_publication(
+                        parent_descriptor,
+                        temporary_name,
+                        target.name,
+                        temporary_identity,
+                        is_directory=False,
+                    )
+                    try:
+                        if reconciliation.state == "not_published":
+                            raise_prepublication_failure(precheck_error)
+                        raise_uncertain_publication(reconciliation, precheck_error)
+                    finally:
+                        reconciliation.close()
+
+                native_error: BaseException | None = None
+                try:
+                    if exclusive:
+                        _rename_name_noreplace(
+                            parent_descriptor,
+                            temporary_name,
+                            target.name,
+                        )
+                    else:
+                        os.replace(
+                            temporary_name,
+                            target.name,
+                            src_dir_fd=parent_descriptor,
+                            dst_dir_fd=parent_descriptor,
+                        )
+                except BaseException as error:
+                    native_error = error
+
+                reconciliation = _reconcile_posix_publication(
                     parent_descriptor,
                     temporary_name,
                     target.name,
+                    temporary_identity,
+                    is_directory=False,
                 )
-                published = True
-                temporary_present = False
                 try:
-                    if validator is not None:
-                        validator()
-                except BaseException:
-                    cleanup_published_target()
-                    raise
-                if committed_identity is not None:
-                    committed_identity.append(temporary_identity)
-            else:
-                os.replace(
-                    temporary_name,
-                    target.name,
-                    src_dir_fd=parent_descriptor,
-                    dst_dir_fd=parent_descriptor,
-                )
-                published = True
-                temporary_present = False
-            try:
-                _fsync_directory(target.parent, expected_parent_identity)
-            except BaseException as error:
-                raise AtomicCommitUncertainError(target) from error
-        except BaseException as operation_error:
-            cleanup_temporary()
-            if retained_paths:
-                if published:
-                    existing = (
-                        operation_error.retained_paths
-                        if isinstance(operation_error, AtomicCommitUncertainError)
-                        else ()
+                    if native_error is not None:
+                        if reconciliation.state == "not_published":
+                            raise_prepublication_failure(native_error)
+                        raise_uncertain_publication(reconciliation, native_error)
+                    if reconciliation.state == "not_published":
+                        raise_prepublication_failure(
+                            RuntimeError(
+                                "native publication returned without publishing "
+                                "the staged identity"
+                            )
+                        )
+                    if reconciliation.state == "uncertain":
+                        raise_uncertain_publication(
+                            reconciliation,
+                            RuntimeError(
+                                "native publication returned with an ambiguous identity"
+                            ),
+                        )
+                    if reconciliation.temporary.state != "absent":
+                        raise_uncertain_publication(
+                            reconciliation,
+                            RuntimeError(
+                                "native publication did not prove that the staged "
+                                "name was absent"
+                            ),
+                        )
+
+                    temporary_present = False
+                    try:
+                        if validator is not None:
+                            validator()
+                    except BaseException as validation_error:
+                        cleanup_published_target()
+                        raise AtomicCommitUncertainError(
+                            target, retained_paths=retained_paths
+                        ) from validation_error
+                    try:
+                        _fsync_directory(target.parent, expected_parent_identity)
+                    except BaseException as sync_error:
+                        raise AtomicCommitUncertainError(
+                            target,
+                            retained_paths=_observed_posix_recovery_paths(
+                                parent_descriptor,
+                                target.name,
+                                temporary_identity,
+                                is_directory=False,
+                                path=target,
+                            ),
+                        ) from sync_error
+
+                    final_target = _observe_posix_name(
+                        parent_descriptor,
+                        target.name,
+                        temporary_identity,
+                        is_directory=False,
                     )
-                    raise AtomicCommitUncertainError(
-                        target,
-                        retained_paths=(*existing, *retained_paths),
-                    ) from operation_error
-                raise AtomicCleanupRetainedError(
-                    target, retained_path=retained_paths[0]
-                ) from operation_error
-            raise
+                    try:
+                        if final_target.state != "exact":
+                            final_paths = (
+                                (target,)
+                                if final_target.state == "different"
+                                and final_target.descriptor is not None
+                                else ()
+                            )
+                            raise AtomicCommitUncertainError(
+                                target, retained_paths=final_paths
+                            ) from RuntimeError(
+                                "published target identity changed before return"
+                            )
+                        if committed_identity is not None:
+                            committed_identity.append(temporary_identity)
+                        return target
+                    finally:
+                        final_target.close()
+                finally:
+                    reconciliation.close()
+            finally:
+                prepublication.close()
     finally:
         os.close(parent_descriptor)
-    return target
 
 
 def _unlink_name_if_identity(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
+import errno
 import json
 import os
 from pathlib import Path
@@ -1221,8 +1222,24 @@ def test_run_directory_postpublication_retention_is_reported_as_committed(
         "_require_path_matches_descriptor",
         lambda path, descriptor, expected: (1, 2),
     )
+    monkeypatch.setattr(
+        provenance,
+        "_require_descriptor_object",
+        lambda descriptor, *, expected_identity, is_directory: (3, 4),
+    )
     monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
     monkeypatch.setattr(provenance, "_directory_identity", lambda path: (3, 4))
+    monkeypatch.setattr(
+        provenance,
+        "_observe_posix_name",
+        lambda parent_descriptor, name, expected_identity, *, is_directory: (
+            provenance._PosixNameObservation(
+                "exact" if (runs_root / name).exists() else "absent",
+                None,
+                expected_identity if (runs_root / name).exists() else None,
+            )
+        ),
+    )
     monkeypatch.setattr(
         provenance,
         "_rename_directory_noreplace",
@@ -1252,6 +1269,426 @@ def test_run_directory_postpublication_retention_is_reported_as_committed(
     )
     assert captured.value.retained_path.is_dir()
     assert closed == [71, 70]
+
+
+class _ScheduledPosixRunPublication:
+    """Descriptor-level run-directory claim schedule for rename phase tests."""
+
+    name = "posix"
+    O_RDONLY = os.O_RDONLY
+    O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+    O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+    O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+    O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        rename_mode: str,
+        precheck_attack_kind: str | None = None,
+        parent_failure_at: int | None = None,
+    ) -> None:
+        self.root = root
+        self.rename_mode = rename_mode
+        self.precheck_attack_kind = precheck_attack_kind
+        self.parent_failure_at = parent_failure_at
+        self.parent_descriptor = 70
+        self.stage_identity = (71, 81)
+        self.attacker_identity = (71, 89)
+        self.nodes: dict[str, dict[str, object]] = {}
+        self.descriptors: dict[int, dict[str, object]] = {}
+        self.next_descriptor = 71
+        self.staging_name: str | None = None
+        self.target_name = "SYN_demo"
+        self.parent_checks = 0
+        self.rename_calls = 0
+        self.cleanup_calls: list[str] = []
+        if rename_mode == "collision":
+            self.nodes[self.target_name] = self._node("directory", self.attacker_identity)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(os, name)
+
+    @staticmethod
+    def _node(kind: str, identity: tuple[int, int]) -> dict[str, object]:
+        mode = {
+            "directory": stat.S_IFDIR | 0o700,
+            "regular": stat.S_IFREG | 0o600,
+            "symlink": stat.S_IFLNK | 0o777,
+        }[kind]
+        return {"kind": kind, "identity": identity, "mode": mode}
+
+    def open_root(self, path: Path, *, create: bool = False) -> int:
+        assert path == self.root
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return self.parent_descriptor
+
+    def mkdir(
+        self,
+        name: str,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        del mode
+        assert dir_fd == self.parent_descriptor
+        self.staging_name = name
+        self.nodes[name] = self._node("directory", self.stage_identity)
+
+    def open(
+        self,
+        name: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        del mode
+        assert dir_fd == self.parent_descriptor
+        node = self.nodes.get(name)
+        if node is None:
+            raise FileNotFoundError(errno.ENOENT, "scheduled absence", name)
+        if node["kind"] == "symlink" and flags & self.O_NOFOLLOW:
+            raise OSError(errno.ELOOP, "scheduled symlink refusal", name)
+        if flags & self.O_DIRECTORY and node["kind"] != "directory":
+            raise NotADirectoryError(errno.ENOTDIR, "scheduled non-directory", name)
+        descriptor = self.next_descriptor
+        self.next_descriptor += 1
+        self.descriptors[descriptor] = node
+        return descriptor
+
+    def fstat(self, descriptor: int) -> SimpleNamespace:
+        node = self.descriptors[descriptor]
+        identity = node["identity"]
+        assert isinstance(identity, tuple)
+        return SimpleNamespace(
+            st_dev=identity[0],
+            st_ino=identity[1],
+            st_mode=node["mode"],
+        )
+
+    def close(self, descriptor: int) -> None:
+        self.descriptors.pop(descriptor, None)
+
+    def require_parent(
+        self,
+        path: Path,
+        descriptor: int,
+        expected_identity: tuple[int, int] | None,
+    ) -> tuple[int, int]:
+        del path, expected_identity
+        assert descriptor == self.parent_descriptor
+        self.parent_checks += 1
+        if self.parent_checks == self.parent_failure_at:
+            raise RuntimeError("scheduled parent identity failure")
+        if self.parent_checks == 2 and self.precheck_attack_kind is not None:
+            assert self.staging_name is not None
+            self.nodes[self.staging_name] = self._node(
+                self.precheck_attack_kind,
+                self.attacker_identity,
+            )
+        return (1, 2)
+
+    def _move_stage(self) -> None:
+        assert self.staging_name is not None
+        if self.target_name in self.nodes:
+            raise FileExistsError(errno.EEXIST, "scheduled collision", self.target_name)
+        self.nodes[self.target_name] = self.nodes.pop(self.staging_name)
+
+    def rename(
+        self, parent_descriptor: int, source_name: str, target_name: str
+    ) -> None:
+        assert parent_descriptor == self.parent_descriptor
+        assert source_name == self.staging_name
+        assert target_name == self.target_name
+        self.rename_calls += 1
+        if self.rename_mode == "raise_before":
+            raise RuntimeError("scheduled run exception before rename")
+        if self.rename_mode == "collision":
+            raise FileExistsError(errno.EEXIST, "scheduled run collision", target_name)
+        if self.rename_mode == "missing_both":
+            self.nodes.pop(source_name, None)
+            self.nodes.pop(target_name, None)
+            raise RuntimeError("scheduled run exception with both names missing")
+        if self.rename_mode == "race_attacker":
+            self.nodes[source_name] = self._node(
+                "directory", self.attacker_identity
+            )
+            self._move_stage()
+            return
+        if self.rename_mode == "link_return":
+            self.nodes[target_name] = self.nodes[source_name]
+            return
+        self._move_stage()
+        if self.rename_mode == "post_swap":
+            self.nodes[target_name] = self._node("directory", self.attacker_identity)
+            return
+        if self.rename_mode == "post_exact_with_attacker_temp":
+            self.nodes[source_name] = self._node(
+                "directory", self.attacker_identity
+            )
+            return
+        if self.rename_mode == "raise_after":
+            raise RuntimeError("scheduled run exception after rename")
+
+    def directory_identity(self, path: Path) -> tuple[int, int]:
+        node = self.nodes.get(path.name)
+        if node is None:
+            raise FileNotFoundError(path)
+        identity = node["identity"]
+        assert isinstance(identity, tuple)
+        return identity
+
+    def cleanup(
+        self,
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+    ) -> bool:
+        assert parent_descriptor == self.parent_descriptor
+        self.cleanup_calls.append(name)
+        node = self.nodes.get(name)
+        if node is None:
+            return True
+        if node["identity"] != expected_identity:
+            return False
+        retained_name = ".almondlab-quarantine-scheduled-run"
+        self.nodes[retained_name] = self.nodes.pop(name)
+        raise provenance._RetainedCleanupIdentityError(retained_name)
+
+    def fsync(self, descriptor: int) -> None:
+        assert descriptor == self.parent_descriptor
+        assert self.has_open_target_identity(self.stage_identity)
+        if self.rename_mode == "sync_missing_raise":
+            self.nodes.pop(self.target_name, None)
+            raise OSError("scheduled run directory fsync failure")
+
+    def has_open_identity(self, identity: tuple[int, int]) -> bool:
+        return any(node["identity"] == identity for node in self.descriptors.values())
+
+    def has_open_target_identity(self, identity: tuple[int, int]) -> bool:
+        target = self.nodes.get(self.target_name)
+        return target is not None and target["identity"] == identity and any(
+            node is target for node in self.descriptors.values()
+        )
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(provenance, "os", self)
+        monkeypatch.setattr(provenance, "_open_directory_descriptor", self.open_root)
+        monkeypatch.setattr(
+            provenance, "_require_path_matches_descriptor", self.require_parent
+        )
+        monkeypatch.setattr(provenance, "_rename_directory_noreplace", self.rename)
+        monkeypatch.setattr(provenance, "_directory_identity", self.directory_identity)
+        monkeypatch.setattr(provenance, "_rmdir_name_if_identity", self.cleanup)
+        monkeypatch.setattr(provenance.secrets, "token_hex", lambda count: "0" * 32)
+
+
+@pytest.mark.parametrize("attack_kind", ["directory", "regular", "symlink"])
+def test_posix_run_claim_rejects_staging_name_swap_before_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attack_kind: str,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(
+        root,
+        rename_mode="normal",
+        precheck_attack_kind=attack_kind,
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is True
+    assert schedule.rename_calls == 0
+    assert schedule.descriptors == {}
+
+
+def test_posix_run_claim_holds_stage_and_verified_target_through_fsync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(root, rename_mode="normal")
+    schedule.install(monkeypatch)
+    sentinel = object()
+
+    def validate_claim(
+        cls: type[provenance.RunDirectory], **kwargs: object
+    ) -> object:
+        del cls, kwargs
+        assert schedule.has_open_identity(schedule.stage_identity)
+        assert schedule.has_open_target_identity(schedule.stage_identity)
+        return sentinel
+
+    monkeypatch.setattr(
+        provenance.RunDirectory, "_from_claim", classmethod(validate_claim)
+    )
+
+    claimed = provenance.RunDirectory.create(
+        root,
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+
+    assert claimed is sentinel
+    assert schedule.rename_calls == 1
+    assert schedule.cleanup_calls == []
+    assert schedule.staging_name not in schedule.nodes
+    assert schedule.nodes["SYN_demo"]["identity"] == schedule.stage_identity
+    assert schedule.descriptors == {}
+
+
+def test_posix_run_claim_cleans_identity_bound_stage_after_setup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(
+        root,
+        rename_mode="normal",
+        parent_failure_at=2,
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCleanupRetainedError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is False
+    assert isinstance(captured.value.__cause__, RuntimeError)
+    assert captured.value.retained_path == (
+        root / ".almondlab-quarantine-scheduled-run"
+    )
+    assert schedule.rename_calls == 0
+
+
+def test_posix_run_claim_requires_native_success_to_consume_staged_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(root, rename_mode="link_return")
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert schedule.staging_name is not None
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == (
+        root / "SYN_demo",
+        root / schedule.staging_name,
+    )
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    ("rename_mode", "expected_committed", "cause_type"),
+    [
+        ("raise_after", True, RuntimeError),
+        ("raise_before", False, RuntimeError),
+        ("collision", False, FileExistsError),
+        ("missing_both", True, RuntimeError),
+        ("post_swap", True, RuntimeError),
+        ("race_attacker", True, RuntimeError),
+        ("post_exact_with_attacker_temp", True, RuntimeError),
+    ],
+)
+def test_posix_run_claim_reconciles_native_rename_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rename_mode: str,
+    expected_committed: bool,
+    cause_type: type[BaseException],
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(root, rename_mode=rename_mode)
+    schedule.install(monkeypatch)
+
+    error_type = (
+        provenance.AtomicCommitUncertainError
+        if expected_committed
+        else provenance.AtomicCleanupRetainedError
+    )
+    with pytest.raises(error_type) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is expected_committed
+    assert isinstance(captured.value.__cause__, cause_type)
+    if rename_mode == "raise_after":
+        assert captured.value.retained_path == root / "SYN_demo"
+        assert schedule.cleanup_calls == []
+    elif rename_mode in {"raise_before", "collision"}:
+        assert captured.value.retained_path == (
+            root / ".almondlab-quarantine-scheduled-run"
+        )
+        if rename_mode == "collision":
+            assert schedule.nodes["SYN_demo"]["identity"] == schedule.attacker_identity
+    elif rename_mode == "missing_both":
+        assert captured.value.retained_path is None
+    elif rename_mode == "post_exact_with_attacker_temp":
+        assert captured.value.retained_path == root / "SYN_demo"
+        assert schedule.staging_name is not None
+        assert (
+            root / schedule.staging_name
+        ) not in captured.value.retained_paths
+    else:
+        assert captured.value.retained_path == root / "SYN_demo"
+    assert schedule.descriptors == {}
+
+
+def test_posix_run_claim_fsync_failure_does_not_report_a_stale_target_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(
+        root, rename_mode="sync_missing_raise"
+    )
+    schedule.install(monkeypatch)
+    monkeypatch.setattr(
+        provenance.RunDirectory,
+        "_from_claim",
+        classmethod(lambda cls, **kwargs: object()),
+    )
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is True
+    assert isinstance(captured.value.__cause__, OSError)
+    assert captured.value.retained_path is None
+    assert schedule.descriptors == {}
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows path-publication fallback")
@@ -1567,6 +2004,7 @@ def test_finalize_manifest_binds_claimed_root_seed_and_config_digest(
     assert list(run.path.iterdir()) == []
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows hardlink publication fallback")
 def test_finalize_manifest_exclusive_commit_failure_leaves_no_manifest_or_temp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2097,6 +2535,7 @@ class _PosixAtomicSyscallHarness:
         self.rename_error = rename_error
         self._next_directory_descriptor = 90_000
         self._directory_descriptors: dict[int, Path] = {}
+        self._file_descriptors: dict[int, Path] = {}
         self.rename_calls: list[tuple[str, str]] = []
         self.link_calls: list[tuple[str, str]] = []
         self.cleanup_calls: list[str] = []
@@ -2125,13 +2564,26 @@ class _PosixAtomicSyscallHarness:
     ) -> int:
         if dir_fd in self._directory_descriptors:
             directory = self._directory_descriptors[dir_fd]
-            return os.open(directory / os.fsdecode(path), flags, mode)
+            descriptor = os.open(directory / os.fsdecode(path), flags, mode)
+            self._file_descriptors[descriptor] = directory / os.fsdecode(path)
+            return descriptor
         return os.open(path, flags, mode)
+
+    def fdopen(self, descriptor: int, mode: str) -> object:
+        assert mode in {"rb", "wb"}
+        if mode == "rb":
+            self._file_descriptors.pop(descriptor, None)
+            return os.fdopen(descriptor, mode)
+        return os.fdopen(descriptor, mode, closefd=False)
+
+    def fstat(self, descriptor: int) -> os.stat_result:
+        return os.fstat(descriptor)
 
     def close(self, descriptor: int) -> None:
         if descriptor in self._directory_descriptors:
             del self._directory_descriptors[descriptor]
             return
+        self._file_descriptors.pop(descriptor, None)
         os.close(descriptor)
 
     def link(
@@ -2160,7 +2612,11 @@ class _PosixAtomicSyscallHarness:
         target = self.parent / target_name
         if target.exists():
             raise FileExistsError(target)
-        source.rename(target)
+        for descriptor, path in tuple(self._file_descriptors.items()):
+            if path == source:
+                os.close(descriptor)
+                del self._file_descriptors[descriptor]
+        os.rename(source, target)
 
     def require_path_matches_descriptor(
         self,
@@ -2186,6 +2642,24 @@ class _PosixAtomicSyscallHarness:
         self.cleanup_calls.append(name)
         raise provenance._RetainedCleanupIdentityError(name)
 
+    def observe(
+        self,
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+        *,
+        is_directory: bool,
+    ) -> provenance._PosixNameObservation:
+        del is_directory
+        assert self._directory_descriptors[parent_descriptor] == self.parent
+        path = self.parent / name
+        if not path.exists():
+            return provenance._PosixNameObservation("absent")
+        metadata = path.stat(follow_symlinks=False)
+        identity = (metadata.st_dev, metadata.st_ino)
+        state = "exact" if identity == expected_identity else "different"
+        return provenance._PosixNameObservation(state, None, identity)
+
     def install(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2200,6 +2674,7 @@ class _PosixAtomicSyscallHarness:
             self.require_path_matches_descriptor,
         )
         monkeypatch.setattr(provenance, "_rename_name_noreplace", self.rename_noreplace)
+        monkeypatch.setattr(provenance, "_observe_posix_name", self.observe)
         monkeypatch.setattr(
             provenance,
             "_directory_identity",
@@ -2332,12 +2807,544 @@ def test_posix_atomic_create_unavailable_noreplace_fails_before_publication(
     assert harness.rename_calls[1][1].startswith(".almondlab-quarantine-")
 
 
+class _ScheduledPosixFilePublication:
+    """Descriptor-level POSIX syscall schedule with controllable rename races."""
+
+    name = "posix"
+    O_WRONLY = os.O_WRONLY
+    O_RDONLY = os.O_RDONLY
+    O_CREAT = os.O_CREAT
+    O_EXCL = os.O_EXCL
+    O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+    O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+    O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+    O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+
+    def __init__(
+        self,
+        *,
+        rename_mode: str = "normal",
+        precheck_attack_kind: str | None = None,
+    ) -> None:
+        self.rename_mode = rename_mode
+        self.precheck_attack_kind = precheck_attack_kind
+        self.stage_identity = (31, 41)
+        self.attacker_identity = (31, 99)
+        self.parent_descriptor = 50
+        self.temp_name: str | None = None
+        self.target_name = "result.json"
+        self.nodes: dict[str, dict[str, object]] = {}
+        self.descriptors: dict[int, dict[str, object]] = {}
+        self.next_descriptor = 51
+        self.parent_checks = 0
+        self.rename_calls = 0
+        self.cleanup_calls: list[str] = []
+        self.directory_sync_calls = 0
+        self.closed_descriptors: list[int] = []
+        self.link_calls = 0
+        self.replaced_target_node: dict[str, object] | None = None
+        if rename_mode == "collision":
+            self.nodes[self.target_name] = self._node("regular", self.attacker_identity)
+        elif rename_mode in {"replace_existing", "replace_raise_before"}:
+            self.replaced_target_node = self._node(
+                "regular", self.attacker_identity
+            )
+            self.replaced_target_node["payload"] = b"established"
+            self.nodes[self.target_name] = self.replaced_target_node
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(os, name)
+
+    @staticmethod
+    def _node(kind: str, identity: tuple[int, int]) -> dict[str, object]:
+        mode = {
+            "regular": stat.S_IFREG | 0o600,
+            "directory": stat.S_IFDIR | 0o700,
+            "symlink": stat.S_IFLNK | 0o777,
+        }[kind]
+        return {"kind": kind, "identity": identity, "mode": mode, "payload": b""}
+
+    def _allocate(self, node: dict[str, object]) -> int:
+        descriptor = self.next_descriptor
+        self.next_descriptor += 1
+        self.descriptors[descriptor] = node
+        return descriptor
+
+    def open_directory(self, path: Path, *, create: bool = False) -> int:
+        del path, create
+        return self.parent_descriptor
+
+    def require_parent(
+        self,
+        path: Path,
+        descriptor: int,
+        expected_identity: tuple[int, int] | None,
+    ) -> tuple[int, int]:
+        del path, expected_identity
+        assert descriptor == self.parent_descriptor
+        self.parent_checks += 1
+        if self.parent_checks == 2 and self.precheck_attack_kind is not None:
+            assert self.temp_name is not None
+            staged = self.nodes[self.temp_name]
+            attacker = self._node(
+                self.precheck_attack_kind,
+                self.attacker_identity,
+            )
+            if self.precheck_attack_kind == "regular":
+                attacker["payload"] = staged["payload"]
+            self.nodes[self.temp_name] = attacker
+        return (1, 2)
+
+    def open(
+        self,
+        name: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        del mode
+        assert dir_fd == self.parent_descriptor
+        if flags & self.O_CREAT:
+            assert self.temp_name is None
+            self.temp_name = name
+            node = self._node("regular", self.stage_identity)
+            self.nodes[name] = node
+            return self._allocate(node)
+        node = self.nodes.get(name)
+        if node is None:
+            raise FileNotFoundError(errno.ENOENT, "scheduled absence", name)
+        if node["kind"] == "symlink" and flags & self.O_NOFOLLOW:
+            raise OSError(errno.ELOOP, "scheduled symlink refusal", name)
+        if flags & self.O_DIRECTORY and node["kind"] != "directory":
+            raise NotADirectoryError(errno.ENOTDIR, "scheduled non-directory", name)
+        return self._allocate(node)
+
+    def fstat(self, descriptor: int) -> SimpleNamespace:
+        node = self.descriptors[descriptor]
+        identity = node["identity"]
+        assert isinstance(identity, tuple)
+        payload = node["payload"]
+        assert isinstance(payload, bytes)
+        return SimpleNamespace(
+            st_dev=identity[0],
+            st_ino=identity[1],
+            st_mode=node["mode"],
+            st_size=len(payload),
+            st_mtime_ns=1,
+            st_ctime_ns=1,
+        )
+
+    class _Handle:
+        def __init__(self, owner: "_ScheduledPosixFilePublication", descriptor: int) -> None:
+            self.owner = owner
+            self.descriptor = descriptor
+
+        def __enter__(self) -> "_ScheduledPosixFilePublication._Handle":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.close()
+
+        def write(self, payload: bytes) -> None:
+            self.owner.descriptors[self.descriptor]["payload"] = payload
+
+        def flush(self) -> None:
+            return None
+
+        def fileno(self) -> int:
+            return self.descriptor
+
+        def close(self) -> None:
+            self.owner.close(self.descriptor)
+
+    def fdopen(self, descriptor: int, mode: str) -> "_Handle":
+        assert mode == "wb"
+        return self._Handle(self, descriptor)
+
+    def fsync(self, descriptor: int) -> None:
+        assert descriptor in self.descriptors
+
+    def close(self, descriptor: int) -> None:
+        if descriptor == self.parent_descriptor:
+            self.closed_descriptors.append(descriptor)
+            return
+        if descriptor in self.descriptors:
+            del self.descriptors[descriptor]
+            self.closed_descriptors.append(descriptor)
+
+    def _move_temp_to_target(self) -> None:
+        assert self.temp_name is not None
+        if self.target_name in self.nodes:
+            raise FileExistsError(errno.EEXIST, "scheduled collision", self.target_name)
+        self.nodes[self.target_name] = self.nodes.pop(self.temp_name)
+
+    def replace(
+        self,
+        source_name: str,
+        target_name: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+    ) -> None:
+        assert src_dir_fd == self.parent_descriptor
+        assert dst_dir_fd == self.parent_descriptor
+        assert source_name == self.temp_name
+        assert target_name == self.target_name
+        self.rename_calls += 1
+        if self.rename_mode == "replace_raise_before":
+            raise RuntimeError("scheduled replace exception before rename")
+        self.nodes[target_name] = self.nodes.pop(source_name)
+        if self.rename_mode == "replace_raise_after":
+            raise RuntimeError("scheduled replace exception after rename")
+        if self.rename_mode == "replace_post_swap":
+            self.nodes[target_name] = self._node(
+                "regular", self.attacker_identity
+            )
+
+    def rename(
+        self, parent_descriptor: int, source_name: str, target_name: str
+    ) -> None:
+        assert parent_descriptor == self.parent_descriptor
+        assert source_name == self.temp_name
+        assert target_name == self.target_name
+        self.rename_calls += 1
+        if self.rename_mode in {"raise_before", "arbitrary_before"}:
+            raise RuntimeError("scheduled exception before rename")
+        if self.rename_mode == "collision":
+            raise FileExistsError(errno.EEXIST, "scheduled collision", target_name)
+        if self.rename_mode == "race_attacker":
+            staged = self.nodes[source_name]
+            attacker = self._node("regular", self.attacker_identity)
+            attacker["payload"] = staged["payload"]
+            self.nodes[source_name] = attacker
+            self._move_temp_to_target()
+            return
+        if self.rename_mode == "missing_both":
+            self.nodes.pop(source_name, None)
+            self.nodes.pop(target_name, None)
+            raise RuntimeError("scheduled exception with both names missing")
+        if self.rename_mode == "return_without_rename":
+            return
+        if self.rename_mode == "link_return":
+            self.nodes[target_name] = self.nodes[source_name]
+            return
+        self._move_temp_to_target()
+        if self.rename_mode == "post_swap":
+            self.nodes[target_name] = self._node("regular", self.attacker_identity)
+            return
+        if self.rename_mode == "post_exact_with_attacker_temp":
+            self.nodes[source_name] = self._node(
+                "regular", self.attacker_identity
+            )
+            return
+        if self.rename_mode == "raise_after":
+            raise RuntimeError("scheduled exception after rename")
+
+    def cleanup(
+        self,
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+    ) -> bool:
+        assert parent_descriptor == self.parent_descriptor
+        self.cleanup_calls.append(name)
+        node = self.nodes.get(name)
+        if node is None:
+            return True
+        if node["identity"] != expected_identity:
+            return False
+        retained_name = ".almondlab-quarantine-scheduled"
+        self.nodes[retained_name] = self.nodes.pop(name)
+        raise provenance._RetainedCleanupIdentityError(retained_name)
+
+    def directory_sync(
+        self, directory: Path, expected_identity: tuple[int, int] | None
+    ) -> None:
+        del directory, expected_identity
+        self.directory_sync_calls += 1
+        assert self.has_open_target_identity(self.stage_identity)
+        if self.rename_mode == "sync_missing_raise":
+            self.nodes.pop(self.target_name, None)
+            raise OSError("scheduled file directory fsync failure")
+
+    def link(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        self.link_calls += 1
+        raise AssertionError("POSIX publication must not invoke os.link")
+
+    def has_open_identity(self, identity: tuple[int, int]) -> bool:
+        return any(node["identity"] == identity for node in self.descriptors.values())
+
+    def has_open_target_identity(self, identity: tuple[int, int]) -> bool:
+        target = self.nodes.get(self.target_name)
+        return target is not None and target["identity"] == identity and any(
+            node is target for node in self.descriptors.values()
+        )
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(provenance, "os", self)
+        monkeypatch.setattr(provenance, "_open_directory_descriptor", self.open_directory)
+        monkeypatch.setattr(
+            provenance, "_require_path_matches_descriptor", self.require_parent
+        )
+        monkeypatch.setattr(provenance, "_rename_name_noreplace", self.rename)
+        monkeypatch.setattr(provenance, "_unlink_name_if_identity", self.cleanup)
+        monkeypatch.setattr(provenance, "_fsync_directory", self.directory_sync)
+
+
+@pytest.mark.parametrize(
+    "attack_kind",
+    ["regular", "directory", "symlink"],
+)
+def test_posix_atomic_create_rejects_temp_name_swap_before_rename(
+    monkeypatch: pytest.MonkeyPatch,
+    attack_kind: str,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(precheck_attack_kind=attack_kind)
+    schedule.install(monkeypatch)
+    committed_identity: list[tuple[int, int]] = []
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(
+            Path("/sandbox/result.json"),
+            b"same bytes" if attack_kind == "regular" else b"created",
+            _committed_identity=committed_identity,
+        )
+
+    assert captured.value.committed is True
+    assert committed_identity == []
+    assert schedule.rename_calls == 0
+    assert schedule.link_calls == 0
+    assert schedule.descriptors == {}
+    if attack_kind == "regular":
+        assert schedule.temp_name is not None
+        assert schedule.nodes[schedule.temp_name]["payload"] == b"same bytes"
+
+
+def test_posix_atomic_create_detects_swap_between_precheck_and_rename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(rename_mode="race_attacker")
+    schedule.install(monkeypatch)
+    committed_identity: list[tuple[int, int]] = []
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(
+            Path("/sandbox/result.json"),
+            b"created",
+            _committed_identity=committed_identity,
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_path == Path("/sandbox/result.json")
+    assert committed_identity == []
+    assert schedule.nodes[schedule.target_name]["payload"] == b"created"
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    "rename_mode",
+    ["post_swap", "return_without_rename", "post_exact_with_attacker_temp"],
+)
+def test_posix_atomic_create_never_trusts_native_success_without_identity_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    rename_mode: str,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(rename_mode=rename_mode)
+    schedule.install(monkeypatch)
+
+    with pytest.raises(
+        (provenance.AtomicCommitUncertainError, provenance.AtomicCleanupRetainedError)
+    ) as captured:
+        provenance.atomic_create_bytes(Path("/sandbox/result.json"), b"created")
+
+    if rename_mode in {"post_swap", "post_exact_with_attacker_temp"}:
+        assert captured.value.committed is True
+    else:
+        assert captured.value.committed is False
+    if rename_mode == "post_exact_with_attacker_temp":
+        assert captured.value.retained_path == Path("/sandbox/result.json")
+        assert schedule.temp_name is not None
+        assert Path("/sandbox") / schedule.temp_name not in captured.value.retained_paths
+    assert schedule.descriptors == {}
+
+
+def test_posix_atomic_create_requires_native_success_to_consume_staged_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(rename_mode="link_return")
+    schedule.install(monkeypatch)
+    committed_identity: list[tuple[int, int]] = []
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(
+            Path("/sandbox/result.json"),
+            b"created",
+            _committed_identity=committed_identity,
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == (
+        Path("/sandbox/result.json"),
+        Path("/sandbox") / schedule.temp_name,
+    )
+    assert committed_identity == []
+    assert schedule.descriptors == {}
+
+
+def test_posix_atomic_create_holds_stage_and_verified_target_through_fsync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schedule = _ScheduledPosixFilePublication()
+    schedule.install(monkeypatch)
+    validation_calls = 0
+
+    def validate() -> None:
+        nonlocal validation_calls
+        validation_calls += 1
+        if validation_calls == 1:
+            assert schedule.has_open_identity(schedule.stage_identity)
+        else:
+            assert schedule.has_open_target_identity(schedule.stage_identity)
+
+    committed_identity: list[tuple[int, int]] = []
+    result = provenance.atomic_create_bytes(
+        Path("/sandbox/result.json"),
+        b"created",
+        _validator=validate,
+        _committed_identity=committed_identity,
+    )
+
+    assert result == Path("/sandbox/result.json")
+    assert validation_calls == 2
+    assert schedule.directory_sync_calls == 1
+    assert schedule.link_calls == 0
+    assert committed_identity == [schedule.stage_identity]
+    assert schedule.descriptors == {}
+
+
+def test_posix_atomic_fsync_failure_does_not_report_a_stale_target_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(rename_mode="sync_missing_raise")
+    schedule.install(monkeypatch)
+    committed_identity: list[tuple[int, int]] = []
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(
+            Path("/sandbox/result.json"),
+            b"created",
+            _committed_identity=committed_identity,
+        )
+
+    assert captured.value.committed is True
+    assert isinstance(captured.value.__cause__, OSError)
+    assert captured.value.retained_path is None
+    assert committed_identity == []
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    ("rename_mode", "expected_committed", "expected_cause"),
+    [
+        ("raise_after", True, RuntimeError),
+        ("raise_before", False, RuntimeError),
+        ("collision", False, FileExistsError),
+        ("missing_both", True, RuntimeError),
+    ],
+)
+def test_posix_atomic_create_reconciles_native_rename_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+    rename_mode: str,
+    expected_committed: bool,
+    expected_cause: type[BaseException],
+) -> None:
+    schedule = _ScheduledPosixFilePublication(rename_mode=rename_mode)
+    schedule.install(monkeypatch)
+
+    expected_error = (
+        provenance.AtomicCommitUncertainError
+        if expected_committed
+        else provenance.AtomicCleanupRetainedError
+    )
+    with pytest.raises(expected_error) as captured:
+        provenance.atomic_create_bytes(Path("/sandbox/result.json"), b"created")
+
+    assert captured.value.committed is expected_committed
+    assert isinstance(captured.value.__cause__, expected_cause)
+    if rename_mode == "raise_after":
+        assert captured.value.retained_path == Path("/sandbox/result.json")
+        assert schedule.cleanup_calls == []
+    elif rename_mode in {"raise_before", "collision"}:
+        assert captured.value.retained_path == Path(
+            "/sandbox/.almondlab-quarantine-scheduled"
+        )
+        if rename_mode == "collision":
+            assert (
+                schedule.nodes[schedule.target_name]["identity"]
+                == schedule.attacker_identity
+            )
+        else:
+            assert schedule.target_name not in schedule.nodes
+    else:
+        assert captured.value.retained_path is None
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    ("rename_mode", "expected_committed"),
+    [
+        ("replace_existing", True),
+        ("replace_raise_after", True),
+        ("replace_raise_before", False),
+        ("replace_post_swap", True),
+    ],
+)
+def test_posix_atomic_write_reconciles_replace_and_preserves_existing_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    rename_mode: str,
+    expected_committed: bool,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(rename_mode=rename_mode)
+    schedule.install(monkeypatch)
+
+    if rename_mode == "replace_existing":
+        result = provenance.atomic_write_bytes(
+            Path("/sandbox/result.json"), b"replacement"
+        )
+        assert result == Path("/sandbox/result.json")
+        assert schedule.nodes["result.json"]["payload"] == b"replacement"
+        assert schedule.replaced_target_node is not None
+        assert schedule.replaced_target_node["payload"] == b"established"
+    else:
+        error_type = (
+            provenance.AtomicCommitUncertainError
+            if expected_committed
+            else provenance.AtomicCleanupRetainedError
+        )
+        with pytest.raises(error_type) as captured:
+            provenance.atomic_write_bytes(
+                Path("/sandbox/result.json"), b"replacement"
+            )
+        assert captured.value.committed is expected_committed
+        if rename_mode == "replace_post_swap":
+            assert schedule.nodes["result.json"]["identity"] == (
+                schedule.attacker_identity
+            )
+        elif expected_committed:
+            assert schedule.nodes["result.json"]["payload"] == b"replacement"
+        else:
+            assert schedule.nodes["result.json"]["payload"] == b"established"
+    assert schedule.descriptors == {}
+
+
 @pytest.mark.parametrize("exclusive", [False, True])
 def test_posix_atomic_precommit_cleanup_retention_fails_safely(
     monkeypatch: pytest.MonkeyPatch, exclusive: bool
 ) -> None:
     retained_name = ".almondlab-quarantine-retained-temp"
-    parent_closed = False
+    closed_descriptors: list[int] = []
 
     def fake_open_directory(path: Path, *, create: bool = False) -> int:
         del path, create
@@ -2371,14 +3378,16 @@ def test_posix_atomic_precommit_cleanup_retention_fails_safely(
         provenance, "_require_path_matches_descriptor", lambda *args: (1, 2)
     )
     monkeypatch.setattr(provenance.os, "open", fake_open)
-    monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
+    monkeypatch.setattr(
+        provenance,
+        "_require_descriptor_object",
+        lambda descriptor, expected_identity, is_directory: (3, 4),
+    )
     monkeypatch.setattr(provenance.os, "fdopen", fail_write)
     monkeypatch.setattr(provenance, "_unlink_name_if_identity", retain_cleanup)
 
     def close_parent(descriptor: int) -> None:
-        nonlocal parent_closed
-        assert descriptor == 50
-        parent_closed = True
+        closed_descriptors.append(descriptor)
 
     monkeypatch.setattr(provenance.os, "close", close_parent)
 
@@ -2395,7 +3404,7 @@ def test_posix_atomic_precommit_cleanup_retention_fails_safely(
     assert captured.value.retained_path == Path("/sandbox") / retained_name
     assert captured.value.__cause__ is not None
     assert "forced precommit failure" in str(captured.value.__cause__)
-    assert parent_closed is True
+    assert closed_descriptors == [51, 50]
 
 
 def test_posix_atomic_identity_capture_failure_reports_retained_temp(
@@ -2403,6 +3412,7 @@ def test_posix_atomic_identity_capture_failure_reports_retained_temp(
 ) -> None:
     temporary_name = ".result.json." + "0" * 32 + ".tmp"
     cleanup_called = False
+    closed_descriptors: list[int] = []
 
     monkeypatch.setattr(provenance, "_open_directory_descriptor", lambda *args, **kwargs: 50)
     monkeypatch.setattr(
@@ -2411,8 +3421,10 @@ def test_posix_atomic_identity_capture_failure_reports_retained_temp(
     monkeypatch.setattr(provenance.os, "open", lambda *args, **kwargs: 51)
     monkeypatch.setattr(
         provenance,
-        "_descriptor_identity",
-        lambda descriptor: (_ for _ in ()).throw(OSError("identity unavailable")),
+        "_require_descriptor_object",
+        lambda descriptor, expected_identity, is_directory: (_ for _ in ()).throw(
+            OSError("identity unavailable")
+        ),
     )
     monkeypatch.setattr(provenance.secrets, "token_hex", lambda count: "0" * 32)
 
@@ -2422,7 +3434,9 @@ def test_posix_atomic_identity_capture_failure_reports_retained_temp(
         return True
 
     monkeypatch.setattr(provenance, "_unlink_name_if_identity", refuse_unverified_cleanup)
-    monkeypatch.setattr(provenance.os, "close", lambda descriptor: None)
+    monkeypatch.setattr(
+        provenance.os, "close", lambda descriptor: closed_descriptors.append(descriptor)
+    )
 
     with pytest.raises(provenance.AtomicCleanupRetainedError) as captured:
         provenance._atomic_commit_posix(
@@ -2436,6 +3450,7 @@ def test_posix_atomic_identity_capture_failure_reports_retained_temp(
     assert captured.value.committed is False
     assert captured.value.retained_path == Path("/sandbox") / temporary_name
     assert cleanup_called is False
+    assert closed_descriptors == [51, 50]
 
 
 def test_posix_atomic_postcommit_retention_reports_consumed_temp_only_as_target(
@@ -2486,12 +3501,38 @@ def test_posix_atomic_postcommit_retention_reports_consumed_temp_only_as_target(
         provenance, "_require_path_matches_descriptor", lambda *args: (1, 2)
     )
     monkeypatch.setattr(provenance.os, "open", lambda *args, **kwargs: 51)
-    monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
+    monkeypatch.setattr(
+        provenance,
+        "_require_descriptor_object",
+        lambda descriptor, expected_identity, is_directory: (3, 4),
+    )
     monkeypatch.setattr(provenance.os, "fdopen", lambda descriptor, mode: FakeHandle())
     monkeypatch.setattr(provenance.os, "fsync", lambda descriptor: None)
     monkeypatch.setattr(
         provenance, "_rename_name_noreplace", lambda *args, **kwargs: None
     )
+    observation_calls = 0
+
+    def observe_published_target(
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+        *,
+        is_directory: bool,
+    ) -> provenance._PosixNameObservation:
+        nonlocal observation_calls
+        del parent_descriptor, expected_identity, is_directory
+        observation_calls += 1
+        if observation_calls == 1:
+            assert name.startswith(".result.json.")
+            return provenance._PosixNameObservation("exact", 61, (3, 4))
+        if observation_calls == 2:
+            assert name == "result.json"
+            return provenance._PosixNameObservation("exact", 62, (3, 4))
+        assert name.startswith(".result.json.")
+        return provenance._PosixNameObservation("absent")
+
+    monkeypatch.setattr(provenance, "_observe_posix_name", observe_published_target)
     monkeypatch.setattr(provenance.os, "close", lambda descriptor: None)
     monkeypatch.setattr(provenance, "_unlink_name_if_identity", retain_cleanup)
 
