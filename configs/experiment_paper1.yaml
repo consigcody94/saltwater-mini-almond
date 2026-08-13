@@ -16,40 +16,40 @@ water_conditions:
     evidence_label: hypothesis_prior
     chemistry:
       ec_kind: ECw
-      ec_ds_m: 0.7
+      ec_ds_m: 1.5
       temperature_k: 298.15
       measured_osmolality_osmol_kg: 0.02
-      ph: 7.2
-      alkalinity_mmol_c_l: 2.1
-      na_mmol_l: 5.0
-      cl_mmol_l: 6.0
-      ca_mmol_l: 4.0
-      mg_mmol_l: 3.0
+      ph: 6.5
+      alkalinity_mmol_c_l: 1.0
+      na_mmol_l: 4.0
+      cl_mmol_l: 4.0
+      ca_mmol_l: 2.0
+      mg_mmol_l: 1.0
       k_mmol_l: 2.0
-      total_b_mmol_l: 0.1
-      sulfate_mmol_l: 2.0
-      bicarbonate_mmol_l: 2.1
-      nitrate_mmol_l: 1.0
-      phosphate_mmol_l: 0.5
+      total_b_mmol_l: 0.05
+      sulfate_mmol_l: 1.0
+      bicarbonate_mmol_l: 0.75
+      nitrate_mmol_l: 5.0
+      phosphate_mmol_l: 0.25
   - water_id: pilot_selected_full_ion_marine_challenge
     evidence_label: hypothesis_prior
     chemistry:
       ec_kind: ECw
       ec_ds_m: 6.0
       temperature_k: 298.15
-      measured_osmolality_osmol_kg: 0.15
-      ph: 7.2
-      alkalinity_mmol_c_l: 2.1
-      na_mmol_l: 45.0
-      cl_mmol_l: 50.0
-      ca_mmol_l: 4.0
-      mg_mmol_l: 3.0
+      measured_osmolality_osmol_kg: 0.1
+      ph: 6.5
+      alkalinity_mmol_c_l: 1.0
+      na_mmol_l: 44.0
+      cl_mmol_l: 44.0
+      ca_mmol_l: 2.0
+      mg_mmol_l: 1.0
       k_mmol_l: 2.0
-      total_b_mmol_l: 0.1
-      sulfate_mmol_l: 2.0
-      bicarbonate_mmol_l: 2.1
-      nitrate_mmol_l: 1.0
-      phosphate_mmol_l: 0.5
+      total_b_mmol_l: 0.05
+      sulfate_mmol_l: 1.0
+      bicarbonate_mmol_l: 0.75
+      nitrate_mmol_l: 5.0
+      phosphate_mmol_l: 0.25
 runs: [discovery_run_1, discovery_run_2]
 reservoirs_per_water_run: 4
 independent_plants_per_group_reservoir: 5

@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass, replace
 from enum import Enum, StrEnum
-from math import isclose, log
+from math import fsum, isclose, isfinite, log
 from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, ClassVar, Literal
@@ -29,13 +29,14 @@ from almondlab.biology_surrogate import (
     YamlDuplicateKeyError,
     _strict_yaml_load,
 )
+from almondlab.chemistry import charge_balance_error
 from almondlab.contracts import CompartmentKind, ConservedEntity, EvidenceLabel
 from almondlab.errors import AlmondLabError, fail, finite_float
 from almondlab.evidence_policy import compose_evidence_labels
 from almondlab.hydraulics import HydraulicDomain
 from almondlab.mass_balance import CompartmentState, NetworkState
 from almondlab.provenance import canonical_json_bytes
-from almondlab.schemas import WaterChemistry
+from almondlab.schemas import ModelDomain, WaterChemistry
 
 
 _MAPPING_PROXY_TYPE = type(MappingProxyType({}))
@@ -902,6 +903,1016 @@ class Paper1DesignConfig(StrictPaper1Model):
         if mismatches:
             raise ValueError(f"Paper 1 design identity is frozen: {sorted(mismatches)}")
         return self
+
+
+_REGISTERED_CHEMISTRY_NUMBER_FIELDS = (
+    "ec_ds_m",
+    "temperature_k",
+    "measured_osmolality_osmol_kg",
+    "ph",
+    "alkalinity_mmol_c_l",
+    "na_mmol_l",
+    "cl_mmol_l",
+    "ca_mmol_l",
+    "mg_mmol_l",
+    "k_mmol_l",
+    "total_b_mmol_l",
+    "sulfate_mmol_l",
+    "bicarbonate_mmol_l",
+    "nitrate_mmol_l",
+    "phosphate_mmol_l",
+)
+_REGISTERED_ANALYTE_IDS = (
+    "na",
+    "cl",
+    "ca",
+    "mg",
+    "k",
+    "total_b",
+    "sulfate",
+    "bicarbonate",
+    "nitrate",
+    "phosphate",
+)
+_NONSTOICHIOMETRIC_TARGET_UNITS = MappingProxyType(
+    {
+        "ec_ds_m": "dS m^-1",
+        "measured_osmolality_osmol_kg": "osmol kg^-1",
+        "ph": "pH",
+        "temperature_k": "K",
+        "alkalinity_mmol_c_l": "mmol_c L^-1",
+    }
+)
+_LEGACY_DESIGN_RAW_SHA256 = (
+    "d402889dac8b4580b0d2f01e65b6caf750b8af65e0550fe6283c630109e465e0"
+)
+_LEGACY_ANCHOR_SHA256S = MappingProxyType(
+    {
+        REGISTERED_WATER_IDS[0]: (
+            "a804553ff5d1e0c9938a10d14430d593cde2c5cbddd0a00c3e5460f884c61e1f"
+        ),
+        REGISTERED_WATER_IDS[1]: (
+            "bef482128d45eff8a42593b9a19534f847858a265814edf627b8421d3e3b08a4"
+        ),
+    }
+)
+_LEGACY_SIGNED_CHARGE_ERRORS = MappingProxyType(
+    {
+        REGISTERED_WATER_IDS[0]: 23.167155425219942,
+        REGISTERED_WATER_IDS[1]: 3.302286198137171,
+    }
+)
+_LEGACY_CHEMISTRIES = MappingProxyType(
+    {
+        REGISTERED_WATER_IDS[0]: {
+            "ec_kind": "ECw",
+            "ec_ds_m": 0.7,
+            "temperature_k": 298.15,
+            "measured_osmolality_osmol_kg": 0.02,
+            "ph": 7.2,
+            "alkalinity_mmol_c_l": 2.1,
+            "na_mmol_l": 5.0,
+            "cl_mmol_l": 6.0,
+            "ca_mmol_l": 4.0,
+            "mg_mmol_l": 3.0,
+            "k_mmol_l": 2.0,
+            "total_b_mmol_l": 0.1,
+            "sulfate_mmol_l": 2.0,
+            "bicarbonate_mmol_l": 2.1,
+            "nitrate_mmol_l": 1.0,
+            "phosphate_mmol_l": 0.5,
+        },
+        REGISTERED_WATER_IDS[1]: {
+            "ec_kind": "ECw",
+            "ec_ds_m": 6.0,
+            "temperature_k": 298.15,
+            "measured_osmolality_osmol_kg": 0.15,
+            "ph": 7.2,
+            "alkalinity_mmol_c_l": 2.1,
+            "na_mmol_l": 45.0,
+            "cl_mmol_l": 50.0,
+            "ca_mmol_l": 4.0,
+            "mg_mmol_l": 3.0,
+            "k_mmol_l": 2.0,
+            "total_b_mmol_l": 0.1,
+            "sulfate_mmol_l": 2.0,
+            "bicarbonate_mmol_l": 2.1,
+            "nitrate_mmol_l": 1.0,
+            "phosphate_mmol_l": 0.5,
+        },
+    }
+)
+_ACTIVE_CHEMISTRIES = MappingProxyType(
+    {
+        REGISTERED_WATER_IDS[0]: {
+            "ec_kind": "ECw",
+            "ec_ds_m": 1.5,
+            "temperature_k": 298.15,
+            "measured_osmolality_osmol_kg": 0.02,
+            "ph": 6.5,
+            "alkalinity_mmol_c_l": 1.0,
+            "na_mmol_l": 4.0,
+            "cl_mmol_l": 4.0,
+            "ca_mmol_l": 2.0,
+            "mg_mmol_l": 1.0,
+            "k_mmol_l": 2.0,
+            "total_b_mmol_l": 0.05,
+            "sulfate_mmol_l": 1.0,
+            "bicarbonate_mmol_l": 0.75,
+            "nitrate_mmol_l": 5.0,
+            "phosphate_mmol_l": 0.25,
+        },
+        REGISTERED_WATER_IDS[1]: {
+            "ec_kind": "ECw",
+            "ec_ds_m": 6.0,
+            "temperature_k": 298.15,
+            "measured_osmolality_osmol_kg": 0.1,
+            "ph": 6.5,
+            "alkalinity_mmol_c_l": 1.0,
+            "na_mmol_l": 44.0,
+            "cl_mmol_l": 44.0,
+            "ca_mmol_l": 2.0,
+            "mg_mmol_l": 1.0,
+            "k_mmol_l": 2.0,
+            "total_b_mmol_l": 0.05,
+            "sulfate_mmol_l": 1.0,
+            "bicarbonate_mmol_l": 0.75,
+            "nitrate_mmol_l": 5.0,
+            "phosphate_mmol_l": 0.25,
+        },
+    }
+)
+_SYNTHETIC_BLANK_CHEMISTRY = MappingProxyType(
+    {
+        "ec_kind": "ECw",
+        "ec_ds_m": 0.0,
+        "temperature_k": 298.15,
+        "measured_osmolality_osmol_kg": 0.0,
+        "ph": 7.0,
+        "alkalinity_mmol_c_l": 0.0,
+        "na_mmol_l": 0.0,
+        "cl_mmol_l": 0.0,
+        "ca_mmol_l": 0.0,
+        "mg_mmol_l": 0.0,
+        "k_mmol_l": 0.0,
+        "total_b_mmol_l": 0.0,
+        "sulfate_mmol_l": 0.0,
+        "bicarbonate_mmol_l": 0.0,
+        "nitrate_mmol_l": 0.0,
+        "phosphate_mmol_l": 0.0,
+    }
+)
+_ACTIVE_RECIPE_IDS = MappingProxyType(
+    {
+        REGISTERED_WATER_IDS[0]: "paper1_base_nutrient_control_v1",
+        REGISTERED_WATER_IDS[1]: "paper1_base_plus_nacl40_challenge_v1",
+    }
+)
+_CONTROL_AMENDMENTS = (
+    (
+        "sodium_chloride",
+        "NaCl",
+        "anhydrous",
+        4.0,
+        58.44,
+        233.76,
+        (("na", 4.0), ("cl", 4.0)),
+        0.0,
+    ),
+    (
+        "calcium_nitrate_tetrahydrate",
+        "Ca(NO3)2·4H2O",
+        "tetrahydrate",
+        2.0,
+        236.15,
+        472.3,
+        (("ca", 2.0), ("nitrate", 4.0)),
+        0.0,
+    ),
+    (
+        "magnesium_sulfate_heptahydrate",
+        "MgSO4·7H2O",
+        "heptahydrate",
+        1.0,
+        246.48,
+        246.48,
+        (("mg", 1.0), ("sulfate", 1.0)),
+        0.0,
+    ),
+    (
+        "potassium_nitrate",
+        "KNO3",
+        "anhydrous",
+        1.0,
+        101.103,
+        101.103,
+        (("k", 1.0), ("nitrate", 1.0)),
+        0.0,
+    ),
+    (
+        "potassium_bicarbonate",
+        "KHCO3",
+        "anhydrous",
+        0.75,
+        100.115,
+        75.08625,
+        (("k", 0.75), ("bicarbonate", 0.75)),
+        0.75,
+    ),
+    (
+        "monobasic_potassium_phosphate",
+        "KH2PO4",
+        "anhydrous",
+        0.25,
+        136.086,
+        34.0215,
+        (("k", 0.25), ("phosphate", 0.25)),
+        0.25,
+    ),
+    (
+        "boric_acid",
+        "H3BO3",
+        "anhydrous",
+        0.05,
+        61.84,
+        3.092,
+        (("total_b", 0.05),),
+        0.0,
+    ),
+)
+_CHALLENGE_AMENDMENTS = (
+    (
+        "sodium_chloride_challenge_increment",
+        "NaCl",
+        "anhydrous",
+        40.0,
+        58.44,
+        2337.6,
+        (("na", 40.0), ("cl", 40.0)),
+        0.0,
+    ),
+)
+
+
+def _require_registered_text(value: object, field_path: str) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or value != value.strip()
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise ValueError(f"{field_path} must be a trim-free nonempty string")
+    return value
+
+
+def _require_lowercase_sha256(value: object, field_path: str) -> str:
+    text = _require_registered_text(value, field_path)
+    if len(text) != 64 or any(character not in "0123456789abcdef" for character in text):
+        raise ValueError(f"{field_path} must be a lowercase SHA-256 digest")
+    return text
+
+
+class RegisteredRecipeWaterChemistry(WaterChemistry):
+    """Water chemistry whose registered numeric leaves must be Python floats."""
+
+    @field_validator(*_REGISTERED_CHEMISTRY_NUMBER_FIELDS, mode="before")
+    @classmethod
+    def require_registered_float(cls, value: object) -> object:
+        if type(value) is not float:
+            raise ValueError("registered chemistry values must be primitive floats")
+        return value
+
+
+class HistoricalWaterRecipeAnchor(StrictPaper1Model):
+    water_id: str
+    source_field_path: str
+    source_design_raw_sha256: str
+    anchor_canonical_sha256: str
+    signed_charge_error_percent: float
+    status: Literal["superseded_unbalanced_hypothesis_anchor"]
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+    chemistry: RegisteredRecipeWaterChemistry
+
+    @field_validator("water_id", "source_field_path", mode="before")
+    @classmethod
+    def require_text(cls, value: object, info: object) -> object:
+        return _require_registered_text(value, getattr(info, "field_name", "text"))
+
+    @field_validator(
+        "source_design_raw_sha256", "anchor_canonical_sha256", mode="before"
+    )
+    @classmethod
+    def require_digest(cls, value: object, info: object) -> object:
+        return _require_lowercase_sha256(value, getattr(info, "field_name", "sha256"))
+
+    @field_validator("signed_charge_error_percent", mode="before")
+    @classmethod
+    def require_exact_error_float(cls, value: object) -> object:
+        if type(value) is not float or not isfinite(value):
+            raise ValueError("signed charge error must be a finite primitive float")
+        return value
+
+
+class WaterRecipeAmendment(StrictPaper1Model):
+    reagent_id: str
+    formula: str
+    hydrate_state: str
+    amount: RegisteredQuantity
+    molecular_weight: RegisteredQuantity
+    mass_per_final_litre: RegisteredQuantity
+    stoichiometric_contributions_mmol_l: Mapping[str, RegisteredQuantity]
+    alkalinity_contribution_mmol_c_l: RegisteredQuantity
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+
+    @field_validator("reagent_id", "formula", "hydrate_state", mode="before")
+    @classmethod
+    def require_text(cls, value: object, info: object) -> object:
+        return _require_registered_text(value, getattr(info, "field_name", "text"))
+
+    @model_validator(mode="after")
+    def require_units_arithmetic_and_frozen_contributions(self) -> "WaterRecipeAmendment":
+        _require_quantity_unit(self.amount, "mmol L^-1", "amount")
+        _require_quantity_unit(self.molecular_weight, "g mol^-1", "molecular_weight")
+        _require_quantity_unit(
+            self.mass_per_final_litre, "mg L^-1", "mass_per_final_litre"
+        )
+        _require_quantity_unit(
+            self.alkalinity_contribution_mmol_c_l,
+            "mmol_c L^-1",
+            "alkalinity_contribution_mmol_c_l",
+        )
+        if self.amount.value <= 0.0 or self.molecular_weight.value <= 0.0:
+            raise ValueError("amendment amount and molecular weight must be positive")
+        if self.mass_per_final_litre.value <= 0.0:
+            raise ValueError("amendment mass must be positive")
+        if not isclose(
+            self.mass_per_final_litre.value,
+            self.amount.value * self.molecular_weight.value,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("amendment mass must equal amount times molecular weight")
+        if type(self.stoichiometric_contributions_mmol_l) not in (
+            dict,
+            _MAPPING_PROXY_TYPE,
+        ) or not self.stoichiometric_contributions_mmol_l:
+            raise ValueError("stoichiometric contributions must be a nonempty mapping")
+        if any(key not in _REGISTERED_ANALYTE_IDS for key in self.stoichiometric_contributions_mmol_l):
+            raise ValueError("stoichiometric contribution contains an unknown analyte")
+        for analyte_id, quantity in self.stoichiometric_contributions_mmol_l.items():
+            _require_registered_text(analyte_id, "stoichiometric analyte")
+            _require_quantity_unit(quantity, "mmol L^-1", analyte_id)
+            if quantity.value < 0.0:
+                raise ValueError("stoichiometric contributions must be nonnegative")
+            if quantity.evidence_label is not EvidenceLabel.HYPOTHESIS_PRIOR:
+                raise ValueError("stoichiometric contributions require hypothesis_prior")
+        for quantity in (
+            self.amount,
+            self.molecular_weight,
+            self.mass_per_final_litre,
+            self.alkalinity_contribution_mmol_c_l,
+        ):
+            if quantity.evidence_label is not EvidenceLabel.HYPOTHESIS_PRIOR:
+                raise ValueError("amendment quantities require hypothesis_prior")
+        if self.alkalinity_contribution_mmol_c_l.value < 0.0:
+            raise ValueError("alkalinity contribution must be nonnegative")
+        object.__setattr__(
+            self,
+            "stoichiometric_contributions_mmol_l",
+            MappingProxyType(dict(self.stoichiometric_contributions_mmol_l)),
+        )
+        return self
+
+    @model_serializer(mode="plain")
+    def serialize_amendment(self) -> dict[str, object]:
+        return _registered_json_value(self)  # type: ignore[return-value]
+
+
+class WaterRecipePreparation(StrictPaper1Model):
+    preparation_basis: Literal["formula_resolved_synthetic_target"]
+    physicalization_status: Literal[
+        "blocked_pending_batch_specific_titration_revision"
+    ]
+    source_water_chemistry: RegisteredRecipeWaterChemistry
+    amendments: tuple[WaterRecipeAmendment, ...] = Field(min_length=1)
+    registered_nonstoichiometric_targets: Mapping[str, RegisteredQuantity]
+    computed_target_chemistry: RegisteredRecipeWaterChemistry
+
+    @model_validator(mode="after")
+    def freeze_nonstoichiometric_targets(self) -> "WaterRecipePreparation":
+        frozen = _freeze_exact_map(
+            self.registered_nonstoichiometric_targets,
+            tuple(_NONSTOICHIOMETRIC_TARGET_UNITS),
+            "registered_nonstoichiometric_targets",
+        )
+        for field_name, expected_unit in _NONSTOICHIOMETRIC_TARGET_UNITS.items():
+            quantity = frozen[field_name]
+            if not isinstance(quantity, RegisteredQuantity):
+                raise ValueError("nonstoichiometric targets must be quantities")
+            _require_quantity_unit(quantity, expected_unit, field_name)
+            if quantity.evidence_label is not EvidenceLabel.HYPOTHESIS_PRIOR:
+                raise ValueError("nonstoichiometric targets require hypothesis_prior")
+        object.__setattr__(self, "registered_nonstoichiometric_targets", frozen)
+        return self
+
+    @model_serializer(mode="plain")
+    def serialize_preparation(self) -> dict[str, object]:
+        return _registered_json_value(self)  # type: ignore[return-value]
+
+
+class ActiveWaterRecipe(StrictPaper1Model):
+    recipe_id: str
+    revision: Literal["1.0.0"]
+    water_id: str
+    status: Literal["active"]
+    supersedes_anchor_sha256: str
+    preparation: WaterRecipePreparation
+    chemistry: RegisteredRecipeWaterChemistry
+    charge_convention_id: Literal["almondlab.chemistry.charge_balance_error@1"]
+    charge_balance_tolerance_percent: RegisteredQuantity
+    model_domain_id: Literal["core_v1"]
+    model_domain_version: Literal["1.1.0"]
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+    generated_batch_evidence_label: Literal[EvidenceLabel.SYNTHETIC_ONLY]
+
+    @field_validator("recipe_id", "water_id", mode="before")
+    @classmethod
+    def require_text(cls, value: object, info: object) -> object:
+        return _require_registered_text(value, getattr(info, "field_name", "text"))
+
+    @field_validator("supersedes_anchor_sha256", mode="before")
+    @classmethod
+    def require_digest(cls, value: object) -> object:
+        return _require_lowercase_sha256(value, "supersedes_anchor_sha256")
+
+    @model_validator(mode="after")
+    def require_tolerance_unit(self) -> "ActiveWaterRecipe":
+        _require_quantity_unit(
+            self.charge_balance_tolerance_percent,
+            "percent",
+            "charge_balance_tolerance_percent",
+        )
+        if (
+            self.charge_balance_tolerance_percent.evidence_label
+            is not EvidenceLabel.HYPOTHESIS_PRIOR
+        ):
+            raise ValueError("charge-balance tolerance requires hypothesis_prior")
+        return self
+
+
+class Paper1WaterRecipeRegistry(StrictPaper1Model):
+    schema_version: Literal["1.0.0"]
+    historical_anchors: tuple[HistoricalWaterRecipeAnchor, ...] = Field(
+        min_length=2, max_length=2
+    )
+    active_recipes: tuple[ActiveWaterRecipe, ...] = Field(min_length=2, max_length=2)
+
+    @model_validator(mode="after")
+    def require_registered_authority(self) -> "Paper1WaterRecipeRegistry":
+        _validate_water_recipe_registry_authority(self)
+        return self
+
+    @model_serializer(mode="plain")
+    def serialize_registry(self) -> dict[str, object]:
+        return _registered_json_value(self)  # type: ignore[return-value]
+
+
+def _chemistry_json(chemistry: WaterChemistry) -> dict[str, object]:
+    return chemistry.model_dump(mode="json")
+
+
+def _amendment_signature(
+    amendment: WaterRecipeAmendment,
+) -> tuple[object, ...]:
+    return (
+        amendment.reagent_id,
+        amendment.formula,
+        amendment.hydrate_state,
+        amendment.amount.value,
+        amendment.molecular_weight.value,
+        amendment.mass_per_final_litre.value,
+        tuple(
+            (analyte_id, quantity.value)
+            for analyte_id, quantity in amendment.stoichiometric_contributions_mmol_l.items()
+        ),
+        amendment.alkalinity_contribution_mmol_c_l.value,
+    )
+
+
+def _validate_water_recipe_registry_authority(
+    registry: Paper1WaterRecipeRegistry,
+) -> None:
+    if tuple(anchor.water_id for anchor in registry.historical_anchors) != REGISTERED_WATER_IDS:
+        raise ValueError("historical anchors must use the registered water order")
+    if tuple(recipe.water_id for recipe in registry.active_recipes) != REGISTERED_WATER_IDS:
+        raise ValueError("active recipes must use the registered water order")
+    for index, anchor in enumerate(registry.historical_anchors):
+        water_id = REGISTERED_WATER_IDS[index]
+        expected_path = f"water_conditions[{index}].chemistry"
+        if anchor.source_field_path != expected_path:
+            raise ValueError("historical source field path is not registered")
+        if anchor.source_design_raw_sha256 != _LEGACY_DESIGN_RAW_SHA256:
+            raise ValueError("historical source design digest is not registered")
+        if anchor.anchor_canonical_sha256 != _LEGACY_ANCHOR_SHA256S[water_id]:
+            raise ValueError("historical anchor digest is not registered")
+        if anchor.signed_charge_error_percent != _LEGACY_SIGNED_CHARGE_ERRORS[water_id]:
+            raise ValueError("historical signed charge error is not registered")
+        chemistry = _chemistry_json(anchor.chemistry)
+        if chemistry != _LEGACY_CHEMISTRIES[water_id]:
+            raise ValueError("historical chemistry is not the frozen anchor")
+        # The lineage digest is over the complete superseded WaterCondition,
+        # not the chemistry child alone.
+        digest = hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    "water_id": water_id,
+                    "chemistry": chemistry,
+                    "evidence_label": EvidenceLabel.HYPOTHESIS_PRIOR.value,
+                }
+            )
+        ).hexdigest()
+        if digest != anchor.anchor_canonical_sha256:
+            raise ValueError("historical chemistry does not reproduce its anchor digest")
+        if charge_balance_error(anchor.chemistry) != anchor.signed_charge_error_percent:
+            raise ValueError("historical charge error does not reproduce the public oracle")
+
+    expected_amendments = (_CONTROL_AMENDMENTS, _CHALLENGE_AMENDMENTS)
+    for index, recipe in enumerate(registry.active_recipes):
+        water_id = REGISTERED_WATER_IDS[index]
+        if recipe.recipe_id != _ACTIVE_RECIPE_IDS[water_id]:
+            raise ValueError("active recipe ID is not registered")
+        if recipe.supersedes_anchor_sha256 != _LEGACY_ANCHOR_SHA256S[water_id]:
+            raise ValueError("active recipe lineage is detached from its anchor")
+        expected_source = (
+            _SYNTHETIC_BLANK_CHEMISTRY
+            if index == 0
+            else _ACTIVE_CHEMISTRIES[REGISTERED_WATER_IDS[0]]
+        )
+        if _chemistry_json(recipe.preparation.source_water_chemistry) != expected_source:
+            raise ValueError("active recipe source chemistry is not registered")
+        if tuple(_amendment_signature(row) for row in recipe.preparation.amendments) != expected_amendments[index]:
+            raise ValueError("active recipe amendment authority drifted")
+        expected_chemistry = _ACTIVE_CHEMISTRIES[water_id]
+        computed = _chemistry_json(recipe.preparation.computed_target_chemistry)
+        chemistry = _chemistry_json(recipe.chemistry)
+        if computed != expected_chemistry or chemistry != expected_chemistry:
+            raise ValueError("active recipe target chemistry drifted")
+        if computed != chemistry:
+            raise ValueError("serialized chemistry and computed target must be equal")
+        for analyte_id in _REGISTERED_ANALYTE_IDS:
+            source_value = getattr(
+                recipe.preparation.source_water_chemistry,
+                f"{analyte_id}_mmol_l",
+            )
+            contribution = fsum(
+                row.stoichiometric_contributions_mmol_l[analyte_id].value
+                for row in recipe.preparation.amendments
+                if analyte_id in row.stoichiometric_contributions_mmol_l
+            )
+            if source_value + contribution != getattr(
+                recipe.chemistry, f"{analyte_id}_mmol_l"
+            ):
+                raise ValueError("formula contributions do not reproduce target chemistry")
+        alkalinity = recipe.preparation.source_water_chemistry.alkalinity_mmol_c_l + fsum(
+            row.alkalinity_contribution_mmol_c_l.value
+            for row in recipe.preparation.amendments
+        )
+        if alkalinity != recipe.chemistry.alkalinity_mmol_c_l:
+            raise ValueError("formula alkalinity does not reproduce target chemistry")
+        for field_name, expected_unit in _NONSTOICHIOMETRIC_TARGET_UNITS.items():
+            quantity = recipe.preparation.registered_nonstoichiometric_targets[field_name]
+            if quantity.value != getattr(recipe.chemistry, field_name):
+                raise ValueError("nonstoichiometric target differs from active chemistry")
+            if quantity.unit != expected_unit:
+                raise ValueError("nonstoichiometric target unit drifted")
+        error = charge_balance_error(recipe.chemistry)
+        if error != 0.0 or abs(error) > recipe.charge_balance_tolerance_percent.value:
+            raise ValueError("active chemistry fails the registered charge oracle")
+        if recipe.charge_balance_tolerance_percent.value != 1.0:
+            raise ValueError("active charge-balance tolerance must remain 1.0 percent")
+
+
+class Task4ConcentrationStopRule(StrictPaper1Model):
+    rule_id: str
+    analyte_ids: tuple[str, ...]
+    compartment_kinds: tuple[str, ...]
+    phase_ids: tuple[str, ...]
+    maximum: RegisteredQuantity
+    boundary: Literal["stop_above_equality_accepted"]
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+
+
+class Task4PhysicalStopRule(StrictPaper1Model):
+    rule_id: str
+    quantity_id: str
+    compartment_kinds: tuple[str, ...]
+    phase_ids: tuple[str, ...]
+    minimum: RegisteredQuantity | None
+    maximum: RegisteredQuantity | None
+    boundary: Literal[
+        "stop_above_equality_accepted", "stop_outside_boundaries_accepted"
+    ]
+    applicability_key_fields: tuple[str, ...]
+    aggregate_debit_preflight: bool
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+
+    @field_validator("aggregate_debit_preflight", mode="before")
+    @classmethod
+    def require_exact_bool(cls, value: object) -> object:
+        if type(value) is not bool:
+            raise ValueError("aggregate_debit_preflight must be a primitive boolean")
+        return value
+
+
+_TASK4_CONCENTRATION_AUTHORITY = (
+    "root_tissue_na_cl_k_concentration",
+    ("na", "cl", "k"),
+    ("root_apoplast", "root_symplast", "root_vacuole", "xylem", "shoot_tissue"),
+    ("initialization", "state_transition", "terminal"),
+    4.0,
+    "mmol L^-1",
+    "stop_above_equality_accepted",
+)
+_TASK4_OTHER_AUTHORITIES = (
+    (
+        "ecw",
+        "ecw_ds_m",
+        ("source_water", "irrigation_tank"),
+        ("operational_sample",),
+        None,
+        (10.0, "dS m^-1"),
+        "stop_above_equality_accepted",
+        (),
+        False,
+    ),
+    (
+        "osmolality",
+        "measured_osmolality_osmol_kg",
+        ("mechanistic_water_forcing",),
+        ("integration",),
+        None,
+        (0.4, "osmol kg^-1"),
+        "stop_above_equality_accepted",
+        (),
+        False,
+    ),
+    (
+        "loop_compartment_volume",
+        "volume_l",
+        (
+            "treatment_feed",
+            "treatment_product",
+            "treatment_concentrate",
+            "blend_tank",
+            "irrigation_tank",
+            "root_zone",
+            "drainage",
+            "condensate",
+            "purge_holding",
+        ),
+        ("initialization", "state_transition", "terminal"),
+        (0.1, "L"),
+        (1000.0, "L"),
+        "stop_outside_boundaries_accepted",
+        ("loop_id", "compartment_id"),
+        False,
+    ),
+    (
+        "shared_source_batch_volume",
+        "volume_l",
+        ("shared_source_batch_inventory",),
+        ("preflight", "initialization", "state_transition", "terminal"),
+        (0.0, "L"),
+        (5000.0, "L"),
+        "stop_outside_boundaries_accepted",
+        ("cohort_id", "water_batch_id"),
+        True,
+    ),
+    (
+        "injury",
+        "injury",
+        ("plant_state",),
+        ("state_transition", "terminal"),
+        None,
+        (1.0, "dimensionless"),
+        "stop_above_equality_accepted",
+        ("plant_id",),
+        False,
+    ),
+    (
+        "containment_discharge",
+        "unauthorized_discharge_volume_l",
+        ("external_unauthorized_discharge_ledger",),
+        ("initialization", "state_transition", "terminal"),
+        None,
+        (0.0, "L"),
+        "stop_above_equality_accepted",
+        ("ledger_category",),
+        False,
+    ),
+)
+
+
+def _quantity_signature(value: RegisteredQuantity | None) -> tuple[float, str] | None:
+    if value is None:
+        return None
+    return (value.value, value.unit)
+
+
+class Task4StopPolicy(StrictPaper1Model):
+    schema_version: Literal["1.0.0"]
+    policy_id: Literal["paper1_task4_stop_policy@1.0.0"]
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+    absent_applicability: Literal["explicit_not_applicable"]
+    concentration_rule: Task4ConcentrationStopRule
+    other_rules: tuple[Task4PhysicalStopRule, ...] = Field(min_length=6, max_length=6)
+
+    @model_validator(mode="after")
+    def require_exact_authority(self) -> "Task4StopPolicy":
+        rule = self.concentration_rule
+        observed = (
+            rule.rule_id,
+            rule.analyte_ids,
+            rule.compartment_kinds,
+            rule.phase_ids,
+            rule.maximum.value,
+            rule.maximum.unit,
+            rule.boundary,
+        )
+        if observed != _TASK4_CONCENTRATION_AUTHORITY:
+            raise ValueError("Task 4 concentration applicability authority drifted")
+        if rule.maximum.evidence_label is not EvidenceLabel.HYPOTHESIS_PRIOR:
+            raise ValueError("Task 4 concentration maximum requires hypothesis_prior")
+        observed_other = tuple(
+            (
+                item.rule_id,
+                item.quantity_id,
+                item.compartment_kinds,
+                item.phase_ids,
+                _quantity_signature(item.minimum),
+                _quantity_signature(item.maximum),
+                item.boundary,
+                item.applicability_key_fields,
+                item.aggregate_debit_preflight,
+            )
+            for item in self.other_rules
+        )
+        if observed_other != _TASK4_OTHER_AUTHORITIES:
+            raise ValueError("Task 4 physical-stop authority drifted")
+        for item in self.other_rules:
+            for quantity in (item.minimum, item.maximum):
+                if (
+                    quantity is not None
+                    and quantity.evidence_label is not EvidenceLabel.HYPOTHESIS_PRIOR
+                ):
+                    raise ValueError("Task 4 stop boundaries require hypothesis_prior")
+        return self
+
+    def resolve_concentration_rule(
+        self,
+        *,
+        analyte_id: str,
+        compartment_kind: str,
+        phase_id: str,
+    ) -> Task4ConcentrationStopRule | None:
+        """Resolve an exact triple; absence is explicit non-applicability."""
+
+        canonical = _canonical_task4_stop_policy(self)
+        for value, name in (
+            (analyte_id, "analyte_id"),
+            (compartment_kind, "compartment_kind"),
+            (phase_id, "phase_id"),
+        ):
+            try:
+                _require_registered_text(value, name)
+            except ValueError as error:
+                fail(
+                    "TASK4_STOP_LOOKUP_INVALID",
+                    "stop-policy lookup identifiers must be exact strings",
+                    name,
+                    {"cause_type": type(error).__name__},
+                )
+        rule = canonical.concentration_rule
+        if (
+            analyte_id in rule.analyte_ids
+            and compartment_kind in rule.compartment_kinds
+            and phase_id in rule.phase_ids
+        ):
+            return rule
+        return None
+
+
+class SharedSourceLoopDemand(StrictPaper1Model):
+    """One predeclared physical loop's expected debit from a shared batch."""
+
+    cohort_id: str
+    run_id: str
+    water_id: str
+    reservoir_id: str
+    water_batch_id: str
+    recipe_id: str
+    recipe_revision: str
+    chemistry_sha256: str
+    expected_debit_l: float
+
+    @field_validator(
+        "cohort_id",
+        "run_id",
+        "water_id",
+        "reservoir_id",
+        "water_batch_id",
+        "recipe_id",
+        "recipe_revision",
+        mode="before",
+    )
+    @classmethod
+    def require_exact_ids(cls, value: object, info: object) -> object:
+        return _require_registered_text(value, getattr(info, "field_name", "identifier"))
+
+    @field_validator("chemistry_sha256", mode="before")
+    @classmethod
+    def require_chemistry_digest(cls, value: object) -> object:
+        return _require_lowercase_sha256(value, "chemistry_sha256")
+
+    @field_validator("expected_debit_l", mode="before")
+    @classmethod
+    def require_finite_debit(cls, value: object) -> object:
+        if type(value) is not float or not isfinite(value) or value < 0.0:
+            raise ValueError("expected debit must be a nonnegative finite primitive float")
+        return value
+
+    @model_validator(mode="after")
+    def require_registered_recipe_identity(self) -> "SharedSourceLoopDemand":
+        if self.water_id not in REGISTERED_WATER_IDS:
+            raise ValueError("loop demand water_id is not registered")
+        if self.recipe_id != _ACTIVE_RECIPE_IDS[self.water_id]:
+            raise ValueError("loop demand recipe_id does not match its water_id")
+        if self.recipe_revision != "1.0.0":
+            raise ValueError("loop demand recipe revision is not registered")
+        return self
+
+
+class SharedSourceBatchCapacityAudit(StrictPaper1Model):
+    cohort_id: str
+    water_batch_id: str
+    water_id: str
+    recipe_id: str
+    recipe_revision: str
+    chemistry_sha256: str
+    loop_count: int
+    aggregate_expected_debit_l: float
+    capacity_l: float
+    remaining_capacity_l: float
+
+    @field_validator("loop_count", mode="before")
+    @classmethod
+    def require_loop_count(cls, value: object) -> object:
+        if type(value) is not int or value <= 0:
+            raise ValueError("loop count must be a positive primitive integer")
+        return value
+
+    @field_validator(
+        "aggregate_expected_debit_l", "capacity_l", "remaining_capacity_l", mode="before"
+    )
+    @classmethod
+    def require_audit_float(cls, value: object) -> object:
+        if type(value) is not float or not isfinite(value) or value < 0.0:
+            raise ValueError("capacity audit values must be nonnegative finite floats")
+        return value
+
+
+def _canonical_task4_stop_policy(policy: object) -> Task4StopPolicy:
+    if not isinstance(policy, Task4StopPolicy):
+        fail(
+            "TASK4_STOP_POLICY_INVALID",
+            "stop policy must be a validated Task4StopPolicy",
+            "policy",
+            {"received_type": type(policy).__name__},
+        )
+    try:
+        return Task4StopPolicy.model_validate(_registered_json_value(policy))
+    except Exception as error:
+        fail(
+            "TASK4_STOP_POLICY_INVALID",
+            "stop policy failed complete authority revalidation",
+            "policy",
+            {"cause_type": type(error).__name__},
+        )
+
+
+def preflight_shared_source_batch_capacity(
+    policy: Task4StopPolicy,
+    loop_demands: Sequence[SharedSourceLoopDemand],
+) -> tuple[SharedSourceBatchCapacityAudit, ...]:
+    """Aggregate exact cohort/batch debits before RNG, output, or execution."""
+
+    canonical_policy = _canonical_task4_stop_policy(policy)
+    if type(loop_demands) not in (tuple, list) or not loop_demands:
+        fail(
+            "WATER_BATCH_DEBIT_INVALID",
+            "shared source preflight requires a nonempty ordinary sequence",
+            "loop_demands",
+        )
+    canonical_demands: list[SharedSourceLoopDemand] = []
+    for index, item in enumerate(loop_demands):
+        if not isinstance(item, SharedSourceLoopDemand):
+            fail(
+                "WATER_BATCH_DEBIT_INVALID",
+                "loop demand must be a validated SharedSourceLoopDemand",
+                f"loop_demands.{index}",
+                {"received_type": type(item).__name__},
+            )
+        try:
+            canonical_demands.append(
+                SharedSourceLoopDemand.model_validate(_registered_json_value(item))
+            )
+        except Exception as error:
+            fail(
+                "WATER_BATCH_DEBIT_INVALID",
+                "loop demand failed complete revalidation",
+                f"loop_demands.{index}",
+                {"cause_type": type(error).__name__},
+            )
+    loop_keys = [
+        (item.cohort_id, item.run_id, item.water_id, item.reservoir_id)
+        for item in canonical_demands
+    ]
+    if len(set(loop_keys)) != len(loop_keys):
+        fail(
+            "WATER_BATCH_DEBIT_INVALID",
+            "a physical loop appears more than once in shared source preflight",
+            "loop_demands",
+        )
+    grouped: dict[tuple[str, str], list[SharedSourceLoopDemand]] = {}
+    for item in canonical_demands:
+        grouped.setdefault((item.cohort_id, item.water_batch_id), []).append(item)
+    capacity_rule = next(
+        item
+        for item in canonical_policy.other_rules
+        if item.rule_id == "shared_source_batch_volume"
+    )
+    if capacity_rule.maximum is None:
+        raise AssertionError("registered capacity rule requires maximum")
+    capacity = capacity_rule.maximum.value
+    audits: list[SharedSourceBatchCapacityAudit] = []
+    for group_key in sorted(grouped):
+        rows = sorted(
+            grouped[group_key],
+            key=lambda item: (
+                item.cohort_id,
+                item.run_id,
+                item.water_id,
+                item.reservoir_id,
+            ),
+        )
+        identities = {
+            (
+                item.water_id,
+                item.recipe_id,
+                item.recipe_revision,
+                item.chemistry_sha256,
+            )
+            for item in rows
+        }
+        if len(identities) != 1:
+            fail(
+                "WATER_BATCH_IDENTITY_MISMATCH",
+                "one shared water batch was assigned conflicting water or chemistry identities",
+                "loop_demands",
+                {"cohort_id": group_key[0], "water_batch_id": group_key[1]},
+            )
+        try:
+            aggregate = fsum(item.expected_debit_l for item in rows)
+        except OverflowError:
+            aggregate = float("inf")
+        if not isfinite(aggregate) or aggregate > capacity:
+            fail(
+                "WATER_BATCH_CAPACITY_EXCEEDED",
+                "aggregate expected debit exceeds the shared 5,000-L source inventory",
+                "loop_demands",
+                {
+                    "cohort_id": group_key[0],
+                    "water_batch_id": group_key[1],
+                    "aggregate_expected_debit_l": aggregate,
+                    "capacity_l": capacity,
+                },
+            )
+        water_id, recipe_id, recipe_revision, chemistry_sha256 = next(iter(identities))
+        audits.append(
+            SharedSourceBatchCapacityAudit(
+                cohort_id=group_key[0],
+                water_batch_id=group_key[1],
+                water_id=water_id,
+                recipe_id=recipe_id,
+                recipe_revision=recipe_revision,
+                chemistry_sha256=chemistry_sha256,
+                loop_count=len(rows),
+                aggregate_expected_debit_l=float(aggregate),
+                capacity_l=float(capacity),
+                remaining_capacity_l=float(capacity - aggregate),
+            )
+        )
+    return tuple(audits)
 
 
 REQUIRED_SYNTHETIC_SCENARIO_SECTIONS = frozenset(
@@ -2073,6 +3084,284 @@ def load_thresholds(path: str | Path) -> DecisionThresholds:
 def load_paper1_design(path: str | Path) -> Paper1DesignConfig:
     """Load the complete primary-population allocation design."""
     return Paper1DesignConfig.model_validate(_load_yaml_mapping(path))
+
+
+def _canonical_water_recipe_registry(
+    registry: object,
+) -> Paper1WaterRecipeRegistry:
+    if not isinstance(registry, Paper1WaterRecipeRegistry):
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "recipe registry must be a validated Paper1WaterRecipeRegistry",
+            "registry",
+            {"received_type": type(registry).__name__},
+        )
+    try:
+        return Paper1WaterRecipeRegistry.model_validate(_registered_json_value(registry))
+    except Exception as error:
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "recipe registry failed complete authority revalidation",
+            "registry",
+            {"cause_type": type(error).__name__},
+        )
+
+
+def _canonical_paper1_design(design: object) -> Paper1DesignConfig:
+    if not isinstance(design, Paper1DesignConfig):
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "design must be a validated Paper1DesignConfig",
+            "design",
+            {"received_type": type(design).__name__},
+        )
+    try:
+        return Paper1DesignConfig.model_validate(_registered_json_value(design))
+    except Exception as error:
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "Paper 1 design failed complete revalidation",
+            "design",
+            {"cause_type": type(error).__name__},
+        )
+
+
+def _canonical_recipe_domain(domain: object) -> ModelDomain:
+    if not isinstance(domain, ModelDomain):
+        fail(
+            "PAPER1_WATER_RECIPE_DOMAIN_INVALID",
+            "recipe validation requires a ModelDomain",
+            "domain",
+            {"received_type": type(domain).__name__},
+        )
+    try:
+        checked = ModelDomain.model_validate(_registered_json_value(domain))
+    except Exception as error:
+        fail(
+            "PAPER1_WATER_RECIPE_DOMAIN_INVALID",
+            "model domain failed complete revalidation",
+            "domain",
+            {"cause_type": type(error).__name__},
+        )
+    observed_requirements = tuple(
+        (
+            requirement.field_name,
+            requirement.observation_kind,
+            None if requirement.ec_kind is None else requirement.ec_kind.value,
+        )
+        for requirement in checked.required_chemistry_fields
+    )
+    expected_requirements = (
+        ("ec_ds_m", "measured", "ECw"),
+        ("ph", "measured", None),
+        ("measured_osmolality_osmol_kg", "measured", None),
+        ("alkalinity_mmol_c_l", "measured", None),
+        ("temperature_k", "measured", None),
+        ("sar", "computed", None),
+    )
+    observed = (
+        checked.model_id,
+        checked.version,
+        checked.permitted_evidence_label,
+        checked.ec_kind.value,
+        checked.ec_ds_m_min,
+        checked.ec_ds_m_max,
+        checked.osmolality_min,
+        checked.osmolality_max,
+        checked.temperature_k_min,
+        checked.temperature_k_max,
+        observed_requirements,
+        checked.required_analytes,
+        checked.allowed_chassis,
+        checked.allowed_life_stages,
+        checked.calibration_datasets,
+        checked.extrapolation_policy,
+    )
+    expected = (
+        "core_v1",
+        "1.1.0",
+        EvidenceLabel.PHYSICS_CONSTRAINED,
+        "ECw",
+        0.7,
+        15.0,
+        0.02,
+        0.30,
+        291.15,
+        303.15,
+        expected_requirements,
+        _REGISTERED_ANALYTE_IDS,
+        ("Vairo", "SYNTHETIC_VAIRO_B"),
+        ("juvenile",),
+        (),
+        "deny",
+    )
+    if observed != expected:
+        fail(
+            "PAPER1_WATER_RECIPE_DOMAIN_INVALID",
+            "core_v1 is not the registered Paper 1 v1.1.0 domain",
+            "domain",
+        )
+    return checked
+
+
+def load_paper1_water_recipes(path: str | Path) -> Paper1WaterRecipeRegistry:
+    """Load and independently revalidate the prospective recipe authority."""
+
+    try:
+        raw = _load_yaml_mapping(path)
+        return Paper1WaterRecipeRegistry.model_validate(raw)
+    except AlmondLabError:
+        raise
+    except Exception as error:
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "Paper 1 water-recipe authority is invalid",
+            "registry",
+            {"cause_type": type(error).__name__},
+        )
+
+
+def load_task4_stop_policy(path: str | Path) -> Task4StopPolicy:
+    """Load and independently revalidate the exact Task 4 stop authority."""
+
+    try:
+        raw = _load_yaml_mapping(path)
+        return Task4StopPolicy.model_validate(raw)
+    except AlmondLabError:
+        raise
+    except Exception as error:
+        fail(
+            "TASK4_STOP_POLICY_INVALID",
+            "Task 4 physical-stop authority is invalid",
+            "policy",
+            {"cause_type": type(error).__name__},
+        )
+
+
+def migrate_paper1_design_water_recipes(
+    design: Paper1DesignConfig,
+    registry: Paper1WaterRecipeRegistry,
+) -> Paper1DesignConfig:
+    """Detach and replace only the two superseded design chemistry records."""
+
+    checked_design = _canonical_paper1_design(design)
+    checked_registry = _canonical_water_recipe_registry(registry)
+    anchors = {
+        anchor.water_id: anchor for anchor in checked_registry.historical_anchors
+    }
+    for water in checked_design.water_conditions:
+        if _chemistry_json(water.chemistry) != _chemistry_json(
+            anchors[water.water_id].chemistry
+        ):
+            fail(
+                "PAPER1_WATER_RECIPE_MIGRATION_INVALID",
+                "migration source is not the exact superseded chemistry anchor",
+                f"water_conditions.{water.water_id}.chemistry",
+            )
+    payload = _registered_json_value(checked_design)
+    if not isinstance(payload, dict):
+        raise AssertionError("Paper1DesignConfig serialization must be a mapping")
+    water_rows = payload["water_conditions"]
+    if not isinstance(water_rows, list):
+        raise AssertionError("Paper1DesignConfig water conditions must be a list")
+    active = {
+        recipe.water_id: recipe for recipe in checked_registry.active_recipes
+    }
+    for row in water_rows:
+        if not isinstance(row, dict):
+            raise AssertionError("Paper1DesignConfig water row must be a mapping")
+        water_id = row["water_id"]
+        row["chemistry"] = _chemistry_json(active[water_id].chemistry)
+    try:
+        return Paper1DesignConfig.model_validate(payload)
+    except Exception as error:
+        fail(
+            "PAPER1_WATER_RECIPE_MIGRATION_INVALID",
+            "detached chemistry migration failed design revalidation",
+            "water_conditions",
+            {"cause_type": type(error).__name__},
+        )
+
+
+def validate_active_paper1_water_recipes(
+    registry: Paper1WaterRecipeRegistry,
+    *,
+    design: Paper1DesignConfig,
+    domain: ModelDomain,
+    physical_use: bool = False,
+) -> tuple[ActiveWaterRecipe, ...]:
+    """Validate active synthetic recipes against design and model authorities."""
+
+    if type(physical_use) is not bool:
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "physical_use must be a primitive boolean",
+            "physical_use",
+        )
+    checked_registry = _canonical_water_recipe_registry(registry)
+    checked_design = _canonical_paper1_design(design)
+    checked_domain = _canonical_recipe_domain(domain)
+    by_water = {
+        recipe.water_id: recipe for recipe in checked_registry.active_recipes
+    }
+    if tuple(water.water_id for water in checked_design.water_conditions) != REGISTERED_WATER_IDS:
+        fail(
+            "PAPER1_WATER_RECIPE_INVALID",
+            "design water order differs from the recipe authority",
+            "design.water_conditions",
+        )
+    for water in checked_design.water_conditions:
+        recipe = by_water[water.water_id]
+        if _chemistry_json(water.chemistry) != _chemistry_json(recipe.chemistry):
+            fail(
+                "PAPER1_WATER_RECIPE_INVALID",
+                "design chemistry differs from the active recipe",
+                f"design.water_conditions.{water.water_id}.chemistry",
+            )
+        if water.evidence_label is not EvidenceLabel.HYPOTHESIS_PRIOR:
+            fail(
+                "PAPER1_WATER_RECIPE_INVALID",
+                "design water chemistry must remain hypothesis_prior",
+                f"design.water_conditions.{water.water_id}.evidence_label",
+            )
+        chemistry = recipe.chemistry
+        if not (
+            checked_domain.ec_ds_m_min
+            <= chemistry.ec_ds_m
+            <= checked_domain.ec_ds_m_max
+            and checked_domain.osmolality_min
+            <= chemistry.measured_osmolality_osmol_kg
+            <= checked_domain.osmolality_max
+            and checked_domain.temperature_k_min
+            <= chemistry.temperature_k
+            <= checked_domain.temperature_k_max
+        ):
+            fail(
+                "PAPER1_WATER_RECIPE_DOMAIN_INVALID",
+                "active recipe chemistry is outside core_v1",
+                f"registry.active_recipes.{water.water_id}.chemistry",
+            )
+        if (
+            recipe.model_domain_id != checked_domain.model_id
+            or recipe.model_domain_version != checked_domain.version
+        ):
+            fail(
+                "PAPER1_WATER_RECIPE_DOMAIN_INVALID",
+                "active recipe names a different model-domain authority",
+                f"registry.active_recipes.{water.water_id}.model_domain_id",
+            )
+    if physical_use:
+        fail(
+            "PHYSICAL_RECIPE_NOT_REGISTERED",
+            "synthetic targets lack a batch-specific titration and final-volume revision",
+            "registry.active_recipes.preparation.physicalization_status",
+            {
+                "required_status": (
+                    "blocked_pending_batch_specific_titration_revision"
+                )
+            },
+        )
+    return checked_registry.active_recipes
 
 
 def load_synthetic_scenarios(path: str | Path) -> SyntheticScenarioRegistry:

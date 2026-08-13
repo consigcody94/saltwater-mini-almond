@@ -1,6 +1,6 @@
 core_v1:
   model_id: core_v1
-  version: 1.0.0
+  version: 1.1.0
   permitted_evidence_label: physics_constrained
   ec_kind: ECw
   ec_ds_m_min: 0.7
@@ -36,6 +36,7 @@ core_v1:
     - phosphate
   allowed_chassis:
     - Vairo
+    - SYNTHETIC_VAIRO_B
   allowed_life_stages:
     - juvenile
   calibration_datasets: []

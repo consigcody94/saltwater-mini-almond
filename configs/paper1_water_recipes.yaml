@@ -1,0 +1,282 @@
+schema_version: "1.0.0"
+historical_anchors:
+  - water_id: nonsaline_nutrient_matched_control
+    source_field_path: water_conditions[0].chemistry
+    source_design_raw_sha256: d402889dac8b4580b0d2f01e65b6caf750b8af65e0550fe6283c630109e465e0
+    anchor_canonical_sha256: a804553ff5d1e0c9938a10d14430d593cde2c5cbddd0a00c3e5460f884c61e1f
+    signed_charge_error_percent: 23.167155425219942
+    status: superseded_unbalanced_hypothesis_anchor
+    evidence_label: hypothesis_prior
+    chemistry:
+      ec_kind: ECw
+      ec_ds_m: 0.7
+      temperature_k: 298.15
+      measured_osmolality_osmol_kg: 0.02
+      ph: 7.2
+      alkalinity_mmol_c_l: 2.1
+      na_mmol_l: 5.0
+      cl_mmol_l: 6.0
+      ca_mmol_l: 4.0
+      mg_mmol_l: 3.0
+      k_mmol_l: 2.0
+      total_b_mmol_l: 0.1
+      sulfate_mmol_l: 2.0
+      bicarbonate_mmol_l: 2.1
+      nitrate_mmol_l: 1.0
+      phosphate_mmol_l: 0.5
+  - water_id: pilot_selected_full_ion_marine_challenge
+    source_field_path: water_conditions[1].chemistry
+    source_design_raw_sha256: d402889dac8b4580b0d2f01e65b6caf750b8af65e0550fe6283c630109e465e0
+    anchor_canonical_sha256: bef482128d45eff8a42593b9a19534f847858a265814edf627b8421d3e3b08a4
+    signed_charge_error_percent: 3.302286198137171
+    status: superseded_unbalanced_hypothesis_anchor
+    evidence_label: hypothesis_prior
+    chemistry:
+      ec_kind: ECw
+      ec_ds_m: 6.0
+      temperature_k: 298.15
+      measured_osmolality_osmol_kg: 0.15
+      ph: 7.2
+      alkalinity_mmol_c_l: 2.1
+      na_mmol_l: 45.0
+      cl_mmol_l: 50.0
+      ca_mmol_l: 4.0
+      mg_mmol_l: 3.0
+      k_mmol_l: 2.0
+      total_b_mmol_l: 0.1
+      sulfate_mmol_l: 2.0
+      bicarbonate_mmol_l: 2.1
+      nitrate_mmol_l: 1.0
+      phosphate_mmol_l: 0.5
+active_recipes:
+  - recipe_id: paper1_base_nutrient_control_v1
+    revision: "1.0.0"
+    water_id: nonsaline_nutrient_matched_control
+    status: active
+    supersedes_anchor_sha256: a804553ff5d1e0c9938a10d14430d593cde2c5cbddd0a00c3e5460f884c61e1f
+    preparation:
+      preparation_basis: formula_resolved_synthetic_target
+      physicalization_status: blocked_pending_batch_specific_titration_revision
+      source_water_chemistry:
+        ec_kind: ECw
+        ec_ds_m: 0.0
+        temperature_k: 298.15
+        measured_osmolality_osmol_kg: 0.0
+        ph: 7.0
+        alkalinity_mmol_c_l: 0.0
+        na_mmol_l: 0.0
+        cl_mmol_l: 0.0
+        ca_mmol_l: 0.0
+        mg_mmol_l: 0.0
+        k_mmol_l: 0.0
+        total_b_mmol_l: 0.0
+        sulfate_mmol_l: 0.0
+        bicarbonate_mmol_l: 0.0
+        nitrate_mmol_l: 0.0
+        phosphate_mmol_l: 0.0
+      amendments:
+        - reagent_id: sodium_chloride
+          formula: NaCl
+          hydrate_state: anhydrous
+          amount: {value: 4.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 58.44, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 233.76, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            na: {value: 4.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            cl: {value: 4.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+        - reagent_id: calcium_nitrate_tetrahydrate
+          formula: Ca(NO3)2·4H2O
+          hydrate_state: tetrahydrate
+          amount: {value: 2.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 236.15, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 472.3, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            ca: {value: 2.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            nitrate: {value: 4.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+        - reagent_id: magnesium_sulfate_heptahydrate
+          formula: MgSO4·7H2O
+          hydrate_state: heptahydrate
+          amount: {value: 1.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 246.48, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 246.48, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            mg: {value: 1.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            sulfate: {value: 1.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+        - reagent_id: potassium_nitrate
+          formula: KNO3
+          hydrate_state: anhydrous
+          amount: {value: 1.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 101.103, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 101.103, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            k: {value: 1.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            nitrate: {value: 1.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+        - reagent_id: potassium_bicarbonate
+          formula: KHCO3
+          hydrate_state: anhydrous
+          amount: {value: 0.75, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 100.115, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 75.08625, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            k: {value: 0.75, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            bicarbonate: {value: 0.75, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.75, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+        - reagent_id: monobasic_potassium_phosphate
+          formula: KH2PO4
+          hydrate_state: anhydrous
+          amount: {value: 0.25, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 136.086, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 34.0215, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            k: {value: 0.25, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            phosphate: {value: 0.25, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.25, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+        - reagent_id: boric_acid
+          formula: H3BO3
+          hydrate_state: anhydrous
+          amount: {value: 0.05, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 61.84, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 3.092, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            total_b: {value: 0.05, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+      registered_nonstoichiometric_targets:
+        ec_ds_m: {value: 1.5, unit: "dS m^-1", evidence_label: hypothesis_prior}
+        measured_osmolality_osmol_kg: {value: 0.02, unit: "osmol kg^-1", evidence_label: hypothesis_prior}
+        ph: {value: 6.5, unit: "pH", evidence_label: hypothesis_prior}
+        temperature_k: {value: 298.15, unit: "K", evidence_label: hypothesis_prior}
+        alkalinity_mmol_c_l: {value: 1.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+      computed_target_chemistry:
+        ec_kind: ECw
+        ec_ds_m: 1.5
+        temperature_k: 298.15
+        measured_osmolality_osmol_kg: 0.02
+        ph: 6.5
+        alkalinity_mmol_c_l: 1.0
+        na_mmol_l: 4.0
+        cl_mmol_l: 4.0
+        ca_mmol_l: 2.0
+        mg_mmol_l: 1.0
+        k_mmol_l: 2.0
+        total_b_mmol_l: 0.05
+        sulfate_mmol_l: 1.0
+        bicarbonate_mmol_l: 0.75
+        nitrate_mmol_l: 5.0
+        phosphate_mmol_l: 0.25
+    chemistry:
+      ec_kind: ECw
+      ec_ds_m: 1.5
+      temperature_k: 298.15
+      measured_osmolality_osmol_kg: 0.02
+      ph: 6.5
+      alkalinity_mmol_c_l: 1.0
+      na_mmol_l: 4.0
+      cl_mmol_l: 4.0
+      ca_mmol_l: 2.0
+      mg_mmol_l: 1.0
+      k_mmol_l: 2.0
+      total_b_mmol_l: 0.05
+      sulfate_mmol_l: 1.0
+      bicarbonate_mmol_l: 0.75
+      nitrate_mmol_l: 5.0
+      phosphate_mmol_l: 0.25
+    charge_convention_id: almondlab.chemistry.charge_balance_error@1
+    charge_balance_tolerance_percent: {value: 1.0, unit: percent, evidence_label: hypothesis_prior}
+    model_domain_id: core_v1
+    model_domain_version: "1.1.0"
+    evidence_label: hypothesis_prior
+    generated_batch_evidence_label: synthetic_only
+  - recipe_id: paper1_base_plus_nacl40_challenge_v1
+    revision: "1.0.0"
+    water_id: pilot_selected_full_ion_marine_challenge
+    status: active
+    supersedes_anchor_sha256: bef482128d45eff8a42593b9a19534f847858a265814edf627b8421d3e3b08a4
+    preparation:
+      preparation_basis: formula_resolved_synthetic_target
+      physicalization_status: blocked_pending_batch_specific_titration_revision
+      source_water_chemistry:
+        ec_kind: ECw
+        ec_ds_m: 1.5
+        temperature_k: 298.15
+        measured_osmolality_osmol_kg: 0.02
+        ph: 6.5
+        alkalinity_mmol_c_l: 1.0
+        na_mmol_l: 4.0
+        cl_mmol_l: 4.0
+        ca_mmol_l: 2.0
+        mg_mmol_l: 1.0
+        k_mmol_l: 2.0
+        total_b_mmol_l: 0.05
+        sulfate_mmol_l: 1.0
+        bicarbonate_mmol_l: 0.75
+        nitrate_mmol_l: 5.0
+        phosphate_mmol_l: 0.25
+      amendments:
+        - reagent_id: sodium_chloride_challenge_increment
+          formula: NaCl
+          hydrate_state: anhydrous
+          amount: {value: 40.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          molecular_weight: {value: 58.44, unit: "g mol^-1", evidence_label: hypothesis_prior}
+          mass_per_final_litre: {value: 2337.6, unit: "mg L^-1", evidence_label: hypothesis_prior}
+          stoichiometric_contributions_mmol_l:
+            na: {value: 40.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+            cl: {value: 40.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+          alkalinity_contribution_mmol_c_l: {value: 0.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+          evidence_label: hypothesis_prior
+      registered_nonstoichiometric_targets:
+        ec_ds_m: {value: 6.0, unit: "dS m^-1", evidence_label: hypothesis_prior}
+        measured_osmolality_osmol_kg: {value: 0.1, unit: "osmol kg^-1", evidence_label: hypothesis_prior}
+        ph: {value: 6.5, unit: "pH", evidence_label: hypothesis_prior}
+        temperature_k: {value: 298.15, unit: "K", evidence_label: hypothesis_prior}
+        alkalinity_mmol_c_l: {value: 1.0, unit: "mmol_c L^-1", evidence_label: hypothesis_prior}
+      computed_target_chemistry:
+        ec_kind: ECw
+        ec_ds_m: 6.0
+        temperature_k: 298.15
+        measured_osmolality_osmol_kg: 0.1
+        ph: 6.5
+        alkalinity_mmol_c_l: 1.0
+        na_mmol_l: 44.0
+        cl_mmol_l: 44.0
+        ca_mmol_l: 2.0
+        mg_mmol_l: 1.0
+        k_mmol_l: 2.0
+        total_b_mmol_l: 0.05
+        sulfate_mmol_l: 1.0
+        bicarbonate_mmol_l: 0.75
+        nitrate_mmol_l: 5.0
+        phosphate_mmol_l: 0.25
+    chemistry:
+      ec_kind: ECw
+      ec_ds_m: 6.0
+      temperature_k: 298.15
+      measured_osmolality_osmol_kg: 0.1
+      ph: 6.5
+      alkalinity_mmol_c_l: 1.0
+      na_mmol_l: 44.0
+      cl_mmol_l: 44.0
+      ca_mmol_l: 2.0
+      mg_mmol_l: 1.0
+      k_mmol_l: 2.0
+      total_b_mmol_l: 0.05
+      sulfate_mmol_l: 1.0
+      bicarbonate_mmol_l: 0.75
+      nitrate_mmol_l: 5.0
+      phosphate_mmol_l: 0.25
+    charge_convention_id: almondlab.chemistry.charge_balance_error@1
+    charge_balance_tolerance_percent: {value: 1.0, unit: percent, evidence_label: hypothesis_prior}
+    model_domain_id: core_v1
+    model_domain_version: "1.1.0"
+    evidence_label: hypothesis_prior
+    generated_batch_evidence_label: synthetic_only
