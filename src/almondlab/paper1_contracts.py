@@ -118,8 +118,8 @@ FROZEN_CANDIDATE_IDENTITIES: dict[str, dict[str, object]] = {
     "C1": {
         "construct_name": "PyKPA1",
         "donor_species": "Pyropia yezoensis (Neopyropia yezoensis)",
-        "sequence_accessions": ("AJ972674",),
-        "sequence_status": "verified",
+        "sequence_accessions": ("AJ972674.1", "CAI99405.1"),
+        "sequence_status": "accession_verified",
         "evidence_tier": "E2",
         "primary_parameter_id": "na_efflux_vmax_multiplier",
         "gates": {"sequence_build": "required", "directional_assay": "required"},
@@ -135,8 +135,8 @@ FROZEN_CANDIDATE_IDENTITIES: dict[str, dict[str, object]] = {
     "C2": {
         "construct_name": "PyAPX",
         "donor_species": "Pyropia yezoensis",
-        "sequence_accessions": (),
-        "sequence_status": "pending_audit",
+        "sequence_accessions": ("AY282755.1",),
+        "sequence_status": "accession_verified",
         "evidence_tier": "E2",
         "primary_parameter_id": "ros_clearance_multiplier",
         "gates": {"sequence_build": "blocked", "directional_assay": "required"},
@@ -153,7 +153,7 @@ FROZEN_CANDIDATE_IDENTITIES: dict[str, dict[str, object]] = {
         "construct_name": "EsM1PDH1+EsM1Pase2",
         "donor_species": "Ectocarpus sp. Ec32",
         "sequence_accessions": ("Esi0017_0062", "Esi0100_0020"),
-        "sequence_status": "verified",
+        "sequence_status": "crosswalk_pending",
         "evidence_tier": "E2",
         "primary_parameter_id": "mannitol_vmax_multiplier",
         "gates": {"sequence_build": "required", "directional_assay": "required"},
@@ -169,8 +169,8 @@ FROZEN_CANDIDATE_IDENTITIES: dict[str, dict[str, object]] = {
     "C4": {
         "construct_name": "SbSOS1",
         "donor_species": "Salicornia brachiata Roxb.",
-        "sequence_accessions": ("EU879059",),
-        "sequence_status": "verified",
+        "sequence_accessions": ("EU879059.1", "ACJ63441.1"),
+        "sequence_status": "accession_verified",
         "evidence_tier": "E2",
         "primary_parameter_id": "na_efflux_vmax_multiplier",
         "gates": {
@@ -229,7 +229,9 @@ class CandidateSpec(StrictPaper1Model):
     construct_name: str = Field(min_length=1)
     donor_species: str = Field(min_length=1)
     sequence_accessions: tuple[str, ...]
-    sequence_status: Literal["verified", "pending_audit"]
+    sequence_status: Literal[
+        "accession_verified", "crosswalk_pending", "verified", "pending_audit"
+    ]
     evidence_tier: Literal["E1", "E2"]
     evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
     primary_parameter_id: str = Field(min_length=1)

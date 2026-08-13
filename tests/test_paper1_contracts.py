@@ -29,8 +29,8 @@ EXPECTED_CANDIDATE_IDENTITIES = {
     "C1": {
         "construct_name": "PyKPA1",
         "donor_species": "Pyropia yezoensis (Neopyropia yezoensis)",
-        "sequence_accessions": ("AJ972674",),
-        "sequence_status": "verified",
+        "sequence_accessions": ("AJ972674.1", "CAI99405.1"),
+        "sequence_status": "accession_verified",
         "evidence_tier": "E2",
         "evidence_label": "hypothesis_prior",
         "primary_parameter_id": "na_efflux_vmax_multiplier",
@@ -39,8 +39,8 @@ EXPECTED_CANDIDATE_IDENTITIES = {
     "C2": {
         "construct_name": "PyAPX",
         "donor_species": "Pyropia yezoensis",
-        "sequence_accessions": (),
-        "sequence_status": "pending_audit",
+        "sequence_accessions": ("AY282755.1",),
+        "sequence_status": "accession_verified",
         "evidence_tier": "E2",
         "evidence_label": "hypothesis_prior",
         "primary_parameter_id": "ros_clearance_multiplier",
@@ -50,7 +50,7 @@ EXPECTED_CANDIDATE_IDENTITIES = {
         "construct_name": "EsM1PDH1+EsM1Pase2",
         "donor_species": "Ectocarpus sp. Ec32",
         "sequence_accessions": ("Esi0017_0062", "Esi0100_0020"),
-        "sequence_status": "verified",
+        "sequence_status": "crosswalk_pending",
         "evidence_tier": "E2",
         "evidence_label": "hypothesis_prior",
         "primary_parameter_id": "mannitol_vmax_multiplier",
@@ -59,8 +59,8 @@ EXPECTED_CANDIDATE_IDENTITIES = {
     "C4": {
         "construct_name": "SbSOS1",
         "donor_species": "Salicornia brachiata Roxb.",
-        "sequence_accessions": ("EU879059",),
-        "sequence_status": "verified",
+        "sequence_accessions": ("EU879059.1", "ACJ63441.1"),
+        "sequence_status": "accession_verified",
         "evidence_tier": "E2",
         "evidence_label": "hypothesis_prior",
         "primary_parameter_id": "na_efflux_vmax_multiplier",
@@ -217,8 +217,8 @@ def test_candidate_model_rejects_v13_identity_or_gate_mutation(
         CandidateSpec.model_validate(payload)
 
 
-def test_candidate_model_rejects_fabricated_c2_accession() -> None:
-    """Catches fabrication of a sequence while the PyAPX audit is unresolved."""
+def test_candidate_model_rejects_substitution_for_verified_c2_record() -> None:
+    """Catches substitution of a fabricated ID for verified AY282755.1."""
     c2 = load_candidate_specs(CONFIGS / "candidates.yaml").candidates[1]
     payload = deepcopy(c2.model_dump(mode="json"))
     payload["sequence_accessions"] = ["FABRICATED_C2_ACCESSION"]
@@ -234,10 +234,10 @@ def test_candidate_model_rejects_fabricated_c2_accession() -> None:
         ("gates", {"sequence_build": "required", "directional_assay": "required"}),
     ],
 )
-def test_candidate_model_rejects_inconsistent_c2_pending_audit_gate(
+def test_candidate_model_rejects_inconsistent_c2_accession_or_build_gate(
     field_name: str, mutated_value: object
 ) -> None:
-    """Catches a PyAPX record that bypasses the blocked sequence/build gate."""
+    """Catches a PyAPX record that overstates verification or build readiness."""
     c2 = load_candidate_specs(CONFIGS / "candidates.yaml").candidates[1]
     payload = deepcopy(c2.model_dump(mode="json"))
     payload[field_name] = mutated_value
@@ -309,8 +309,8 @@ def test_candidate_mappings_are_mechanisms_not_direct_outcomes() -> None:
         forbidden
     )
     c2 = registry.candidates[1]
-    assert c2.sequence_accessions == ()
-    assert c2.sequence_status == "pending_audit"
+    assert c2.sequence_accessions == ("AY282755.1",)
+    assert c2.sequence_status == "accession_verified"
     assert c2.gates["sequence_build"] == "blocked"
     assert registry.candidates[2].primary_parameter_id == "mannitol_vmax_multiplier"
     assert "xylem" in registry.candidates[3].risk_warning.lower()
