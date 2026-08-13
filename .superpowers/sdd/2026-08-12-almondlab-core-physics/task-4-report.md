@@ -227,6 +227,8 @@ tests/test_domains.py: 16 passed
 
 ## Review fix round 1/5
 
+Fix commit: `711bf76 fix: enforce ledger transaction integrity`.
+
 Two important findings were addressed test-first:
 
 1. `audit_ledger` now preserves its per-quantity residual math while also

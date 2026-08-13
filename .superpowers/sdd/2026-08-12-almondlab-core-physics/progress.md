@@ -7,4 +7,4 @@ Task 2: fix round 1/5 (4 addressed, 0 open — canonical constraints and full co
 Task 2: complete (commits ce2a5ac..43e2dcb excluding independent visual commit ef8f42c, review clean)
 Task 3: fix round 1/5 (1 addressed, 0 open — explicit weak-label extrapolation only; commits 97efc12..416b71b)
 Task 3: complete (commits 43e2dcb..416b71b excluding visual-policy commit e54d7fa, review clean)
-Task 4: fix round 1/5 (2 addressed pending scoped re-review, 0 open claimed — enforce paired internal-transaction audit integrity and add record-level evidence labels; commits 3d187f5..pending)
+Task 4: fix round 1/5 (2 addressed pending scoped re-review, 0 open claimed — enforce paired internal-transaction audit integrity and add record-level evidence labels; commits 3d187f5..711bf76)
