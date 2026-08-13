@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from types import MappingProxyType
 
 import pandas as pd
@@ -168,7 +169,7 @@ def test_declared_one_to_many_and_many_to_one_are_checked() -> None:
 
 
 @pytest.mark.parametrize(
-    "collision",
+    "former_reserved_name",
     [
         "record_id_left",
         "record_id_right",
@@ -177,14 +178,15 @@ def test_declared_one_to_many_and_many_to_one_are_checked() -> None:
         "__almondlab_left_order",
     ],
 )
-def test_suffix_and_internal_column_collisions_fail_closed(collision: str) -> None:
+def test_former_provenance_and_internal_names_are_ordinary_user_columns(
+    former_reserved_name: str,
+) -> None:
     left = _measured(keys=[1])
-    left[collision] = "spoof"
+    left[former_reserved_name] = "ordinary user value"
 
-    with pytest.raises(AlmondLabError) as exc_info:
-        safe_join(left, _measured(keys=[1]), on=["key"])
+    joined = safe_join(left, _measured(keys=[1]), on=["key"])
 
-    assert exc_info.value.code == "JOIN_COLUMN_COLLISION"
+    assert joined.to_pandas().loc[0, former_reserved_name] == "ordinary user value"
 
 
 @pytest.mark.parametrize(
@@ -205,12 +207,12 @@ def test_same_origin_join_is_deterministic_and_preserves_both_lineages() -> None
 
     assert isinstance(joined, ProvenanceFrame)
     assert materialized["key"].tolist() == [2, 1]
-    assert materialized["record_id_left"].tolist() == ["OBS_RIGHT_0", "OBS_RIGHT_1"]
-    assert materialized["record_id_right"].tolist() == ["OBS_RIGHT_1", "OBS_RIGHT_0"]
-    assert "record_id" not in materialized
-    assert "source_type" not in materialized
-    assert joined.lineage["left_record_id_column"] == "record_id_left"
-    assert joined.lineage["right_record_id_column"] == "record_id_right"
+    assert set(materialized) == {"key", "right_value_left", "right_value_right"}
+    assert joined.lineage["namespace"] == "almondlab.provenance.v1"
+    assert joined.lineage["row_ancestry"] == (
+        (("OBS_RIGHT_0", "measured"), ("OBS_RIGHT_1", "measured")),
+        (("OBS_RIGHT_1", "measured"), ("OBS_RIGHT_0", "measured")),
+    )
     assert isinstance(joined.lineage, MappingProxyType)
 
 
@@ -248,3 +250,218 @@ def test_join_exposes_no_mixed_origin_override() -> None:
             on=["key"],
             allow_mixed=True,
         )
+
+
+def test_arbitrarily_chained_joins_keep_ancestry_out_of_user_columns() -> None:
+    first = safe_join(
+        _measured(keys=[1]),
+        pd.DataFrame(
+            {
+                "record_id": ["LIT_SECOND_1"],
+                "source_type": ["literature_derived"],
+                "key": [1],
+                "second": ["two"],
+                "record_id_left": ["ordinary user value"],
+            }
+        ),
+        on=["key"],
+    )
+    second = safe_join(
+        first,
+        pd.DataFrame(
+            {
+                "record_id": ["EMP_THIRD_1"],
+                "source_type": ["empirical"],
+                "key": [1],
+                "third": ["three"],
+            }
+        ),
+        on=["key"],
+    )
+    third = safe_join(second, _measured(keys=[1]), on=["key"])
+
+    assert third.to_pandas().loc[0, "record_id_left"] == "ordinary user value"
+    assert len(third.lineage["row_ancestry"][0]) == 4
+    assert third.lineage["row_ancestry"][0] == (
+        ("OBS_RIGHT_0", "measured"),
+        ("LIT_SECOND_1", "literature_derived"),
+        ("EMP_THIRD_1", "empirical"),
+        ("OBS_RIGHT_0", "measured"),
+    )
+
+
+def test_measured_and_literature_derived_are_one_intentional_empirical_family() -> None:
+    literature = pd.DataFrame(
+        {
+            "record_id": ["LIT_SOURCE_1"],
+            "source_type": ["literature_derived"],
+            "key": [1],
+            "citation": ["doi:10.1/example"],
+        }
+    )
+
+    joined = safe_join(_measured(keys=[1]), literature, on=["key"])
+
+    assert joined.lineage["origin_family"] == "empirical"
+    assert joined.to_pandas().loc[0, "citation"] == "doi:10.1/example"
+
+
+def test_nested_object_cells_are_deeply_detached_in_both_directions() -> None:
+    nested = {"items": [1, {"leaf": [2, 3]}]}
+    source = _measured(keys=[1])
+    source["nested"] = [nested]
+    protected = ProvenanceFrame(source)
+
+    nested["items"][1]["leaf"].append(4)
+    first = protected.to_pandas()
+    first.loc[0, "nested"]["items"][1]["leaf"].append(5)
+    second = protected.to_pandas()
+
+    assert second.loc[0, "nested"] == {"items": [1, {"leaf": [2, 3]}]}
+
+
+def test_nested_frozensets_preserve_type_and_remain_detached() -> None:
+    source = _measured(keys=[1])
+    source["nested"] = [{frozenset({"a", "b"}): (frozenset({1, 2}),)}]
+
+    protected = ProvenanceFrame(source)
+    materialized = protected.to_pandas().loc[0, "nested"]
+
+    key = next(iter(materialized))
+    assert type(key) is frozenset
+    assert type(materialized[key][0]) is frozenset
+
+
+def test_empty_chained_join_retains_ancestry_types_without_reserved_columns() -> None:
+    literature = pd.DataFrame(
+        {
+            "record_id": ["LIT_NO_MATCH_2"],
+            "source_type": ["literature_derived"],
+            "key": [2],
+            "literature_value": ["source"],
+        }
+    )
+    empty = safe_join(_measured(keys=[1]), literature, on=["key"])
+
+    chained = safe_join(empty, _measured(keys=[3]), on=["key"])
+
+    assert chained.empty
+    assert chained.lineage["source_types"] == (
+        "literature_derived",
+        "measured",
+    )
+    assert chained.lineage["origin_family"] == "empirical"
+
+
+def test_private_state_assignment_is_blocked_and_content_tamper_is_sealed() -> None:
+    protected = ProvenanceFrame(_measured(keys=[1]))
+
+    with pytest.raises(AttributeError):
+        protected._row_lineage = ()  # type: ignore[misc]
+    protected._frame.loc[0, "key"] = 999  # type: ignore[attr-defined]
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        protected.to_pandas()
+
+    assert exc_info.value.code == "PROVENANCE_FRAME_TAMPERED"
+
+
+def test_dataframe_subclass_is_rejected_without_invoking_caller_methods() -> None:
+    calls: list[str] = []
+
+    class HostileDataFrame(pd.DataFrame):
+        def copy(self, *args: object, **kwargs: object) -> pd.DataFrame:
+            calls.append("copy")
+            raise AssertionError("caller-controlled method executed")
+
+    hostile = HostileDataFrame(_measured(keys=[1]))
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        ProvenanceFrame(hostile)
+
+    assert exc_info.value.code == "PROVENANCE_FRAME_INVALID"
+    assert calls == []
+
+
+def test_string_subclasses_cannot_supply_provenance_identity() -> None:
+    class StringSubclass(str):
+        pass
+
+    for column, value in (
+        ("record_id", StringSubclass("OBS_RIGHT_0")),
+        ("source_type", StringSubclass("measured")),
+    ):
+        frame = _measured(keys=[1])
+        frame[column] = frame[column].astype(object)
+        frame.at[0, column] = value
+
+        with pytest.raises(AlmondLabError) as exc_info:
+            ProvenanceFrame(frame)
+
+        assert exc_info.value.code in {
+            "PROVENANCE_ID_INVALID",
+            "PROVENANCE_SOURCE_TYPE_INVALID",
+        }
+
+
+@pytest.mark.parametrize(
+    ("left_key", "right_key"),
+    [
+        (True, 1),
+        (1, True),
+        (1, 1.0),
+        (1.0, 1),
+    ],
+)
+def test_join_keys_require_exact_non_boolean_kinds_before_merge(
+    monkeypatch: pytest.MonkeyPatch, left_key: object, right_key: object
+) -> None:
+    calls: list[str] = []
+
+    def forbidden_merge(*args: object, **kwargs: object) -> pd.DataFrame:
+        calls.append("merge")
+        raise AssertionError("merge ran before exact key validation")
+
+    monkeypatch.setattr(pd, "merge", forbidden_merge)
+    left = _measured(keys=[1])
+    right = _measured(keys=[1])
+    left["key"] = pd.Series([left_key], dtype=object)
+    right["key"] = pd.Series([right_key], dtype=object)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        safe_join(left, right, on=["key"])
+
+    assert exc_info.value.code == "JOIN_KEY_TYPE_MISMATCH"
+    assert calls == []
+
+
+def test_each_join_key_column_has_one_exact_kind() -> None:
+    left = _measured(keys=[1, 2])
+    left["key"] = pd.Series([1, 2.0], dtype=object)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        safe_join(left, _measured(keys=[1, 2]), on=["key"])
+
+    assert exc_info.value.code == "JOIN_KEY_TYPE_MISMATCH"
+
+
+def test_decimal_nan_key_is_rejected_before_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def forbidden_merge(*args: object, **kwargs: object) -> pd.DataFrame:
+        calls.append("merge")
+        raise AssertionError("merge ran before null key validation")
+
+    monkeypatch.setattr(pd, "merge", forbidden_merge)
+    left = _measured(keys=[1])
+    right = _measured(keys=[1])
+    left["key"] = pd.Series([Decimal("NaN")], dtype=object)
+    right["key"] = pd.Series([Decimal("NaN")], dtype=object)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        safe_join(left, right, on=["key"])
+
+    assert exc_info.value.code == "JOIN_KEY_NULL"
+    assert calls == []

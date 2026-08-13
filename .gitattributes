@@ -6,3 +6,6 @@
 /src/almondlab/resources/fixtures/*.json text eol=lf
 /tests/fixtures/*.yaml text eol=lf
 /tests/fixtures/*.json text eol=lf
+/data/candidate_registry.csv text eol=lf
+/data/evidence_registry.csv text eol=lf
+/data/reference_chemistry.csv text eol=lf

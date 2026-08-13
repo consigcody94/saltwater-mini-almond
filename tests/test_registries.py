@@ -102,6 +102,16 @@ def test_registry_files_use_exact_publication_schemas_and_lf_utf8() -> None:
         assert tuple(header) == columns
 
 
+def test_hash_sealed_registry_bytes_are_pinned_to_lf_on_checkout() -> None:
+    attributes = (REPO / ".gitattributes").read_text(encoding="utf-8").splitlines()
+
+    assert {
+        "/data/candidate_registry.csv text eol=lf",
+        "/data/evidence_registry.csv text eol=lf",
+        "/data/reference_chemistry.csv text eol=lf",
+    } <= set(attributes)
+
+
 def test_all_section_16_sources_have_unique_stable_records() -> None:
     table = load_evidence_registry(EVIDENCE)
 
@@ -186,14 +196,20 @@ def test_evidence_metadata_is_explicit_and_never_uses_blank_unknowns() -> None:
 def test_primary_candidate_accessions_and_h3_contract_are_exact() -> None:
     table = load_candidate_registry(CANDIDATES).set_index("candidate_id")
 
-    assert table.loc["C1", "sequence_id"] == "AJ972674"
-    assert table.loc["C2", "sequence_id"] == "unresolved"
+    assert table.loc["C1", "sequence_id"] == "AJ972674.1"
+    assert table.loc["C1", "sequence_accessions"] == "AJ972674.1|CAI99405.1"
+    assert table.loc["C2", "sequence_id"] == "AY282755.1"
+    assert table.loc["C2", "sequence_status"] == "accession_verified"
+    assert table.loc["C2", "sequence_readiness"] == (
+        "accession_verified_construct_map_unresolved"
+    )
     assert table.loc["C3", "sequence_id"] == "Esi0017_0062|Esi0100_0020"
-    assert table.loc["C4", "sequence_id"] == "EU879059"
+    assert table.loc["C3", "sequence_status"] == "crosswalk_pending"
+    assert table.loc["C4", "sequence_id"] == "EU879059.1"
+    assert table.loc["C4", "sequence_accessions"] == "EU879059.1|ACJ63441.1"
     assert table.loc["C5", "sequence_id"] == "Prupe.1G067100"
     assert table.loc["C6", "sequence_id"] == "Prupe.7G244500.1"
     assert tuple(table.loc[list(PRIMARY_IDS), "registry_class"]) == ("primary",) * 6
-    assert table.loc["C2", "sequence_status"] == "pending_audit"
     assert table.loc["C3", "h3_endpoint"] == (
         "root_mannitol_concentration_above_empty_vector"
     )
@@ -217,7 +233,7 @@ def test_candidate_registry_has_every_prequalification_candidate_and_no_winner()
 def test_required_sequence_gaps_remain_explicitly_unresolved() -> None:
     table = load_candidate_registry(CANDIDATES).set_index("candidate_id")
 
-    for candidate_id in ("C2", "PQ_KANAH", "PQ_KCS1_LIKE", "PQ_PAVNHX37"):
+    for candidate_id in ("PQ_KCS1_LIKE", "PQ_NHX1_2", "PQ_PAVNHX37"):
         assert table.loc[candidate_id, "sequence_id"] == "unresolved"
         assert table.loc[candidate_id, "sequence_status"] in {
             "pending_audit",
@@ -230,7 +246,7 @@ def test_required_sequence_gaps_remain_explicitly_unresolved() -> None:
     ("candidate_id", "field"),
     [
         (candidate_id, field)
-        for candidate_id in ("C2", "PQ_KANAH", "PQ_KCS1_LIKE", "PQ_PAVNHX37")
+        for candidate_id in ("PQ_KCS1_LIKE", "PQ_NHX1_2", "PQ_PAVNHX37")
         for field in ("sequence_id", "sequence_accessions", "reference_sequence_ids")
     ],
 )
@@ -260,6 +276,140 @@ def test_primary_sequence_id_itself_is_part_of_frozen_identity(tmp_path: Path) -
         load_candidate_registry(path)
 
     assert exc_info.value.code == "CANDIDATE_IDENTITY_MISMATCH"
+
+
+def test_recent_rice_accessions_are_verified_without_construct_readiness() -> None:
+    table = load_candidate_registry(CANDIDATES).set_index("candidate_id")
+
+    assert table.loc["PQ_PYMNSOD", "sequence_accessions"] == "DQ146477.2"
+    assert table.loc["PQ_PYMNSOD", "sequence_status"] == "accession_verified"
+    assert table.loc["PQ_KANAH", "sequence_accessions"] == "MT473962.1"
+    assert table.loc["PQ_KANAH", "sequence_status"] == (
+        "accession_verified_partial_cds"
+    )
+    for candidate_id in ("C2", "PQ_PYMNSOD", "PQ_KANAH"):
+        assert "construct_map_unresolved" in table.loc[
+            candidate_id, "sequence_readiness"
+        ]
+        assert "construct" in table.loc[
+            candidate_id, "sequence_unresolved_reason"
+        ].lower()
+    assert table.loc["C2", "program_status"] == "primary_tournament_hypothesis"
+    assert "sequence_build=blocked" in table.loc["C2", "gates"]
+
+
+def test_recent_rice_evidence_retains_full_text_design_and_claim_boundaries() -> None:
+    row = load_evidence_registry(EVIDENCE).set_index("evidence_id").loc[
+        "EV_PYAPX_2026"
+    ]
+
+    assert row["salinity_concentration"] == "250 mM NaCl"
+    assert "every 3 days" in row["exposure_duration"]
+    assert "day 10" in row["exposure_duration"]
+    assert "30 seeds per dish x 3 replicate dishes" in row["sample_size"]
+    assert "12 PyAPX" in row["sample_size"]
+    assert "11 PyMnSOD" in row["sample_size"]
+    assert "9 KaNa+/H+" in row["sample_size"]
+    assert "AY282755.1" in row["program_assumptions"]
+    assert "DQ146477.2" in row["program_assumptions"]
+    assert "MT473962.1" in row["program_assumptions"]
+    assert "construct" in row["limitation"].lower()
+    assert "event" in row["limitation"].lower()
+
+
+@pytest.mark.parametrize(
+    ("registry_path", "header_name", "row_number", "field_name", "replacement", "loader", "code"),
+    [
+        (
+            EVIDENCE,
+            "evidence_id",
+            0,
+            "title",
+            "Plausible but unaudited replacement title",
+            load_evidence_registry,
+            "EVIDENCE_REGISTRY_CONTENT_MISMATCH",
+        ),
+        (
+            EVIDENCE,
+            "evidence_id",
+            9,
+            "sample_size",
+            "30 seeds per dish x 2 replicate dishes",
+            load_evidence_registry,
+            "EVIDENCE_REGISTRY_CONTENT_MISMATCH",
+        ),
+        (
+            EVIDENCE,
+            "evidence_id",
+            9,
+            "reported_effect",
+            "plausible changed source report",
+            load_evidence_registry,
+            "EVIDENCE_REGISTRY_CONTENT_MISMATCH",
+        ),
+        (
+            CANDIDATES,
+            "candidate_id",
+            0,
+            "evidence_ids",
+            "EV_PYKPA1_2013|EV_PYAPX_2026",
+            load_candidate_registry,
+            "CANDIDATE_REGISTRY_CONTENT_MISMATCH",
+        ),
+        (
+            CHEMISTRY,
+            "chemistry_id",
+            1,
+            "cl_meq_l",
+            "4.5",
+            load_reference_chemistry,
+            "REFERENCE_CHEMISTRY_CONTENT_MISMATCH",
+        ),
+        (
+            CHEMISTRY,
+            "chemistry_id",
+            1,
+            "limitation",
+            "plausible but different limitation",
+            load_reference_chemistry,
+            "REFERENCE_CHEMISTRY_CONTENT_MISMATCH",
+        ),
+    ],
+)
+def test_audited_registry_semantics_are_fully_frozen(
+    tmp_path: Path,
+    registry_path: Path,
+    header_name: str,
+    row_number: int,
+    field_name: str,
+    replacement: str,
+    loader: object,
+    code: str,
+) -> None:
+    header, rows = _raw_rows(registry_path)
+    assert header_name in header
+    rows[row_number][header.index(field_name)] = replacement
+    path = tmp_path / registry_path.name
+    _write_csv(path, tuple(header), rows)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        loader(path)  # type: ignore[operator]
+
+    assert exc_info.value.code == code
+
+
+def test_doi_and_primary_url_are_frozen_as_one_association(tmp_path: Path) -> None:
+    header, rows = _raw_rows(EVIDENCE)
+    rows[0][header.index("primary_url")] = (
+        "https://example.org/plausible-primary-source"
+    )
+    path = tmp_path / "drifted-doi-url-pair.csv"
+    _write_csv(path, tuple(header), rows)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_evidence_registry(path)
+
+    assert exc_info.value.code == "EVIDENCE_REGISTRY_CONTENT_MISMATCH"
 
 
 def test_prequalification_sequence_identity_is_fail_closed(tmp_path: Path) -> None:
@@ -479,7 +629,9 @@ def test_reference_chemistry_object_validation_does_not_coerce_numeric_values(
         validate_reference_chemistry_frame(malformed)
 
 
-@pytest.mark.parametrize("bad_number", ["3e0", "+3.0", "03.0", ".5"])
+@pytest.mark.parametrize(
+    "bad_number", ["3e0", "+3.0", "03.0", ".5", "1.360", "1.3600"]
+)
 def test_reference_chemistry_requires_canonical_decimal_text(
     tmp_path: Path, bad_number: str
 ) -> None:
@@ -494,6 +646,44 @@ def test_reference_chemistry_requires_canonical_decimal_text(
     assert exc_info.value.code == "REFERENCE_CHEMISTRY_NUMBER_INVALID"
 
 
+@pytest.mark.parametrize("bad_number", ["0.90", "0.900", "10.0", "010"])
+def test_candidate_h3_numbers_have_one_canonical_decimal_spelling(
+    tmp_path: Path, bad_number: str
+) -> None:
+    header, rows = _raw_rows(CANDIDATES)
+    field = "h3_min_probability" if bad_number.startswith("0") else "h3_margin"
+    rows[2][header.index(field)] = bad_number
+    path = tmp_path / "candidate-decimal-alias.csv"
+    _write_csv(path, tuple(header), rows)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_registry(path)
+
+    assert exc_info.value.code == "CANDIDATE_H3_INVALID"
+
+
+def test_public_evidence_surfaces_do_not_repeat_false_pyapx_absence_claims() -> None:
+    paths = (
+        REPO / "data" / "public" / "public_bio_data_audit.md",
+        REPO / "data" / "public" / "public_bio_data_manifest.yaml",
+        REPO / "data" / "public" / "evidence_registry_seed.md",
+        REPO / "data" / "public" / "README.md",
+        REPO / "scripts" / "public_data" / "phase2" / "README.md",
+    )
+    forbidden = (
+        "no exact pyapx nucleotide/protein accession was verified",
+        "no pyapx sequence is included because no exact public accession-version was verified",
+        "article_verified_sequence_accession_absent",
+        "the exact pyapx sequence/accession used in the recent rice paper was not verified",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8").lower() for path in paths)
+
+    assert all(statement not in combined for statement in forbidden)
+    for accession in ("AY282755.1", "DQ146477.2", "MT473962.1"):
+        assert accession.lower() in combined
+    assert "not construct-ready" in combined
+
+
 def test_registry_loads_are_defensive_against_caller_mutation() -> None:
     first = load_candidate_registry(CANDIDATES)
     first.loc[0, "sequence_id"] = "invented"
@@ -501,5 +691,5 @@ def test_registry_loads_are_defensive_against_caller_mutation() -> None:
 
     second = load_candidate_registry(CANDIDATES)
 
-    assert second.loc[0, "sequence_id"] == "AJ972674"
+    assert second.loc[0, "sequence_id"] == "AJ972674.1"
     assert "trusted" not in second.attrs

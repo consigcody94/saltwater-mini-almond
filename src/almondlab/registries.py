@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Final
 from urllib.parse import urlsplit, urlunsplit
 import csv
+import hashlib
 import re
 
 import pandas as pd
@@ -127,13 +128,13 @@ _PREQUALIFICATION_CANDIDATE_IDS: Final[frozenset[str]] = frozenset(
     }
 )
 _REQUIRED_UNRESOLVED: Final[frozenset[str]] = frozenset(
-    {"C2", "PQ_KANAH", "PQ_KCS1_LIKE", "PQ_PAVNHX37"}
+    {"PQ_KCS1_LIKE", "PQ_NHX1_2", "PQ_PAVNHX37"}
 )
 _PRIMARY_SEQUENCE_IDS: Final[dict[str, str]] = {
-    "C1": "AJ972674",
-    "C2": "unresolved",
+    "C1": "AJ972674.1",
+    "C2": "AY282755.1",
     "C3": "Esi0017_0062|Esi0100_0020",
-    "C4": "EU879059",
+    "C4": "EU879059.1",
     "C5": "Prupe.1G067100",
     "C6": "Prupe.7G244500.1",
 }
@@ -184,34 +185,34 @@ _CANDIDATE_SEQUENCE_IDENTITIES: Final[
     dict[str, tuple[str, str, str, str, str, str]]
 ] = {
     "C1": (
-        "AJ972674",
-        "AJ972674",
+        "AJ972674.1",
         "AJ972674.1|CAI99405.1",
-        "verified",
+        "AJ972674.1|CAI99405.1",
+        "accession_verified",
         "accession_verified_final_construct_unverified",
         "E2",
     ),
     "C2": (
-        "unresolved",
-        "unresolved",
-        "unresolved",
-        "pending_audit",
-        "blocked_unresolved",
+        "AY282755.1",
+        "AY282755.1",
+        "AY282755.1",
+        "accession_verified",
+        "accession_verified_construct_map_unresolved",
         "E2",
     ),
     "C3": (
         "Esi0017_0062|Esi0100_0020",
         "Esi0017_0062|Esi0100_0020",
         "GCA_000310025.1",
-        "verified",
+        "crosswalk_pending",
         "crosswalk_required",
         "E2",
     ),
     "C4": (
-        "EU879059",
-        "EU879059",
+        "EU879059.1",
         "EU879059.1|ACJ63441.1",
-        "verified",
+        "EU879059.1|ACJ63441.1",
+        "accession_verified",
         "accession_verified_final_construct_unverified",
         "E2",
     ),
@@ -232,19 +233,19 @@ _CANDIDATE_SEQUENCE_IDENTITIES: Final[
         "E1",
     ),
     "PQ_PYMNSOD": (
-        "unresolved",
-        "unresolved",
-        "unresolved",
-        "unresolved",
-        "blocked_unresolved",
+        "DQ146477.2",
+        "DQ146477.2",
+        "DQ146477.2",
+        "accession_verified",
+        "accession_verified_construct_map_unresolved",
         "E5/E3",
     ),
     "PQ_KANAH": (
-        "unresolved",
-        "unresolved",
-        "unresolved",
-        "unresolved",
-        "blocked_unresolved",
+        "MT473962.1",
+        "MT473962.1",
+        "MT473962.1",
+        "accession_verified_partial_cds",
+        "partial_accession_construct_map_unresolved",
         "E3",
     ),
     "PQ_ESI0017_0056": (
@@ -345,11 +346,20 @@ _CANDIDATE_SEQUENCE_IDENTITIES: Final[
     ),
 }
 _SEQUENCE_STATUSES: Final[frozenset[str]] = frozenset(
-    {"verified", "pending_audit", "reference_locus_only", "unresolved"}
+    {
+        "accession_verified",
+        "accession_verified_partial_cds",
+        "crosswalk_pending",
+        "verified",
+        "pending_audit",
+        "reference_locus_only",
+        "unresolved",
+    }
 )
 _SEQUENCE_READINESS: Final[frozenset[str]] = frozenset(
     {
         "accession_verified_final_construct_unverified",
+        "accession_verified_construct_map_unresolved",
         "blocked_unresolved",
         "crosswalk_and_mechanism_required",
         "crosswalk_required",
@@ -358,6 +368,7 @@ _SEQUENCE_READINESS: Final[frozenset[str]] = frozenset(
         "hydraulic_function_unresolved",
         "interaction_and_function_unresolved",
         "paralog_and_compartment_unresolved",
+        "partial_accession_construct_map_unresolved",
         "reference_locus_not_experimental_clone",
         "transport_function_unresolved",
     }
@@ -415,6 +426,19 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UNSIGNED_DECIMAL = re.compile(r"^(?:0|[1-9]\d*)(?:\.\d+)?$")
 _SIGNED_DECIMAL = re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?$")
 
+# These are independent, code-owned seals for the three separately reviewed
+# publication inputs.  They are intentionally literal rather than derived at
+# import time: a syntactically valid edit must not authorize itself.
+_AUDITED_EVIDENCE_REGISTRY_SHA256: Final[str] = (
+    "3296138c408220c9b5919cc5f1126bc18e1def9c5dd72ff0188d1c5ce8159bb8"
+)
+_AUDITED_CANDIDATE_REGISTRY_SHA256: Final[str] = (
+    "8e95c90ee9d85180a0b2dee7ef71ae8471b9784da1bafd52bf4d0d9aa044d0ae"
+)
+_AUDITED_REFERENCE_CHEMISTRY_SHA256: Final[str] = (
+    "262a3b3210181d73bac416a6c0e09151de397fc8cc3752692a88d296a75f430a"
+)
+
 
 def _coerce_path(value: str | Path, field_path: str) -> Path:
     if isinstance(value, bool) or not isinstance(value, (str, Path)):
@@ -427,7 +451,7 @@ def _coerce_path(value: str | Path, field_path: str) -> Path:
 
 def _read_strict_csv(
     value: str | Path, expected_columns: tuple[str, ...], registry_name: str
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], str]:
     path = _coerce_path(value, registry_name)
     try:
         payload = path.read_bytes()
@@ -514,7 +538,23 @@ def _read_strict_csv(
         rows.append(dict(zip(expected_columns, raw_row)))
     if not rows:
         fail("CSV_EMPTY", "registry CSV has no data rows", registry_name)
-    return rows
+    return rows, hashlib.sha256(payload).hexdigest()
+
+
+def _require_audited_registry_hash(
+    actual: str,
+    expected: str,
+    *,
+    code: str,
+    registry_name: str,
+) -> None:
+    if actual != expected:
+        fail(
+            code,
+            "registry content differs from the independently reviewed publication input",
+            registry_name,
+            {"expected_sha256": expected, "received_sha256": actual},
+        )
 
 
 def _require_explicit_text(row: Mapping[str, str], columns: Sequence[str], row_path: str) -> None:
@@ -603,6 +643,12 @@ def _strict_csv_float(value: str, field_path: str) -> float:
             "numeric CSV value must be finite",
             field_path,
         )
+    if value != _canonical_decimal_text(decimal):
+        fail(
+            "REFERENCE_CHEMISTRY_NUMBER_INVALID",
+            "numeric CSV value must have one canonical decimal spelling",
+            field_path,
+        )
     try:
         converted = float(decimal)
     except (OverflowError, ValueError) as exc:
@@ -620,9 +666,17 @@ def _strict_csv_float(value: str, field_path: str) -> float:
     return converted
 
 
+def _canonical_decimal_text(value: Decimal) -> str:
+    if value.is_zero():
+        return "0"
+    return format(value.normalize(), "f")
+
+
 def load_evidence_registry(path: str | Path) -> pd.DataFrame:
     """Load and validate the complete §16 evidence registry."""
-    rows = _read_strict_csv(path, EVIDENCE_COLUMNS, "evidence_registry")
+    rows, payload_sha256 = _read_strict_csv(
+        path, EVIDENCE_COLUMNS, "evidence_registry"
+    )
     evidence_ids: set[str] = set()
     dois: set[str] = set()
     urls: set[str] = set()
@@ -735,6 +789,12 @@ def load_evidence_registry(path: str | Path) -> pd.DataFrame:
                 "received": [list(item) for item in received_identities],
             },
         )
+    _require_audited_registry_hash(
+        payload_sha256,
+        _AUDITED_EVIDENCE_REGISTRY_SHA256,
+        code="EVIDENCE_REGISTRY_CONTENT_MISMATCH",
+        registry_name="evidence_registry",
+    )
     table = pd.DataFrame.from_records(rows, columns=EVIDENCE_COLUMNS).astype("string")
     table.attrs.clear()
     return table
@@ -853,7 +913,9 @@ def load_candidate_registry(
     candidate_config_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """Load all primary/prequalification candidates and fail on identity drift."""
-    rows = _read_strict_csv(path, CANDIDATE_COLUMNS, "candidate_registry")
+    rows, payload_sha256 = _read_strict_csv(
+        path, CANDIDATE_COLUMNS, "candidate_registry"
+    )
     ids: list[str] = []
     for index, row in enumerate(rows):
         row_path = f"candidate_registry[{index}]"
@@ -943,7 +1005,7 @@ def load_candidate_registry(
                     )
                 )
                 or row["sequence_status"] not in {"pending_audit", "unresolved"}
-                or row["sequence_readiness"] != "blocked_unresolved"
+                or "unresolved" not in row["sequence_readiness"]
                 or "unresolved" not in row["sequence_unresolved_reason"].casefold()
             ):
                 fail(
@@ -1015,6 +1077,12 @@ def load_candidate_registry(
                         "primary H3 numeric fields must be finite",
                         f"{row_path}.{field}",
                     )
+                if row[field] != _canonical_decimal_text(number):
+                    fail(
+                        "CANDIDATE_H3_INVALID",
+                        "primary H3 numeric fields must have one canonical decimal spelling",
+                        f"{row_path}.{field}",
+                    )
         else:
             if row["program_status"] != "held_for_prequalification":
                 fail(
@@ -1051,6 +1119,12 @@ def load_candidate_registry(
     table = pd.DataFrame.from_records(rows, columns=CANDIDATE_COLUMNS).astype("string")
     table.attrs.clear()
     _cross_check_frozen_candidates(table, candidate_config_path)
+    _require_audited_registry_hash(
+        payload_sha256,
+        _AUDITED_CANDIDATE_REGISTRY_SHA256,
+        code="CANDIDATE_REGISTRY_CONTENT_MISMATCH",
+        registry_name="candidate_registry",
+    )
     return table
 
 
@@ -1245,7 +1319,7 @@ def validate_reference_chemistry_frame(frame: pd.DataFrame) -> None:
 
 def load_reference_chemistry(path: str | Path) -> pd.DataFrame:
     """Load exact source-reported recipes without deriving ions from EC."""
-    rows = _read_strict_csv(
+    rows, payload_sha256 = _read_strict_csv(
         path, REFERENCE_CHEMISTRY_COLUMNS, "reference_chemistry"
     )
     converted: list[dict[str, object]] = []
@@ -1271,6 +1345,12 @@ def load_reference_chemistry(path: str | Path) -> pd.DataFrame:
             "reference chemistry must contain all five audited source recipes in order",
             "reference_chemistry.chemistry_id",
         )
+    _require_audited_registry_hash(
+        payload_sha256,
+        _AUDITED_REFERENCE_CHEMISTRY_SHA256,
+        code="REFERENCE_CHEMISTRY_CONTENT_MISMATCH",
+        registry_name="reference_chemistry",
+    )
     return table
 
 
