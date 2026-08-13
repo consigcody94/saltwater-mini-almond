@@ -23,7 +23,7 @@ def _domain(**updates: object) -> HydraulicDomain:
         "osmolality_max": 0.40,
         "temperature_k_min": 290.0,
         "temperature_k_max": 305.0,
-        "permitted_label": EvidenceLabel.PHYSICS_CONSTRAINED,
+        "permitted_evidence_label": EvidenceLabel.PHYSICS_CONSTRAINED,
         "extrapolation_policy": "deny",
     }
     values.update(updates)
@@ -127,6 +127,16 @@ def test_hydraulic_domain_rejects_coercive_or_nonfinite_bounds(bad_value: object
     assert exc_info.value.errors()[0]["loc"] == ("osmolality_min",)
 
 
+def test_hydraulic_domain_legacy_fixture_key_normalizes_to_canonical_vocabulary() -> None:
+    payload = _domain().model_dump()
+    payload["permitted_label"] = payload.pop("permitted_evidence_label")
+
+    domain = HydraulicDomain(**payload)
+
+    assert domain.permitted_evidence_label is EvidenceLabel.PHYSICS_CONSTRAINED
+    assert "permitted_label" not in domain.model_dump()
+
+
 def test_hydraulic_uptake_requires_validated_explicit_domain() -> None:
     with pytest.raises(AlmondLabError) as exc_info:
         hydraulic_uptake(_inputs(), domain=None)
@@ -182,7 +192,7 @@ def test_hydraulic_strong_label_mismatch_fails(
     with pytest.raises(AlmondLabError) as exc_info:
         hydraulic_uptake(
             _inputs(evidence_label=requested),
-            domain=_domain(permitted_label=permitted),
+            domain=_domain(permitted_evidence_label=permitted),
         )
 
     assert exc_info.value.code == "HYDRAULIC_DOMAIN_VIOLATION"
@@ -224,6 +234,50 @@ def test_hydraulic_output_and_nested_domain_decision_are_immutable() -> None:
         result.actual_l_day = 0.0
     with pytest.raises(ValidationError):
         result.domain_decision.extrapolated = True
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("osmolality_osmol_kg", "0.1"),
+        ("temperature_k", True),
+        ("water_density_kg_l", float("nan")),
+        ("evidence_label", "invented_label"),
+    ],
+    ids=["numeric-string", "bool", "nonfinite", "invalid-label"],
+)
+def test_hydraulic_uptake_revalidates_malformed_copied_inputs(
+    field: str, bad_value: object
+) -> None:
+    malformed = _inputs().model_copy(update={field: bad_value})
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        hydraulic_uptake(malformed, domain=_domain())
+
+    assert exc_info.value.code == "HYDRAULIC_INVALID_INPUTS"
+    assert exc_info.value.field_path == f"params.{field}"
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("osmolality_min", "0.01"),
+        ("temperature_k_max", True),
+        ("osmolality_max", float("inf")),
+        ("permitted_evidence_label", "invented_label"),
+    ],
+    ids=["numeric-string", "bool", "nonfinite", "invalid-label"],
+)
+def test_hydraulic_uptake_revalidates_malformed_copied_domain(
+    field: str, bad_value: object
+) -> None:
+    malformed = _domain().model_copy(update={field: bad_value})
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        hydraulic_uptake(_inputs(), domain=malformed)
+
+    assert exc_info.value.code == "HYDRAULIC_INVALID_DOMAIN"
+    assert exc_info.value.field_path == f"domain.{field}"
 
 
 @pytest.mark.parametrize(

@@ -341,6 +341,81 @@ def test_provenance_hash_mismatch_is_hard_violation() -> None:
     assert exc_info.value.details["violations"][0]["reason"] == "provenance_hash_mismatch"
 
 
+def test_required_sar_computation_failure_is_aggregated_as_domain_violation() -> None:
+    reference_water = _water()
+    zero_divalent_water = _water(ca_mmol_l=0.0, mg_mmol_l=0.0)
+    reference_request = _request()
+    request = reference_request.model_copy(
+        update={
+            "water": zero_divalent_water,
+            "chemistry_observations": reference_request.chemistry_observations,
+        }
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        validate_domain(_domain(), request)
+
+    assert exc_info.value.code == "DOMAIN_VIOLATION"
+    sar_failure = next(
+        item
+        for item in exc_info.value.details["violations"]
+        if item["field"] == "request.chemistry_observations.sar.value"
+    )
+    assert sar_failure == {
+        "field": "request.chemistry_observations.sar.value",
+        "reason": "required_computation_failed",
+        "expected": "computable from validated water chemistry",
+        "received": {
+            "code": "SAR_ZERO_DENOMINATOR",
+            "field_path": "water.ca_mg",
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("ec_ds_m", "6.0"),
+        ("temperature_k", True),
+        ("measured_osmolality_osmol_kg", float("nan")),
+    ],
+    ids=["numeric-string", "bool", "nonfinite"],
+)
+def test_validate_domain_revalidates_malformed_copied_nested_water(
+    field: str, bad_value: object
+) -> None:
+    malformed_water = _water().model_copy(update={field: bad_value})
+    malformed_request = _request().model_copy(update={"water": malformed_water})
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        validate_domain(_domain(), malformed_request)
+
+    assert exc_info.value.code == "DOMAIN_INVALID_REQUEST"
+    assert exc_info.value.field_path == f"request.water.{field}"
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("permitted_evidence_label", "invented_label"),
+        ("ec_ds_m_min", "1.0"),
+        ("osmolality_max", True),
+        ("temperature_k_max", float("inf")),
+    ],
+    ids=["invalid-label", "numeric-string", "bool", "nonfinite"],
+)
+def test_validate_domain_revalidates_malformed_copied_policy(
+    field: str, bad_value: object
+) -> None:
+    malformed_domain = _domain().model_copy(update={field: bad_value})
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        validate_domain(malformed_domain, _request())
+
+    assert exc_info.value.code == "DOMAIN_INVALID_POLICY"
+    assert exc_info.value.field_path == f"domain.{field}"
+
+
 def test_dataset_hash_mismatch_is_refused_before_label_resolution() -> None:
     request = _request(
         calibration_datasets=(

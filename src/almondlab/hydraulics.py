@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from math import isfinite
 from numbers import Real
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from almondlab.contracts import EvidenceLabel
 from almondlab.evidence_policy import (
@@ -111,8 +112,23 @@ class HydraulicDomain(StrictScientificModel):
     osmolality_max: FiniteFloat
     temperature_k_min: FiniteFloat
     temperature_k_max: FiniteFloat
-    permitted_label: EvidenceLabel
+    permitted_evidence_label: EvidenceLabel
     extrapolation_policy: Literal["deny", "hypothesis_prior", "synthetic_only"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fixture_key(cls, value: object) -> object:
+        """Read version-1 analytic fixtures while emitting only canonical names."""
+
+        if isinstance(value, Mapping) and "permitted_label" in value:
+            normalized = dict(value)
+            if "permitted_evidence_label" in normalized:
+                raise ValueError(
+                    "permitted_label and permitted_evidence_label cannot both be supplied"
+                )
+            normalized["permitted_evidence_label"] = normalized.pop("permitted_label")
+            return normalized
+        return value
 
     @model_validator(mode="after")
     def validate_bounds(self) -> "HydraulicDomain":
@@ -153,7 +169,7 @@ class HydraulicDomainDecision(StrictScientificModel):
     version: str
     purpose: Literal["model_applicability", "analytic_verification"]
     domain_sha256: str
-    permitted_label: EvidenceLabel
+    permitted_evidence_label: EvidenceLabel
     requested_label: EvidenceLabel
     resolved_label: EvidenceLabel
     extrapolated: bool
@@ -236,14 +252,14 @@ def _validate_domain(
                 )
             )
     label_compatible = evidence_label_is_allowed(
-        domain.permitted_label, params.evidence_label
+        domain.permitted_evidence_label, params.evidence_label
     )
     if not label_compatible:
         violations.append(
             _domain_violation(
                 "evidence_label",
                 "evidence_label_incompatible",
-                domain.permitted_label.value,
+                domain.permitted_evidence_label.value,
                 params.evidence_label.value,
             )
         )
@@ -267,19 +283,51 @@ def _validate_domain(
             },
         )
     resolved = compose_evidence_labels(
-        params.evidence_label, domain.permitted_label
+        params.evidence_label, domain.permitted_evidence_label
     )
     return HydraulicDomainDecision(
         model_id=domain.model_id,
         version=domain.version,
         purpose=domain.purpose,
         domain_sha256=domain.sha256,
-        permitted_label=domain.permitted_label,
+        permitted_evidence_label=domain.permitted_evidence_label,
         requested_label=params.evidence_label,
         resolved_label=resolved,
         extrapolated=extrapolated,
         violations=tuple(_immutable_violation(item) for item in violations),
     )
+
+
+def _validation_path(root: str, error: Exception) -> str:
+    if isinstance(error, ValidationError):
+        errors = error.errors(include_url=False, include_context=False)
+        if errors:
+            return ".".join((root, *(str(item) for item in errors[0]["loc"])))
+    return root
+
+
+def _canonical_inputs(params: HydraulicInputs) -> HydraulicInputs:
+    try:
+        return HydraulicInputs.model_validate(params)
+    except Exception as error:
+        fail(
+            "HYDRAULIC_INVALID_INPUTS",
+            "params failed canonical hydraulic-input validation",
+            _validation_path("params", error),
+            {"validation_error_type": type(error).__name__},
+        )
+
+
+def _canonical_domain(domain: HydraulicDomain) -> HydraulicDomain:
+    try:
+        return HydraulicDomain.model_validate(domain)
+    except Exception as error:
+        fail(
+            "HYDRAULIC_INVALID_DOMAIN",
+            "domain failed canonical hydraulic-policy validation",
+            _validation_path("domain", error),
+            {"validation_error_type": type(error).__name__},
+        )
 
 
 def hydraulic_uptake(
@@ -306,6 +354,8 @@ def hydraulic_uptake(
             "domain",
             {"received_type": type(domain).__name__},
         )
+    params = _canonical_inputs(params)
+    domain = _canonical_domain(domain)
     values = {
         name: _finite(getattr(params, name), name)
         for name in (

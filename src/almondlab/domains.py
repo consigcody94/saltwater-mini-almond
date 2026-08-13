@@ -10,7 +10,7 @@ from math import isclose
 from pathlib import Path
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from almondlab.chemistry import sodium_adsorption_ratio_for_water
 from almondlab.contracts import EvidenceLabel
@@ -18,7 +18,7 @@ from almondlab.evidence_policy import (
     compose_evidence_labels,
     evidence_label_is_allowed,
 )
-from almondlab.errors import fail
+from almondlab.errors import AlmondLabError, fail
 from almondlab.schemas import (
     ChemistryObservation,
     ModelDomain,
@@ -133,6 +133,44 @@ def _required_value(field_name: str, water: WaterChemistry) -> float:
     return getattr(water, field_name)
 
 
+def _validation_path(root: str, error: Exception) -> str:
+    """Return a stable dotted path for the first Pydantic validation error."""
+
+    if isinstance(error, ValidationError):
+        errors = error.errors(include_url=False, include_context=False)
+        if errors:
+            return ".".join((root, *(str(item) for item in errors[0]["loc"])))
+    return root
+
+
+def _canonical_domain(domain: ModelDomain) -> ModelDomain:
+    """Revalidate a possibly copied policy, including its hidden instance state."""
+
+    try:
+        return ModelDomain.model_validate(domain)
+    except Exception as error:
+        fail(
+            "DOMAIN_INVALID_POLICY",
+            "domain failed canonical policy validation",
+            _validation_path("domain", error),
+            {"validation_error_type": type(error).__name__},
+        )
+
+
+def _canonical_request(request: DomainRequest) -> DomainRequest:
+    """Revalidate copied requests and all nested scientific records."""
+
+    try:
+        return DomainRequest.model_validate(request)
+    except Exception as error:
+        fail(
+            "DOMAIN_INVALID_REQUEST",
+            "request failed canonical scientific-input validation",
+            _validation_path("request", error),
+            {"validation_error_type": type(error).__name__},
+        )
+
+
 def validate_domain(
     domain: ModelDomain,
     request: DomainRequest,
@@ -152,6 +190,8 @@ def validate_domain(
             "request",
             {"received_type": type(request).__name__},
         )
+    domain = _canonical_domain(domain)
+    request = _canonical_request(request)
 
     hard_violations: list[dict[str, object]] = []
     extrapolatable_violations: list[dict[str, object]] = []
@@ -204,8 +244,30 @@ def validate_domain(
                 _violation(path, "required_observation_missing", "present", "missing")
             )
             continue
-        expected_value = _required_value(field_name, request.water)
-        if not isclose(observation.value, expected_value, rel_tol=1e-12, abs_tol=1e-12):
+        expected_value: float | None = None
+        try:
+            expected_value = _required_value(field_name, request.water)
+        except AlmondLabError as error:
+            hard_violations.append(
+                _violation(
+                    f"{path}.value",
+                    "required_computation_failed",
+                    "computable from validated water chemistry",
+                    {"code": error.code, "field_path": error.field_path},
+                )
+            )
+        except (AttributeError, TypeError, ValueError, OverflowError) as error:
+            hard_violations.append(
+                _violation(
+                    f"{path}.value",
+                    "required_computation_failed",
+                    "computable from validated water chemistry",
+                    {"code": type(error).__name__, "field_path": field_name},
+                )
+            )
+        if expected_value is not None and not isclose(
+            observation.value, expected_value, rel_tol=1e-12, abs_tol=1e-12
+        ):
             hard_violations.append(
                 _violation(
                     f"{path}.value",

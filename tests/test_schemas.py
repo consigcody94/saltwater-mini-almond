@@ -116,6 +116,17 @@ def test_water_normalizes_ordinary_yaml_integer_literals_to_finite_float() -> No
     assert isinstance(water.ec_ds_m, float)
 
 
+def test_strict_scientific_models_revalidate_copied_instances() -> None:
+    malformed = WaterChemistry(**chemistry_payload()).model_copy(
+        update={"ec_ds_m": "6.0"}
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        WaterChemistry.model_validate(malformed)
+
+    assert exc_info.value.errors()[0]["loc"] == ("ec_ds_m",)
+
+
 def test_water_rejects_negative_solute_stock() -> None:
     payload = chemistry_payload()
     payload["na_mmol_l"] = -0.01

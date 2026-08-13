@@ -43,7 +43,12 @@ NonnegativeFiniteFloat = Annotated[FiniteFloat, Field(ge=0)]
 class StrictScientificModel(BaseModel):
     """Reject unknown, non-finite, and mutable top-level scientific inputs."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+        revalidate_instances="always",
+    )
 
 
 class ProvenanceReference(StrictScientificModel):
