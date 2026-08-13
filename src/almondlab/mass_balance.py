@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from math import exp, isfinite
+from math import exp, isclose, isfinite
 from types import MappingProxyType
 
+from almondlab.contracts import EvidenceLabel
 from almondlab.errors import fail
 
 
@@ -173,7 +174,12 @@ class LedgerEntry:
     amount: float
     unit: str
     kind: str
+    evidence_label: EvidenceLabel
     physical_transfer_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.evidence_label, EvidenceLabel):
+            raise TypeError("evidence_label must be an EvidenceLabel")
 
     @property
     def entity(self) -> str:
@@ -193,6 +199,7 @@ class BalanceAudit:
     residuals: Mapping[str, float]
     relative_residuals: Mapping[str, float]
     quantities: frozenset[str]
+    internal_transaction_errors: tuple[str, ...]
 
     def residual(self, quantity: str) -> float:
         return self.residuals[quantity]
@@ -202,7 +209,9 @@ class BalanceAudit:
 
     @property
     def balanced(self) -> bool:
-        return all(value <= BALANCE_TOLERANCE for value in self.relative_residuals.values())
+        return not self.internal_transaction_errors and all(
+            value <= BALANCE_TOLERANCE for value in self.relative_residuals.values()
+        )
 
 
 def _validate_events(
@@ -459,6 +468,7 @@ def _append_ledger(
                         -amount,
                         unit,
                         "internal",
+                        EvidenceLabel.PHYSICS_CONSTRAINED,
                         flow.physical_transfer_id,
                     ),
                     LedgerEntry(
@@ -469,6 +479,7 @@ def _append_ledger(
                         amount,
                         unit,
                         "internal",
+                        EvidenceLabel.PHYSICS_CONSTRAINED,
                         flow.physical_transfer_id,
                     ),
                 )
@@ -488,6 +499,7 @@ def _append_ledger(
                     amount if water_rate > 0.0 else -amount,
                     "L",
                     "external",
+                    EvidenceLabel.PHYSICS_CONSTRAINED,
                 )
             )
         for key_kind, sign in (("external-advective", -1.0), ("external-source", 1.0)):
@@ -506,6 +518,7 @@ def _append_ledger(
                         sign * movement_amounts[(key_kind, index, quantity)],
                         "mmol",
                         "external",
+                        EvidenceLabel.PHYSICS_CONSTRAINED,
                     )
                 )
     for index, entity, amount in capped_sinks:
@@ -519,6 +532,7 @@ def _append_ledger(
                 -amount,
                 "mmol",
                 "external",
+                EvidenceLabel.PHYSICS_CONSTRAINED,
             )
         )
 
@@ -600,6 +614,7 @@ def audit_ledger(
 ) -> BalanceAudit:
     """Audit water volume and every registered entity as separate quantities."""
     quantities = frozenset({"water", *before.entities, *after.entities})
+    transaction_errors = _audit_internal_transactions(before, ledger, quantities)
     ledger_net = {quantity: 0.0 for quantity in quantities}
     for index, row in enumerate(ledger):
         if row.quantity not in quantities:
@@ -633,7 +648,82 @@ def audit_ledger(
         MappingProxyType(residuals),
         MappingProxyType(relative),
         quantities,
+        transaction_errors,
     )
+
+
+def _audit_internal_transactions(
+    state: NetworkState,
+    ledger: list[LedgerEntry] | tuple[LedgerEntry, ...],
+    quantities: frozenset[str],
+) -> tuple[str, ...]:
+    """Return structural defects in otherwise globally net-zero transfers."""
+    transactions: dict[str, list[LedgerEntry]] = {}
+    for row in ledger:
+        if row.kind == "internal":
+            transactions.setdefault(row.transaction_id, []).append(row)
+
+    errors: list[str] = []
+    for transaction_id, rows in transactions.items():
+        transaction_directions: set[tuple[str, str]] = set()
+        transfer_ids: set[str | None] = set()
+        observed_quantities = {row.quantity for row in rows}
+        if observed_quantities != quantities:
+            errors.append(f"{transaction_id}: quantities do not match network registry")
+        for quantity in quantities:
+            pair = [row for row in rows if row.quantity == quantity]
+            if len(pair) != 2:
+                errors.append(
+                    f"{transaction_id}:{quantity}: expected exactly two paired rows"
+                )
+                continue
+            first, second = pair
+            expected_unit = "L" if quantity == "water" else "mmol"
+            if first.unit != expected_unit or second.unit != expected_unit:
+                errors.append(f"{transaction_id}:{quantity}: unit mismatch")
+            if (
+                first.compartment != second.counterparty
+                or first.counterparty != second.compartment
+                or first.compartment == first.counterparty
+            ):
+                errors.append(f"{transaction_id}:{quantity}: counterparties are not reciprocal")
+            if not isclose(
+                first.amount,
+                -second.amount,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                errors.append(f"{transaction_id}:{quantity}: amounts are not equal and opposite")
+            if first.amount * second.amount > 0.0:
+                errors.append(f"{transaction_id}:{quantity}: rows have the same sign")
+            if first.physical_transfer_id != second.physical_transfer_id:
+                errors.append(f"{transaction_id}:{quantity}: transfer metadata mismatch")
+            transfer_ids.update(
+                (first.physical_transfer_id, second.physical_transfer_id)
+            )
+            if first.amount < second.amount:
+                transaction_directions.add((first.compartment, first.counterparty))
+            elif second.amount < first.amount:
+                transaction_directions.add((second.compartment, second.counterparty))
+            else:
+                transaction_directions.add(tuple(sorted((first.compartment, second.compartment))))
+            if (
+                first.compartment in state.loop_ids
+                and first.counterparty in state.loop_ids
+                and state.loop_ids[first.compartment] != state.loop_ids[first.counterparty]
+                and not (
+                    first.physical_transfer_id
+                    and first.physical_transfer_id.strip()
+                )
+            ):
+                errors.append(
+                    f"{transaction_id}:{quantity}: cross-loop pair lacks physical transfer ID"
+                )
+        if len(transaction_directions) > 1:
+            errors.append(f"{transaction_id}: quantity pairs disagree on direction")
+        if len(transfer_ids) > 1:
+            errors.append(f"{transaction_id}: quantity pairs disagree on transfer metadata")
+    return tuple(errors)
 
 
 def closed_form_tank_concentration(

@@ -224,3 +224,95 @@ tests/test_domains.py: 16 passed
 - Git reports a user-level global-ignore permission warning and possible future
   LF-to-CRLF normalization while staging. Neither warning appeared in pytest
   output or changed the committed Task 4 content.
+
+## Review fix round 1/5
+
+Two important findings were addressed test-first:
+
+1. `audit_ledger` now preserves its per-quantity residual math while also
+   returning immutable `internal_transaction_errors`. `balanced` is false when
+   any internal transaction lacks the complete water/entity registry, lacks
+   exactly two equal-and-opposite rows per quantity, uses inconsistent units,
+   has nonreciprocal counterparties, disagrees on direction across quantities,
+   or carries inconsistent/missing cross-loop transfer metadata.
+2. `LedgerEntry.evidence_label` is a required `EvidenceLabel` with no default.
+   Every internal and external row created by the physics engine is explicitly
+   `EvidenceLabel.PHYSICS_CONSTRAINED`.
+
+### Review RED — pair integrity and provenance
+
+Command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_mass_balance.py -v -p no:cacheprovider
+```
+
+Output (exit 1):
+
+```text
+collecting ... collected 24 items
+tests/test_mass_balance.py::test_audit_rejects_internal_transaction_with_both_entity_rows_deleted FAILED
+tests/test_mass_balance.py::test_audit_rejects_corrupted_internal_pair_metadata[transaction_id] FAILED
+tests/test_mass_balance.py::test_audit_rejects_corrupted_internal_pair_metadata[counterparty] FAILED
+tests/test_mass_balance.py::test_audit_rejects_corrupted_internal_pair_metadata[unit] FAILED
+tests/test_mass_balance.py::test_audit_accepts_valid_internal_pairs_and_explicit_evidence FAILED
+tests/test_mass_balance.py::test_ledger_entry_requires_explicit_evidence_label FAILED
+E AttributeError: 'BalanceAudit' object has no attribute 'internal_transaction_errors'
+E AttributeError: 'LedgerEntry' object has no attribute 'evidence_label'
+E Failed: DID NOT RAISE TypeError
+======================== 6 failed, 18 passed in 0.86s =========================
+```
+
+### Review RED — transaction-wide consistency
+
+Command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_mass_balance.py::test_audit_requires_consistent_metadata_across_transaction_quantities -v -p no:cacheprovider
+```
+
+Output (exit 1):
+
+```text
+collecting ... collected 2 items
+tests/test_mass_balance.py::test_audit_requires_consistent_metadata_across_transaction_quantities[direction] FAILED
+tests/test_mass_balance.py::test_audit_requires_consistent_metadata_across_transaction_quantities[physical_transfer_id] FAILED
+E AssertionError: assert ()
+============================== 2 failed in 0.55s ==============================
+```
+
+After enforcing transaction-wide direction and transfer metadata, the same
+focused case passed `2 passed in 0.35s`.
+
+### Review final verification
+
+Focused command (same Task 4 command above), exit 0 with no warnings:
+
+```text
+collecting ... collected 26 items
+============================= 26 passed in 0.68s ==============================
+```
+
+Prior Tasks 1–3 regression command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_contracts.py tests/test_cli.py tests/test_schemas.py tests/test_chemistry.py tests/test_treatment.py tests/test_domains.py -v -p no:cacheprovider
+```
+
+Output (exit 0 with no warnings):
+
+```text
+collecting ... collected 63 items
+============================= 63 passed in 1.55s ==============================
+```
+
+Review self-check mutations now caught include deleting both entity rows while
+the transaction's global net remains zero, moving one row to another
+transaction ID, changing one counterparty, changing one unit, reversing an
+entire entity pair relative to water, and changing both entity rows to a
+different physical transfer ID. A valid complete transaction remains balanced.
+Unrelated untracked public-data paths and `tests/test_paper1_contracts.py` were
+not staged or committed.

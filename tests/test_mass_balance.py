@@ -7,9 +7,11 @@ import yaml
 from hypothesis import given, strategies as st
 
 from almondlab.errors import AlmondLabError
+from almondlab.contracts import EvidenceLabel
 from almondlab.mass_balance import (
     ExternalFlux,
     Flow,
+    LedgerEntry,
     NetworkState,
     audit_ledger,
     closed_form_tank_concentration,
@@ -152,6 +154,118 @@ def test_corrupted_ledger_is_detected_independently_for_one_entity() -> None:
     assert audit.relative_residual("cl") <= 1e-10
     assert audit.relative_residual("water") <= 1e-10
     assert not audit.balanced
+
+
+def test_audit_rejects_internal_transaction_with_both_entity_rows_deleted() -> None:
+    state = NetworkState.from_dict(
+        {"a": 10.0, "b": 0.0},
+        {"a": {"na": 20.0}, "b": {"na": 0.0}},
+    )
+    result = step_state(state, [Flow("a", "b", 1.0)], [], 0.25)
+    ledger = [row for row in result.ledger if row.quantity != "na"]
+
+    audit = audit_ledger(state, result.state, ledger)
+
+    assert audit.relative_residual("na") <= 1e-10
+    assert audit.internal_transaction_errors
+    assert not audit.balanced
+
+
+@pytest.mark.parametrize("corruption", ["transaction_id", "counterparty", "unit"])
+def test_audit_rejects_corrupted_internal_pair_metadata(corruption: str) -> None:
+    state = NetworkState.from_dict(
+        {"a": 10.0, "b": 0.0},
+        {"a": {"na": 20.0}, "b": {"na": 0.0}},
+    )
+    result = step_state(state, [Flow("a", "b", 1.0)], [], 0.25)
+    ledger = list(result.ledger)
+    index = next(i for i, row in enumerate(ledger) if row.quantity == "na" and row.amount > 0)
+    changes: dict[str, object]
+    if corruption == "transaction_id":
+        changes = {"transaction_id": "internal:99:99"}
+    elif corruption == "counterparty":
+        changes = {"counterparty": "wrong"}
+    else:
+        changes = {"unit": "L"}
+    ledger[index] = replace(ledger[index], **changes)
+
+    audit = audit_ledger(state, result.state, ledger)
+
+    assert audit.internal_transaction_errors
+    assert not audit.balanced
+
+
+def test_audit_accepts_valid_internal_pairs_and_explicit_evidence() -> None:
+    state = NetworkState.from_dict(
+        {"a": 10.0, "b": 0.0},
+        {"a": {"na": 20.0}, "b": {"na": 0.0}},
+    )
+    result = step_state(
+        state,
+        [Flow("a", "b", 1.0, physical_transfer_id="pipe-a")],
+        [ExternalFlux("a", "rain", 0.0, {"na": 0.1})],
+        0.25,
+    )
+
+    assert all(
+        row.evidence_label is EvidenceLabel.PHYSICS_CONSTRAINED
+        for row in result.ledger
+    )
+    audit = audit_ledger(state, result.state, result.ledger)
+    assert audit.internal_transaction_errors == ()
+    assert audit.balanced
+
+
+@pytest.mark.parametrize("corruption", ["direction", "physical_transfer_id"])
+def test_audit_requires_consistent_metadata_across_transaction_quantities(
+    corruption: str,
+) -> None:
+    state = NetworkState.from_dict(
+        {"a": 10.0, "b": 0.0},
+        {"a": {"na": 20.0}, "b": {"na": 0.0}},
+        {"a": "loop-a", "b": "loop-b"},
+    )
+    result = step_state(
+        state,
+        [Flow("a", "b", 1.0, physical_transfer_id="pipe-a")],
+        [],
+        0.25,
+    )
+    ledger = list(result.ledger)
+    for index, row in enumerate(ledger):
+        if row.quantity != "na":
+            continue
+        if corruption == "direction":
+            ledger[index] = replace(
+                row,
+                compartment=row.counterparty,
+                counterparty=row.compartment,
+            )
+        else:
+            ledger[index] = replace(row, physical_transfer_id="pipe-b")
+
+    audit = audit_ledger(state, result.state, ledger)
+
+    assert audit.internal_transaction_errors
+    assert not audit.balanced
+
+
+def test_ledger_entry_requires_explicit_evidence_label() -> None:
+    with pytest.raises(TypeError):
+        # Missing provenance is a construction error, not a physics default.
+        LedgerEntry("tx", "a", "b", "water", -1.0, "L", "internal")  # type: ignore[call-arg]
+
+    row = LedgerEntry(
+        "tx",
+        "a",
+        "b",
+        "water",
+        -1.0,
+        "L",
+        "internal",
+        EvidenceLabel.PHYSICS_CONSTRAINED,
+    )
+    assert row.evidence_label is EvidenceLabel.PHYSICS_CONSTRAINED
 
 
 def test_no_purge_fixture_reaches_physical_censored_stop() -> None:
