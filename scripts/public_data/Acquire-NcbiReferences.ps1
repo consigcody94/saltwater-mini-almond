@@ -34,12 +34,18 @@ if (-not $Execute) {
 }
 
 $null = New-Item -ItemType Directory -Path $OutputRoot -Force
-$resolvedRoot = [IO.Path]::GetFullPath($OutputRoot)
-$driveName = [IO.Path]::GetPathRoot($resolvedRoot).TrimEnd('\').TrimEnd(':')
-$drive = Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue
-if ($drive) {
-    Write-Host ('Free disk space before acquisition: {0:N2} GiB' -f ($drive.Free / 1GB))
-    Write-Warning 'Because three complete package sizes are unknown, free-space sufficiency cannot be proven in advance.'
+try {
+    $drive = Get-DestinationDriveInfo -Path $OutputRoot
+    if ($drive.IsReady) {
+        Write-Host ('Destination volume {0}: {1:N2} GiB available of {2:N2} GiB total.' -f $drive.Name, ($drive.AvailableFreeSpace / 1GB), ($drive.TotalSize / 1GB))
+        Write-Warning 'Because three complete package sizes are unknown, free-space sufficiency cannot be proven in advance.'
+    }
+    else {
+        Write-Warning "Destination volume $($drive.Name) is not ready; available disk space cannot be reported."
+    }
+}
+catch {
+    Write-Warning "Available disk space could not be determined with DriveInfo: $($_.Exception.Message)"
 }
 
 $results = New-Object Collections.Generic.List[object]

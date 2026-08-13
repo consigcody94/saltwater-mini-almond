@@ -5,9 +5,8 @@ function Get-ReferenceAssemblyPlan {
     [CmdletBinding()]
     param()
 
-    $annotationTypes = 'GENOME_GFF,GENOME_GTF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT'
-    $baseDownload = 'https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download'
-    $baseReport = 'https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession'
+    $annotationTypes = 'GENOME_FASTA,GENOME_GFF,GENOME_GTF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROT_FASTA,SEQUENCE_REPORT'
+    $baseAccession = 'https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession'
 
     @(
         [pscustomobject]@{
@@ -43,10 +42,10 @@ function Get-ReferenceAssemblyPlan {
     ) | ForEach-Object {
         $encodedTypes = [uri]::EscapeDataString($annotationTypes)
         $_ | Add-Member -NotePropertyName PackageUrl -NotePropertyValue (
-            '{0}?accessions={1}&include_annotation_type={2}' -f $baseDownload, $_.Accession, $encodedTypes
+            '{0}/{1}/download?include_annotation_type={2}' -f $baseAccession, $_.Accession, $encodedTypes
         )
         $_ | Add-Member -NotePropertyName ReportUrl -NotePropertyValue (
-            '{0}/{1}/dataset_report' -f $baseReport, $_.Accession
+            '{0}/{1}/dataset_report' -f $baseAccession, $_.Accession
         )
         $_
     }
@@ -167,12 +166,113 @@ function Test-JsonDocument {
     catch { return $false }
 }
 
+function Test-RetriableHttpStatus {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$StatusCode)
+
+    return ($StatusCode -eq 429) -or ($StatusCode -ge 500 -and $StatusCode -le 599)
+}
+
+function Get-RetryDelaySeconds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Response,
+        [Parameter(Mandatory)][ValidateRange(1, 10)][int]$Attempt,
+        [ValidateRange(0.1, 300)][double]$BaseDelaySeconds = 2,
+        [ValidateRange(1, 600)][double]$MaximumDelaySeconds = 120,
+        [DateTimeOffset]$UtcNow = [DateTimeOffset]::UtcNow
+    )
+
+    $delay = [Math]::Min($MaximumDelaySeconds, $BaseDelaySeconds * [Math]::Pow(2, $Attempt - 1))
+    $retryAfter = $Response.Headers.RetryAfter
+    if ($null -ne $retryAfter) {
+        if ($null -ne $retryAfter.Delta) {
+            $delay = [Math]::Ceiling($retryAfter.Delta.TotalSeconds)
+        }
+        elseif ($null -ne $retryAfter.Date) {
+            $delay = [Math]::Ceiling(($retryAfter.Date - $UtcNow).TotalSeconds)
+        }
+    }
+
+    if ($delay -lt 0) { $delay = 0 }
+    return [double][Math]::Min($MaximumDelaySeconds, $delay)
+}
+
+function Invoke-HttpGetWithRetry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][uri]$Uri,
+        [Net.Http.HttpClient]$Client,
+        [ValidateRange(1, 10)][int]$MaximumAttempts = 4,
+        [ValidateRange(0.1, 300)][double]$BaseDelaySeconds = 2,
+        [ValidateRange(1, 600)][double]$MaximumDelaySeconds = 120,
+        [scriptblock]$RequestInvoker,
+        [scriptblock]$SleepAction
+    )
+
+    Add-Type -AssemblyName System.Net.Http
+    $ownsClient = $false
+    if ($null -eq $Client) {
+        $handler = New-Object Net.Http.HttpClientHandler
+        $Client = New-Object Net.Http.HttpClient($handler)
+        $ownsClient = $true
+    }
+    if (-not $RequestInvoker) {
+        $RequestInvoker = {
+            param($httpClient, $requestUri)
+            $httpClient.GetAsync($requestUri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        }
+    }
+    if (-not $SleepAction) {
+        $SleepAction = { param($seconds) Start-Sleep -Milliseconds ([int][Math]::Ceiling($seconds * 1000)) }
+    }
+
+    $response = $null
+    try {
+        for ($attempt = 1; $attempt -le $MaximumAttempts; $attempt++) {
+            $response = & $RequestInvoker $Client $Uri
+            if ($null -eq $response) { throw "HTTP request invoker returned no response for $Uri" }
+            $statusCode = [int]$response.StatusCode
+            $retryable = Test-RetriableHttpStatus -StatusCode $statusCode
+            if (-not $retryable -or $attempt -eq $MaximumAttempts) {
+                return $response
+            }
+
+            $delay = Get-RetryDelaySeconds -Response $response -Attempt $attempt -BaseDelaySeconds $BaseDelaySeconds -MaximumDelaySeconds $MaximumDelaySeconds
+            $response.Dispose()
+            $response = $null
+            Write-Warning ('HTTP {0} from {1}; retrying attempt {2}/{3} after {4:N0} second(s).' -f $statusCode, $Uri.Host, ($attempt + 1), $MaximumAttempts, $delay)
+            & $SleepAction $delay
+        }
+    }
+    catch {
+        if ($null -ne $response) { $response.Dispose() }
+        throw
+    }
+    finally {
+        if ($ownsClient -and $null -ne $Client) { $Client.Dispose() }
+    }
+}
+
+function Get-DestinationDriveInfo {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($fullPath)
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        throw "Cannot resolve destination volume for: $Path"
+    }
+    return New-Object IO.DriveInfo($root)
+}
+
 function Invoke-StreamDownload {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][uri]$Uri,
         [Parameter(Mandatory)][string]$DestinationPath,
         [ValidateRange(30, 86400)][int]$TimeoutSeconds = 1800,
+        [ValidateRange(1, 10)][int]$MaximumAttempts = 4,
         [scriptblock]$Validator
     )
 
@@ -200,7 +300,7 @@ function Invoke-StreamDownload {
     $inputStream = $null
     $outputStream = $null
     try {
-        $response = $client.GetAsync($Uri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        $response = Invoke-HttpGetWithRetry -Uri $Uri -Client $client -MaximumAttempts $MaximumAttempts
         $response.EnsureSuccessStatusCode()
         $inputStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         $outputStream = New-Object IO.FileStream($partial, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None, 1048576, [IO.FileOptions]::SequentialScan)
@@ -283,6 +383,10 @@ Export-ModuleMember -Function @(
     'Write-TextArtifact',
     'Test-ZipArchive',
     'Test-JsonDocument',
+    'Test-RetriableHttpStatus',
+    'Get-RetryDelaySeconds',
+    'Invoke-HttpGetWithRetry',
+    'Get-DestinationDriveInfo',
     'Invoke-StreamDownload',
     'Export-DatasetCatalog'
 )

@@ -44,13 +44,96 @@ try {
         }
     }
 
+    Invoke-SmokeCase 'NCBI API contract is pinned to v2 paths and supported enums' {
+        $types = 'GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT'
+        foreach ($item in @(Get-ReferenceAssemblyPlan)) {
+            $expectedPackage = "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$($item.Accession)/download?include_annotation_type=$types"
+            $expectedReport = "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$($item.Accession)/dataset_report"
+            Assert-True ($item.PackageUrl -ceq $expectedPackage) "Unexpected package URL for $($item.Accession): $($item.PackageUrl)"
+            Assert-True ($item.ReportUrl -ceq $expectedReport) "Unexpected report URL for $($item.Accession): $($item.ReportUrl)"
+            Assert-True ($item.PackageUrl -notmatch 'v2alpha') 'Deprecated v2alpha path is forbidden.'
+            Assert-True ($item.PackageUrl -notmatch 'PROTEIN_FASTA') 'Unsupported PROTEIN_FASTA enum is forbidden.'
+        }
+    }
+
+    Invoke-SmokeCase 'retry honors Retry-After and stops after success' {
+        Add-Type -AssemblyName System.Net.Http
+        $script:retryCalls = 0
+        $delays = New-Object Collections.Generic.List[double]
+        $request = {
+            param($client, $uri)
+            $script:retryCalls++
+            if ($script:retryCalls -eq 1) {
+                $status429 = [Enum]::ToObject([Net.HttpStatusCode], 429)
+                $response = New-Object Net.Http.HttpResponseMessage -ArgumentList $status429
+                $response.Headers.RetryAfter = New-Object Net.Http.Headers.RetryConditionHeaderValue([TimeSpan]::FromSeconds(7))
+                return $response
+            }
+            return New-Object Net.Http.HttpResponseMessage([Net.HttpStatusCode]::OK)
+        }
+        $sleep = { param($seconds) $delays.Add([double]$seconds) }
+        $response = Invoke-HttpGetWithRetry -Uri 'https://example.invalid/retry' -MaximumAttempts 4 -RequestInvoker $request -SleepAction $sleep
+        try {
+            Assert-True ($script:retryCalls -eq 2) "Expected 2 attempts, got $script:retryCalls."
+            Assert-True ($delays.Count -eq 1 -and $delays[0] -eq 7) 'Retry-After delay was not honored.'
+            Assert-True ([int]$response.StatusCode -eq 200) 'Retry did not return the successful response.'
+        }
+        finally { $response.Dispose() }
+    }
+
+    Invoke-SmokeCase 'retry is bounded and exponential for 5xx without Retry-After' {
+        Add-Type -AssemblyName System.Net.Http
+        $script:retryCalls = 0
+        $delays = New-Object Collections.Generic.List[double]
+        $request = {
+            param($client, $uri)
+            $script:retryCalls++
+            return New-Object Net.Http.HttpResponseMessage([Net.HttpStatusCode]::ServiceUnavailable)
+        }
+        $sleep = { param($seconds) $delays.Add([double]$seconds) }
+        $response = Invoke-HttpGetWithRetry -Uri 'https://example.invalid/retry' -MaximumAttempts 3 -BaseDelaySeconds 2 -RequestInvoker $request -SleepAction $sleep
+        try {
+            Assert-True ($script:retryCalls -eq 3) "Expected 3 bounded attempts, got $script:retryCalls."
+            Assert-True (($delays -join ',') -eq '2,4') "Unexpected retry delays: $($delays -join ',')."
+            Assert-True ([int]$response.StatusCode -eq 503) 'Final retry response was not returned.'
+        }
+        finally { $response.Dispose() }
+    }
+
+    Invoke-SmokeCase 'retry does not repeat non-429 client errors' {
+        Add-Type -AssemblyName System.Net.Http
+        $script:retryCalls = 0
+        $delays = New-Object Collections.Generic.List[double]
+        $request = {
+            param($client, $uri)
+            $script:retryCalls++
+            return New-Object Net.Http.HttpResponseMessage([Net.HttpStatusCode]::BadRequest)
+        }
+        $sleep = { param($seconds) $delays.Add([double]$seconds) }
+        $response = Invoke-HttpGetWithRetry -Uri 'https://example.invalid/no-retry' -MaximumAttempts 4 -RequestInvoker $request -SleepAction $sleep
+        try {
+            Assert-True ($script:retryCalls -eq 1) "HTTP 400 was requested $script:retryCalls times."
+            Assert-True ($delays.Count -eq 0) 'HTTP 400 unexpectedly triggered backoff.'
+            Assert-True ([int]$response.StatusCode -eq 400) 'HTTP 400 response was not returned directly.'
+        }
+        finally { $response.Dispose() }
+    }
+
+    Invoke-SmokeCase 'DriveInfo reports the destination volume' {
+        $info = Get-DestinationDriveInfo -Path $testRoot
+        Assert-True ($null -ne $info) 'DriveInfo was not returned.'
+        Assert-True ($info.IsReady) 'Destination drive is not ready.'
+        Assert-True ($info.TotalSize -gt 0) 'DriveInfo total size is invalid.'
+        Assert-True ($info.AvailableFreeSpace -ge 0) 'DriveInfo free space is invalid.'
+    }
+
     Invoke-SmokeCase 'dry-run creates no output directory' {
         $dryRoot = Join-Path $testRoot 'dry-run-output'
         $null = & $acquirePath -OutputRoot $dryRoot 6>&1
         Assert-True (-not (Test-Path -LiteralPath $dryRoot)) 'Dry-run created its output root.'
     }
 
-    Invoke-SmokeCase 'default dry-run path resolves under the script directory' {
+    Invoke-SmokeCase 'default dry-run path resolves under repository data/raw' {
         $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
         $defaultRoot = Join-Path $repositoryRoot 'data\raw\ncbi_references'
         $existedBefore = Test-Path -LiteralPath $defaultRoot

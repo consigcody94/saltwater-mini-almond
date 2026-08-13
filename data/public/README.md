@@ -30,6 +30,9 @@ Only `-Profile references -Execute` can perform downloads. It delegates to the
 four-accession allowlisted workflow in `scripts/public_data/`, streams each NCBI
 package to a `.partial` file, validates its format, and locally calculates
 SHA-256 before promotion. Existing files are skipped only after rehashing.
+The downloader pins the current NCBI Datasets v2 accession routes and supported
+`PROT_FASTA` enum, performs serial requests, and uses bounded retry/backoff for
+HTTP 429/5xx responses.
 
 The `rootstock-rnaseq` profile is informational and deliberately has no
 downloader. Even with `-Execute`, it fails closed because the verified

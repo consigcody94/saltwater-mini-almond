@@ -36,8 +36,8 @@ datasets:
       submitter: "PRJEB32994"
       refseq: "PRJNA631757"
     landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_902201215.1/"
-    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCF_902201215.1/dataset_report"
-    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCF_902201215.1&include_annotation_type=GENOME_GFF,GENOME_GTF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_902201215.1/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_902201215.1/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
     assembly_level: "chromosome"
     genome_size_bp: 227599157
     contig_count: 4395
@@ -76,8 +76,8 @@ datasets:
     biosample: "SAMD00145063"
     bioprojects: ["PRJDB7547"]
     landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_008632915.2/"
-    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_008632915.2/dataset_report"
-    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCA_008632915.2&include_annotation_type=GENOME_GFF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_008632915.2/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_008632915.2/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
     assembly_level: "scaffold"
     genome_size_bp: 246116696
     contig_count: 4575
@@ -113,8 +113,8 @@ datasets:
     bioprojects: []
     landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_021292205.2/"
     wgs_landing_url: "https://www.ncbi.nlm.nih.gov/Traces/wgs/JAJFAZ02"
-    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_021292205.2/dataset_report"
-    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCA_021292205.2&include_annotation_type=GENOME_GFF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_021292205.2/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_021292205.2/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
     assembly_level: "chromosome"
     genome_size_bp: 257071663
     contig_count: 331
@@ -154,8 +154,8 @@ datasets:
     cultivar_or_chassis: "Lovell"
     bioprojects: ["PRJNA241430"]
     landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000346465.2/"
-    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCF_000346465.2/dataset_report"
-    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCF_000346465.2&include_annotation_type=GENOME_GFF,GENOME_GTF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_000346465.2/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_000346465.2/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
     assembly_level: "chromosome"
     genome_size_bp: 227411381
     contig_count: 2530
@@ -536,8 +536,8 @@ datasets:
     sample_count: 1
     assay: "whole-genome sequencing and annotation"
     landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_000310025.1/"
-    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_000310025.1/dataset_report"
-    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCA_000310025.1&include_annotation_type=GENOME_GFF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_000310025.1/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_000310025.1/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
     file_types: ["genomic FASTA", "annotation", "CDS/protein FASTA", "sequence report"]
     approximate_download_size: "not exposed in verified landing metadata"
     access_conditions: "public; no login"
