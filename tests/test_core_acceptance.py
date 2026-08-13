@@ -136,6 +136,14 @@ def test_record_rejects_non_string_resource_hash_keys(field_name: str) -> None:
         _record(**{field_name: {1: "b" * 64}})
 
 
+@pytest.mark.parametrize("bad_hashes", ([], False, 0, ""))
+def test_record_rejects_falsy_nonmapping_auxiliary_hashes(
+    bad_hashes: object,
+) -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        _record(auxiliary_artifacts_sha256s=bad_hashes)  # type: ignore[arg-type]
+
+
 def test_record_validates_primary_digest_independently_of_hash_map_collision() -> None:
     with pytest.raises(ValueError, match="SHA-256"):
         _record(

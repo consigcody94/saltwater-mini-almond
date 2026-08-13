@@ -336,9 +336,13 @@ class VerificationRecord:
         if not isinstance(hashes, Mapping):
             raise ValueError("fixture_sha256s must be a mapping")
         object.__setattr__(self, "fixture_sha256s", hashes)
+        auxiliary_hashes_source = (
+            {}
+            if self.auxiliary_artifacts_sha256s is None
+            else self.auxiliary_artifacts_sha256s
+        )
         auxiliary_hashes = _freeze_json(
-            self.auxiliary_artifacts_sha256s or {},
-            "auxiliary_artifacts_sha256s",
+            auxiliary_hashes_source, "auxiliary_artifacts_sha256s"
         )
         if not isinstance(auxiliary_hashes, Mapping):
             raise ValueError("auxiliary_artifacts_sha256s must be a mapping")
