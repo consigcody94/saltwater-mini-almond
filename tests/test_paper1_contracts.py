@@ -1,3 +1,4 @@
+import hashlib
 import math
 from copy import deepcopy
 from pathlib import Path
@@ -6,6 +7,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+import almondlab.paper1_contracts as paper1_contracts
 from almondlab.biology_surrogate import BiologyParameters, PlantState, RootZoneForcing
 from almondlab.contracts import CompartmentKind, ConservedEntity
 from almondlab.errors import AlmondLabError
@@ -14,9 +16,9 @@ from almondlab.paper1_contracts import (
     CandidateSpec,
     CandidateState,
     H3Rule,
+    LegacySyntheticScenarioConfig,
     Paper1DesignConfig,
     ScientificLabel,
-    SyntheticScenarioConfig,
     load_candidate_specs,
     load_paper1_design,
     load_synthetic_scenarios,
@@ -24,6 +26,13 @@ from almondlab.paper1_contracts import (
 
 
 CONFIGS = Path(__file__).parents[1] / "configs"
+LEGACY_SCENARIOS = CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+
+
+def _load_legacy_synthetic_scenarios(
+    path: Path = LEGACY_SCENARIOS,
+) -> tuple[LegacySyntheticScenarioConfig, ...]:
+    return paper1_contracts._load_legacy_synthetic_scenarios(path)
 
 
 def _scenario_merge_power_sequence(
@@ -45,7 +54,7 @@ def _scenario_merge_power_sequence(
 
 
 def _scenario_source_with_biology_merge(sequence: str) -> str:
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     marker = "biology_parameters: &biology_parameters\n"
     return source.replace(marker, marker + sequence, 1)
 
@@ -530,10 +539,565 @@ def test_design_model_rejects_frozen_identity_mutation(
         Paper1DesignConfig.model_validate(payload)
 
 
+def test_registered_quantity_requires_an_exact_finite_float_and_trimmed_unit() -> None:
+    """Catches numeric coercion, booleans, nonfinite values, or malformed units."""
+
+    quantity = paper1_contracts.RegisteredQuantity(
+        value=0.02,
+        unit="log-ratio^2",
+        evidence_label="hypothesis_prior",
+    )
+
+    assert type(quantity.value) is float
+    assert quantity.unit == "log-ratio^2"
+    for invalid_value in (True, 2, "0.02", float("nan"), float("inf")):
+        with pytest.raises(ValidationError):
+            paper1_contracts.RegisteredQuantity(
+                value=invalid_value,
+                unit="log-ratio^2",
+                evidence_label="hypothesis_prior",
+            )
+    for invalid_unit in ("", " log-ratio^2", "log-ratio^2 ", "log\nratio"):
+        with pytest.raises(ValidationError):
+            paper1_contracts.RegisteredQuantity(
+                value=0.02,
+                unit=invalid_unit,
+                evidence_label="hypothesis_prior",
+            )
+
+
+def test_registered_count_requires_an_exact_nonnegative_integer() -> None:
+    """Catches booleans, floats, strings, negative counts, or unit substitution."""
+
+    count = paper1_contracts.RegisteredCount(
+        value=64,
+        unit="count",
+        evidence_label="hypothesis_prior",
+    )
+
+    assert type(count.value) is int
+    for invalid_value in (True, 64.0, "64", -1):
+        with pytest.raises(ValidationError):
+            paper1_contracts.RegisteredCount(
+                value=invalid_value,
+                unit="count",
+                evidence_label="hypothesis_prior",
+            )
+    with pytest.raises(ValidationError):
+        paper1_contracts.RegisteredCount(
+            value=64,
+            unit="panels",
+            evidence_label="hypothesis_prior",
+        )
+
+
+def test_registered_count_stays_within_the_interoperable_json_integer_domain() -> None:
+    """Catches a count that cannot be represented exactly by JSON consumers."""
+
+    maximum = 2**53 - 1
+    count = paper1_contracts.RegisteredCount(
+        value=maximum,
+        unit="count",
+        evidence_label="hypothesis_prior",
+    )
+
+    assert count.value == maximum
+    with pytest.raises(ValidationError):
+        paper1_contracts.RegisteredCount(
+            value=maximum + 1,
+            unit="count",
+            evidence_label="hypothesis_prior",
+        )
+
+
+def _rq(value: float, unit: str) -> dict[str, object]:
+    return {
+        "value": value,
+        "unit": unit,
+        "evidence_label": "hypothesis_prior",
+    }
+
+
+def _rc(value: int) -> dict[str, object]:
+    return {
+        "value": value,
+        "unit": "count",
+        "evidence_label": "hypothesis_prior",
+    }
+
+
+ENDPOINT_IDS = (
+    "green_canopy_area",
+    "root_zone_na_concentration",
+    "root_zone_cl_concentration",
+    "root_zone_k_concentration",
+    "xylem_sap_na_concentration",
+    "drainage_total_b_concentration",
+    "root_surface_outward_na_flux_per_root_dry_mass",
+    "root_h2o2_concentration_time_auc",
+    "root_mannitol_concentration_above_empty_vector",
+    "xylem_sap_na_concentration_time_auc",
+)
+H3_ENDPOINT_IDS = ENDPOINT_IDS[-4:]
+WATER_IDS = (
+    "nonsaline_nutrient_matched_control",
+    "pilot_selected_full_ion_marine_challenge",
+)
+
+
+def _v14_generator_payload() -> dict[str, object]:
+    endpoint_limits = {
+        endpoint_id: None if endpoint_id in {
+            "green_canopy_area",
+            "root_mannitol_concentration_above_empty_vector",
+        } else _rq(0.01, "native endpoint unit")
+        for endpoint_id in ENDPOINT_IDS
+    }
+    endpoint_log_sds = {
+        endpoint_id: None if endpoint_id in {
+            "green_canopy_area",
+            "root_mannitol_concentration_above_empty_vector",
+        } else _rq(0.05, "log-ratio")
+        for endpoint_id in ENDPOINT_IDS
+    }
+    return {
+        "hierarchy": {
+            "run_variance": _rq(0.02, "log-ratio^2"),
+            "batch_variance": _rq(0.02, "log-ratio^2"),
+            "reservoir_variance": _rq(0.04, "log-ratio^2"),
+            "plant_variance": _rq(0.10, "log-ratio^2"),
+        },
+        "climate": {
+            "temperature_ar1_phi": _rq(0.70, "dimensionless"),
+            "temperature_innovation_sd_k": _rq(0.35, "K"),
+            "apar_ar1_phi": _rq(0.60, "dimensionless"),
+            "apar_log_innovation_sd": _rq(0.10, "log-ratio"),
+            "matric_potential_ar1_phi": _rq(0.80, "dimensionless"),
+            "matric_potential_innovation_sd_mpa": _rq(0.006, "MPa"),
+            "potential_transpiration_log_innovation_sd": _rq(0.08, "log-ratio"),
+            "climate_initialization_burnin_steps": _rc(64),
+        },
+        "chemistry": {
+            "common_ion_log_sd": _rq(0.03, "log-ratio"),
+            "boron_log_sd": _rq(0.08, "log-ratio"),
+            "ec_measurement_sd_ds_m": _rq(0.05, "dS m^-1"),
+            "osmolality_measurement_sd_osmol_kg": _rq(0.002, "osmol kg^-1"),
+            "ph_measurement_sd": _rq(0.03, "pH"),
+            "temperature_measurement_sd_k": _rq(0.20, "K"),
+            "charge_balance_tolerance_percent": _rq(1.00, "percent"),
+        },
+        "water_loop": {
+            "reservoir_initial_volume_l": _rq(120.0, "L"),
+            "water_batch_volume_l": _rq(5000.0, "L"),
+            "irrigation_volume_l_per_plant_day": _rq(0.60, "L plant^-1 day^-1"),
+            "drainage_return_fraction": _rq(0.70, "dimensionless"),
+            "purge_volume_l_day": _rq(1.20, "L day^-1"),
+            "sampling_volume_l_per_sample": _rq(0.05, "L sample^-1"),
+            "reservoir_min_volume_l": _rq(80.0, "L"),
+            "reservoir_max_volume_l": _rq(160.0, "L"),
+            "operator_event_times_days": tuple(
+                _rq(float(index) + 0.25, "day") for index in range(84)
+            ),
+        },
+        "observation": {
+            "canopy_observation_error_sd": _rq(0.05, "log-ratio"),
+            "ion_observation_error_sd": _rq(0.04, "log-ratio"),
+            "h3_observation_error_by_endpoint": {
+                candidate_id: _rq(
+                    2.0 if candidate_id == "C3" else 0.05,
+                    "nmol g_root_fresh_mass^-1"
+                    if candidate_id == "C3"
+                    else "log-ratio",
+                )
+                for candidate_id in ("C1", "C2", "C3", "C4", "C5", "C6")
+            },
+            "canopy_heteroscedastic_log_slope": _rq(0.10, "log/log"),
+            "ion_heteroscedastic_log_slope": _rq(0.08, "log/log"),
+            "canopy_observation_times_days": tuple(
+                _rq(float(day), "day")
+                for day in (0, 3, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84)
+            ),
+            "ion_observation_times_days": tuple(
+                _rq(float(day), "day") for day in (0, 14, 28, 42, 56, 70, 84)
+            ),
+            "h3_observation_times_days_by_endpoint": {
+                endpoint_id: (_rq(84.0, "day"),) for endpoint_id in H3_ENDPOINT_IDS
+            },
+            "h3_measurement_links": {
+                "root_dry_matter_fraction": _rq(0.20, "dimensionless"),
+                "h2o2_umol_g_root_fresh_mass_inv_per_ros_dimensionless": _rq(
+                    1.0,
+                    "umol H2O2 g_root_fresh_mass^-1 per ros_dimensionless",
+                ),
+            },
+        },
+        "censoring": {
+            "lod_by_endpoint": endpoint_limits,
+            "loq_by_endpoint": deepcopy(endpoint_limits),
+            "lod_log_sd_by_endpoint": endpoint_log_sds,
+            "loq_log_sd_by_endpoint": deepcopy(endpoint_log_sds),
+        },
+        "drift": {
+            "canopy_drift_per_day": _rq(0.0, "log-ratio day^-1"),
+            "ion_drift_per_day_by_endpoint": {
+                endpoint_id: _rq(0.0, "log-ratio day^-1")
+                for endpoint_id in ENDPOINT_IDS[1:6]
+            },
+            "h3_drift_per_day_by_endpoint": {
+                endpoint_id: _rq(0.0, "endpoint unit day^-1")
+                for endpoint_id in H3_ENDPOINT_IDS
+            },
+            "calibration_interval_days": _rq(7.0, "day"),
+            "calibration_phase_offset_days": _rq(0.0, "day"),
+            "post_calibration_residual_sd_by_endpoint": {
+                endpoint_id: _rq(0.01, "native endpoint unit")
+                for endpoint_id in ENDPOINT_IDS
+            },
+        },
+        "death": {
+            "biomass_death_threshold_log_sd": _rq(0.10, "log-ratio"),
+            "injury_death_threshold_log_sd": _rq(0.10, "log-ratio"),
+            "sustained_injury_duration_log_sd": _rq(0.10, "log-ratio"),
+        },
+        "missingness": {
+            "missingness_intercept": _rq(-3.0, "logit"),
+            "missingness_stress_slope": _rq(
+                0.20, "logit per standardized-proxy SD"
+            ),
+            "mnar_tipping_delta": _rq(
+                0.10, "logit per standardized-endpoint SD"
+            ),
+            "observable_stress_proxy_fields": (
+                "challenge_water_indicator",
+                "scheduled_time_days",
+                "prior_observed_canopy_log_ratio",
+            ),
+            "observable_stress_proxy_center_by_field": {
+                "challenge_water_indicator": _rq(0.5, "dimensionless"),
+                "scheduled_time_days": _rq(42.0, "day"),
+                "prior_observed_canopy_log_ratio": _rq(0.0, "log-ratio"),
+            },
+            "observable_stress_proxy_scale_by_field": {
+                "challenge_water_indicator": _rq(0.5, "dimensionless"),
+                "scheduled_time_days": _rq(42.0, "day"),
+                "prior_observed_canopy_log_ratio": _rq(0.25, "log-ratio"),
+            },
+            "mnar_endpoints": (
+                "green_canopy_area",
+                *H3_ENDPOINT_IDS,
+            ),
+        },
+        "calibration": {
+            "parameter_xtol": _rq(1.0e-6, "dimensionless"),
+            "parameter_rtol": _rq(1.0e-6, "dimensionless"),
+            "objective_residual_tolerance_log_ratio": _rq(1.0e-6, "log-ratio"),
+            "max_iterations": _rc(100),
+            "fit_panel_size": _rc(64),
+            "holdout_panel_size": _rc(64),
+            "holdout_tolerance_log_ratio": _rq(0.020, "log-ratio"),
+        },
+        "design": {
+            "duration_days": _rq(84.0, "day"),
+            "confirmation_plants_per_group_reservoir": _rc(6),
+        },
+    }
+
+
+def test_v14_generator_requires_every_registered_section_without_defaults() -> None:
+    """Catches omission, renaming, or an unregistered top-level generator section."""
+
+    payload = _v14_generator_payload()
+    generator = paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+    assert generator.water_loop.water_batch_volume_l.value == 5000.0
+    assert generator.calibration.parameter_xtol.unit == "dimensionless"
+    for section in tuple(payload):
+        incomplete = deepcopy(payload)
+        incomplete.pop(section)
+        with pytest.raises(ValidationError):
+            paper1_contracts.SyntheticGeneratorConfig.model_validate(incomplete)
+    extra = deepcopy(payload)
+    extra["unregistered"] = {}
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(extra)
+
+
+def test_v14_generator_sections_enforce_registered_units_and_exact_map_keys() -> None:
+    """Catches a unit alias or missing endpoint hidden inside a required section."""
+
+    wrong_unit = _v14_generator_payload()
+    wrong_unit["hierarchy"]["run_variance"]["unit"] = "variance"
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(wrong_unit)
+
+    missing_endpoint = _v14_generator_payload()
+    missing_endpoint["censoring"]["lod_by_endpoint"].pop("xylem_sap_na_concentration")
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(missing_endpoint)
+
+
+def _v14_scenario_payload(scenario_id: str = "perfect_control") -> dict[str, object]:
+    legacy = yaml.safe_load(LEGACY_SCENARIOS.read_text(encoding="utf-8"))
+    forcing = deepcopy(legacy["forcing"])
+    return {
+        "scenario_id": scenario_id,
+        "schema_version": "1.4.0",
+        "evidence_label": "synthetic_only",
+        "parameters": deepcopy(legacy["biology_parameters"]),
+        "initial_state": deepcopy(legacy["initial_state"]),
+        "forcings_by_water_id": {
+            water_id: (deepcopy(forcing),) for water_id in WATER_IDS
+        },
+        "generator": _v14_generator_payload(),
+        "mechanism": {
+            "biology_parameter_overrides": {},
+            "candidate_parameter_overrides_by_id": {},
+            "onset_time_days": None,
+            "post_onset_biology_parameter_overrides": {},
+            "chassis_id": None,
+            "candidate_chassis_mechanism_modifiers": {},
+        },
+    }
+
+
+def test_v14_scenario_contract_replaces_scalar_forcing_and_generator_mapping() -> None:
+    """Catches accepting the retired v1.3 forcing/generator shape as v1.4."""
+
+    scenario = paper1_contracts.SyntheticScenarioConfig.model_validate(
+        _v14_scenario_payload()
+    )
+
+    assert scenario.schema_version == "1.4.0"
+    assert tuple(scenario.forcings_by_water_id) == WATER_IDS
+    assert isinstance(scenario.generator, paper1_contracts.SyntheticGeneratorConfig)
+    for removed_name in ("forcing", "generator_parameters"):
+        malformed = _v14_scenario_payload()
+        malformed[removed_name] = malformed.pop(
+            "forcings_by_water_id" if removed_name == "forcing" else "generator"
+        )
+        with pytest.raises((ValidationError, AlmondLabError)):
+            paper1_contracts.SyntheticScenarioConfig.model_validate(malformed)
+
+
+def test_v14_registry_requires_the_exact_ten_scenarios_in_registered_order() -> None:
+    """Catches a missing, duplicate, aliased, or reordered Task 4 scenario."""
+
+    scenario_ids = (
+        "perfect_control",
+        "true_ion_exclusion",
+        "root_na_accumulation",
+        "marker_only",
+        "nonsaline_penalty",
+        "chassis_interaction",
+        "delayed_toxicity",
+        "sensor_drift_missingness",
+        "insufficient_purge",
+        "selection_bias_false_leader",
+    )
+    payload = {
+        "schema_version": "1.4.0",
+        "water_recipe_registry_sha256": "a" * 64,
+        "anchor": _v14_scenario_payload(scenario_ids[0]),
+        "scenarios": [
+            _v14_scenario_payload(scenario_id) for scenario_id in scenario_ids[1:]
+        ],
+    }
+    registry = paper1_contracts.SyntheticScenarioRegistry.model_validate(payload)
+
+    assert tuple(item.scenario_id for item in registry.all_scenarios) == scenario_ids
+    reordered = deepcopy(payload)
+    reordered["scenarios"][0], reordered["scenarios"][1] = (
+        reordered["scenarios"][1],
+        reordered["scenarios"][0],
+    )
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticScenarioRegistry.model_validate(reordered)
+
+
+def test_active_loader_rejects_v13_with_explicit_migration_error() -> None:
+    """Catches transparent acceptance of the retired v1.3 scenario document."""
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(LEGACY_SCENARIOS)
+
+    assert exc_info.value.code == "SCENARIO_SCHEMA_MIGRATION_REQUIRED"
+    assert exc_info.value.field_path == "schema_version"
+
+
+def test_v13_archives_preserve_the_approved_source_bytes_exactly() -> None:
+    """Catches rebuilding either archive from a later working-tree config."""
+
+    expected = {
+        "synthetic_scenarios_v1_3.yaml": (
+            "46286eb006fbfbaf13281dfe52d4c63c9dc00ff7b3ef0a8ee704146908f759cb"
+        ),
+        "experiment_paper1_v1_3.yaml": (
+            "d402889dac8b4580b0d2f01e65b6caf750b8af65e0550fe6283c630109e465e0"
+        ),
+    }
+
+    for name, expected_sha256 in expected.items():
+        archive = CONFIGS / "archive" / name
+        assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_sha256
+
+
+def test_v13_inventory_has_no_dropped_generator_value() -> None:
+    """Catches silently ignored, multiply classified, or unregistered old knobs."""
+
+    source = CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+    inventory = paper1_contracts.inspect_v13_scenario_migration(source)
+    by_source = {
+        item.source_path: item
+        for item in inventory.items
+        if item.source_path is not None
+    }
+    legacy_generator_paths = {
+        f"generator_parameters.{name}"
+        for name in {
+            "run_variance",
+            "batch_variance",
+            "reservoir_variance",
+            "plant_variance",
+            "canopy_observation_error_sd",
+            "ion_observation_error_sd",
+            "h3_observation_error_sd",
+            "missingness_intercept",
+            "missingness_stress_slope",
+            "mnar_tipping_delta",
+            "duration_days",
+        }
+    }
+
+    assert inventory.source_schema_version == "1.3.0"
+    assert inventory.source_raw_sha256 == (
+        "46286eb006fbfbaf13281dfe52d4c63c9dc00ff7b3ef0a8ee704146908f759cb"
+    )
+    assert legacy_generator_paths <= set(by_source)
+    assert inventory.unclassified_source_paths == ()
+    assert inventory.multiply_classified_source_paths == ()
+    h3 = by_source["generator_parameters.h3_observation_error_sd"]
+    assert h3.disposition is paper1_contracts.MigrationDisposition.SPLIT_REQUIRES_REGISTRATION
+    assert h3.destination_paths == tuple(
+        f"anchor.generator.observation.h3_observation_error_by_endpoint.{candidate}"
+        for candidate in ("C1", "C2", "C4", "C5", "C6")
+    )
+    assert h3.owner_required_paths == (
+        "anchor.generator.observation.h3_observation_error_by_endpoint.C3",
+    )
+
+
+def test_v13_inventory_classifies_every_legacy_leaf_exactly_once() -> None:
+    """Catches migration coverage that audits only the eleven headline scalars."""
+
+    source = CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+    inventory = paper1_contracts.inspect_v13_scenario_migration(source)
+    paths = tuple(
+        item.source_path for item in inventory.items if item.source_path is not None
+    )
+
+    assert len(paths) == len(set(paths))
+    assert {
+        "biology_parameters.root_area_cm2",
+        "initial_state.network_state.compartments.root-zone.stocks.na",
+        "forcing.duration_hours",
+        "scenarios[scenario_id=chassis_interaction].parameters.root_conductance_l_day_mpa",
+        "scenarios[scenario_id=insufficient_purge].forcing.measured_osmolality_osmol_kg",
+    } <= set(paths)
+    assert all(item.rationale for item in inventory.items)
+
+
+def _v14_registry_payload() -> dict[str, object]:
+    scenario_ids = (
+        "perfect_control",
+        "true_ion_exclusion",
+        "root_na_accumulation",
+        "marker_only",
+        "nonsaline_penalty",
+        "chassis_interaction",
+        "delayed_toxicity",
+        "sensor_drift_missingness",
+        "insufficient_purge",
+        "selection_bias_false_leader",
+    )
+    rows = {
+        scenario_id: _v14_scenario_payload(scenario_id)
+        for scenario_id in scenario_ids
+    }
+    rows["true_ion_exclusion"]["mechanism"]["biology_parameter_overrides"] = {
+        "root_na_permeability_l_cm2_h": 0.0
+    }
+    rows["root_na_accumulation"]["mechanism"]["biology_parameter_overrides"] = {
+        "na_efflux_vmax_mmol_h": 0.10
+    }
+    rows["marker_only"]["mechanism"]["biology_parameter_overrides"] = {
+        "ros_clearance_h_inv": 0.40
+    }
+    rows["nonsaline_penalty"]["mechanism"]["biology_parameter_overrides"] = {
+        "mannitol_carbon_cost_mmol_c_mmol_inv": 0.80
+    }
+    rows["delayed_toxicity"]["mechanism"][
+        "post_onset_biology_parameter_overrides"
+    ] = {"senescence_h_inv": 0.06}
+    rows["sensor_drift_missingness"]["generator"]["observation"][
+        "canopy_observation_error_sd"
+    ] = _rq(0.12, "log-ratio")
+    rows["sensor_drift_missingness"]["generator"]["missingness"][
+        "missingness_stress_slope"
+    ] = _rq(0.60, "logit per standardized-proxy SD")
+    rows["selection_bias_false_leader"]["generator"]["hierarchy"][
+        "plant_variance"
+    ] = _rq(0.20, "log-ratio^2")
+    return {
+        "schema_version": "1.4.0",
+        "water_recipe_registry_sha256": "a" * 64,
+        "anchor": rows[scenario_ids[0]],
+        "scenarios": [rows[scenario_id] for scenario_id in scenario_ids[1:]],
+    }
+
+
+def test_explicit_v13_migration_requires_exact_retirement_inventory() -> None:
+    """Catches a migration registration silently dropping a retired source leaf."""
+
+    inventory = paper1_contracts.inspect_v13_scenario_migration(
+        CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+    )
+    retired = tuple(
+        item.source_path
+        for item in inventory.items
+        if item.disposition is paper1_contracts.MigrationDisposition.RETIRED
+        and item.source_path is not None
+    )
+    registration_payload = {
+        "schema_version": "1.0.0",
+        "source_raw_sha256": inventory.source_raw_sha256,
+        "target_registry": _v14_registry_payload(),
+        "accepted_retired_source_paths": retired,
+        "evidence_label": "synthetic_only",
+    }
+    registration = paper1_contracts.ScenarioMigrationRegistration.model_validate(
+        registration_payload
+    )
+    migrated = paper1_contracts.migrate_v13_scenario_document(
+        inventory, registration
+    )
+
+    assert migrated is not registration.target_registry
+    assert migrated.model_dump(mode="json") == registration.target_registry.model_dump(
+        mode="json"
+    )
+    incomplete = deepcopy(registration_payload)
+    incomplete["accepted_retired_source_paths"] = retired[:-1]
+    with pytest.raises((ValidationError, AlmondLabError)):
+        paper1_contracts.migrate_v13_scenario_document(
+            inventory,
+            paper1_contracts.ScenarioMigrationRegistration.model_validate(incomplete),
+        )
+
+
 def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> None:
     """Catches an implicit biological or measurement default in a scenario."""
     with pytest.raises(AlmondLabError) as exc_info:
-        SyntheticScenarioConfig.model_validate(
+        LegacySyntheticScenarioConfig.model_validate(
             {"scenario_id": "perfect_control", "evidence_label": "synthetic_only"}
         )
 
@@ -541,7 +1105,7 @@ def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> 
     assert exc_info.value.details == {
         "missing": ["forcing", "generator_parameters", "initial_state", "parameters"]
     }
-    scenarios = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")
+    scenarios = _load_legacy_synthetic_scenarios()
     assert {scenario.evidence_label.value for scenario in scenarios} <= {
         "synthetic_only",
         "hypothesis_prior",
@@ -550,7 +1114,7 @@ def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> 
 
 def test_synthetic_scenarios_expose_full_typed_biology_state_and_forcing() -> None:
     """Catches reintroduction of aggregate root stocks or hidden equation constants."""
-    scenario = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")[0]
+    scenario = _load_legacy_synthetic_scenarios()[0]
 
     assert isinstance(scenario.parameters, BiologyParameters)
     assert isinstance(scenario.initial_state, PlantState)
@@ -598,9 +1162,7 @@ def test_synthetic_scenario_document_rejects_nonexact_root_schema(
     expected_field_path: str,
 ) -> None:
     """Catches hidden, omitted, or non-string constants at the document root."""
-    payload = yaml.safe_load(
-        (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
-    )
+    payload = yaml.safe_load(LEGACY_SCENARIOS.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     if mutation == "missing":
         payload.pop("biology_parameters")
@@ -610,7 +1172,7 @@ def test_synthetic_scenario_document_rejects_nonexact_root_schema(
         payload[7] = "hidden"
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
+        _load_legacy_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
 
     assert exc_info.value.code == expected_code
     assert exc_info.value.field_path == expected_field_path
@@ -620,9 +1182,7 @@ def test_synthetic_scenario_document_validates_detached_template_schema(
     tmp_path: Path,
 ) -> None:
     """Catches an unregistered template constant hidden from valid expansions."""
-    payload = yaml.safe_load(
-        (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
-    )
+    payload = yaml.safe_load(LEGACY_SCENARIOS.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     scenarios = payload["scenarios"]
     assert isinstance(scenarios, list)
@@ -631,7 +1191,7 @@ def test_synthetic_scenario_document_validates_detached_template_schema(
     payload["biology_parameters"]["hidden_growth_constant"] = 1.25
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
+        _load_legacy_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
 
     assert exc_info.value.code == "UNREGISTERED_SYNTHETIC_PARAMETER"
     assert exc_info.value.field_path == "biology_parameters"
@@ -641,9 +1201,7 @@ def test_synthetic_scenario_document_requires_every_template_anchor_to_be_consum
     tmp_path: Path,
 ) -> None:
     """Catches a registered root template that no scenario actually consumes."""
-    payload = yaml.safe_load(
-        (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
-    )
+    payload = yaml.safe_load(LEGACY_SCENARIOS.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     scenarios = payload["scenarios"]
     assert isinstance(scenarios, list)
@@ -651,7 +1209,7 @@ def test_synthetic_scenario_document_requires_every_template_anchor_to_be_consum
         scenario["forcing"] = deepcopy(scenario["forcing"])
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
+        _load_legacy_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "forcing"
@@ -671,7 +1229,7 @@ def test_synthetic_scenario_yaml_rejects_duplicate_keys_before_merge_expansion(
     duplicate_key: str,
 ) -> None:
     """Catches duplicate YAML keys hidden at root, scenario, or merged nesting."""
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     if mutation == "root":
         source += "\nhidden_growth_constant: 1.0\nhidden_growth_constant: 2.0\n"
     elif mutation == "scenario":
@@ -691,7 +1249,7 @@ def test_synthetic_scenario_yaml_rejects_duplicate_keys_before_merge_expansion(
     malformed.write_text(source, encoding="utf-8")
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -703,7 +1261,7 @@ def test_synthetic_scenario_yaml_rejects_duplicate_explicit_merge_keys(
     tmp_path: Path,
 ) -> None:
     """Catches duplicate ``<<`` keys being skipped by unique-key validation."""
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     source = source.replace(
         "      <<: *biology_parameters\n",
         "      <<: *biology_parameters\n      <<: *biology_parameters\n",
@@ -713,7 +1271,7 @@ def test_synthetic_scenario_yaml_rejects_duplicate_explicit_merge_keys(
     malformed.write_text(source, encoding="utf-8")
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -725,7 +1283,7 @@ def test_synthetic_scenario_yaml_rejects_self_referential_merge_alias(
     tmp_path: Path,
 ) -> None:
     """Catches an alias cycle at a nested mapping before recursive construction."""
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     source = source.replace(
         "biology_parameters: &biology_parameters\n",
         "biology_parameters: &biology_parameters\n  <<: *biology_parameters\n",
@@ -735,7 +1293,7 @@ def test_synthetic_scenario_yaml_rejects_self_referential_merge_alias(
     malformed.write_text(source, encoding="utf-8")
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -747,7 +1305,7 @@ def test_synthetic_scenario_yaml_accepts_merge_sequence_with_explicit_override(
     tmp_path: Path,
 ) -> None:
     """Catches rejecting legal YAML precedence: explicit keys override merged keys."""
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     source = source.replace(
         "      <<: *biology_parameters\n",
         "      <<: [*biology_parameters, "
@@ -757,7 +1315,7 @@ def test_synthetic_scenario_yaml_accepts_merge_sequence_with_explicit_override(
     legal = tmp_path / "merge-sequence.yaml"
     legal.write_text(source, encoding="utf-8")
 
-    scenarios = load_synthetic_scenarios(legal)
+    scenarios = _load_legacy_synthetic_scenarios(legal)
 
     assert scenarios[1].parameters.root_na_permeability_l_cm2_h == 0.0
     assert scenarios[1].parameters.root_cl_permeability_l_cm2_h == 0.02
@@ -793,7 +1351,7 @@ def test_scenario_yaml_rejects_compact_exponential_merge_before_construction(
         record_construction,
     )
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert construction_calls == 0
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
@@ -819,7 +1377,7 @@ def test_scenario_yaml_accepts_exact_expanded_merge_pair_budget(
         encoding="utf-8",
     )
 
-    scenarios = load_synthetic_scenarios(fixture)
+    scenarios = _load_legacy_synthetic_scenarios(fixture)
 
     assert scenarios[1].parameters.root_area_cm2 == 10.0
     assert scenarios[1].parameters.root_na_permeability_l_cm2_h == 0.0
@@ -841,7 +1399,7 @@ def test_scenario_yaml_rejects_expanded_merge_pair_limit_plus_one(
     )
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(fixture)
+        _load_legacy_synthetic_scenarios(fixture)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -856,7 +1414,7 @@ def test_synthetic_scenario_yaml_translates_malformed_parser_input(
     malformed.write_text("scenarios: [\n", encoding="utf-8")
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -868,7 +1426,7 @@ def test_synthetic_scenario_yaml_rejects_non_string_mapping_keys_before_schema(
     tmp_path: Path,
 ) -> None:
     """Catches mixed bool/string keys reaching set sorting or schema coercion."""
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     malformed = tmp_path / "mixed-key-scenario.yaml"
     malformed.write_text(
         source + "true: shadow\nextra_string: other\n",
@@ -876,7 +1434,7 @@ def test_synthetic_scenario_yaml_rejects_non_string_mapping_keys_before_schema(
     )
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -892,12 +1450,12 @@ def test_synthetic_scenario_yaml_rejects_graph_beyond_code_owned_depth_limit(
 
     depth = biology_surrogate.MAX_YAML_DEPTH + 1
     nested = "[" * depth + "0" + "]" * depth
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     malformed = tmp_path / "scenario-depth.yaml"
     malformed.write_text(source + f"extra: {nested}\n", encoding="utf-8")
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -912,7 +1470,7 @@ def test_synthetic_scenario_yaml_rejects_alias_expansion_bomb(tmp_path: Path) ->
     aliases = ", ".join(
         "*unit" for _ in range(biology_surrogate.MAX_YAML_ALIAS_REFERENCES + 1)
     )
-    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = LEGACY_SCENARIOS.read_text(encoding="utf-8")
     malformed = tmp_path / "scenario-alias-bomb.yaml"
     malformed.write_text(
         source + f"unit: &unit [1]\nbomb: [{aliases}]\n",
@@ -920,7 +1478,7 @@ def test_synthetic_scenario_yaml_rejects_alias_expansion_bomb(tmp_path: Path) ->
     )
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -937,7 +1495,7 @@ def test_synthetic_scenario_yaml_translates_depth_1500_recursion_failure(
     malformed.write_text(f"extra: {nested}\n", encoding="utf-8")
 
     with pytest.raises(AlmondLabError) as exc_info:
-        load_synthetic_scenarios(malformed)
+        _load_legacy_synthetic_scenarios(malformed)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
     assert exc_info.value.field_path == "yaml"
@@ -949,7 +1507,7 @@ def test_synthetic_scenario_yaml_translates_depth_1500_recursion_failure(
 
 
 def _scenario_payload() -> dict[str, object]:
-    raw = yaml.safe_load((CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8"))
+    raw = yaml.safe_load(LEGACY_SCENARIOS.read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     scenarios = raw["scenarios"]
     assert isinstance(scenarios, list)
@@ -977,7 +1535,7 @@ def test_synthetic_scenario_rejects_coercive_nonfinite_and_overflow_inputs(
     payload[section][field_name] = invalid_value
 
     with pytest.raises(AlmondLabError) as exc_info:
-        SyntheticScenarioConfig.model_validate(payload)
+        LegacySyntheticScenarioConfig.model_validate(payload)
 
     assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
 
@@ -997,7 +1555,7 @@ def test_synthetic_scenario_rejects_unregistered_parameter(
     payload[section][field_name] = 1.25
 
     with pytest.raises(AlmondLabError) as exc_info:
-        SyntheticScenarioConfig.model_validate(payload)
+        LegacySyntheticScenarioConfig.model_validate(payload)
 
     assert exc_info.value.code == "UNREGISTERED_SYNTHETIC_PARAMETER"
     assert exc_info.value.field_path == section
@@ -1006,11 +1564,11 @@ def test_synthetic_scenario_rejects_unregistered_parameter(
 
 def test_synthetic_scenario_revalidates_model_copy_and_nested_maps_are_deeply_frozen() -> None:
     """Catches Pydantic model-copy bypass or mutation of canonical stock maps."""
-    scenario = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")[0]
+    scenario = _load_legacy_synthetic_scenarios()[0]
     malformed = scenario.model_copy(update={"generator_parameters": {"plant_variance": True}})
 
     with pytest.raises(AlmondLabError) as exc_info:
-        SyntheticScenarioConfig.model_validate(malformed)
+        LegacySyntheticScenarioConfig.model_validate(malformed)
     with pytest.raises(TypeError):
         scenario.initial_state.network_state.compartments["root-zone"].stocks[
             ConservedEntity.NA
@@ -1060,7 +1618,7 @@ def test_public_contracts_have_only_registered_labels_and_no_forbidden_output_ke
 
     registry = load_candidate_specs(CONFIGS / "candidates.yaml")
     design = load_paper1_design(CONFIGS / "experiment_paper1.yaml")
-    scenarios = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")
+    scenarios = _load_legacy_synthetic_scenarios()
 
     def serialized_field_names(value: object) -> set[str]:
         if isinstance(value, dict):
