@@ -63,3 +63,20 @@ Text: no paragraphs or tiny typography; only large simple equipment abbreviation
 Constraints: scientifically plausible closed water and salt loops; dwarf almond trees; every saline stream contained; separate product, drainage, condensate, and brine paths; no roots in native soil; no open wastewater channel.
 Avoid: claims of proven seawater tolerance, giant orchard trees, open-field irrigation, salt dumped on land, fantasy machinery, people, logos, watermarks, illegible dense labels.
 ```
+
+## 05 — Replicated experimental bay, version 3
+
+```text
+Use case: scientific-educational
+Asset type: publication concept figure and public-facing research demo
+Primary request: Create a highly realistic architectural cutaway visualization of a contained coastal research greenhouse for miniature almond trees, showing how a scientifically controlled salt-tolerance GMO screening experiment would physically look. This is a hypothetical research facility, not a proven crop system.
+Scene/backdrop: bright California coastal research campus; greenhouse interior shown in an oblique wide cutaway, with a small exterior water-treatment service bay visible through one transparent wall.
+Subject: two parallel rows of compact flowering mini almond trees, each about 1.3-1.6 meters tall, in individual white sealed 40-liter root-zone containers seated inside secondary containment trays. Divide the rows into clearly separated experimental blocks: one non-engineered control block and six hypothesis blocks labeled only "CONTROL", "C1", "C2", "C3", "C4", "C5", "C6". Show multiple replicate trees per block, not one specimen. Include randomized block markers, small barcode tags, root-zone EC probes, Na/Cl sampling ports, sap-flow sensors, leaf-temperature cameras, drainage meters, overhead climate sensors, and a compact autonomous pollination-bee enclosure.
+Water system: raw seawater pipe enters a reverse-osmosis pretreatment skid outside the crop bay; the crops receive only a separate cyan clean-water/remineralized irrigation line. Every container drains through a green return line to a covered drain tank. A separate amber concentrate line goes only to an isolated bunded brine tank. Make the separation of these four streams unmistakable. Include a condensate recovery pipe from greenhouse dehumidification back to the clean-water tank. No salty discharge to floor or soil.
+Composition/framing: wide 16:9 hero view, clean isometric-leaning photorealistic cutaway with enough detail to understand the research workflow; visual emphasis on experimental replication and containment. Use a small, clean legend at lower right with exact labels: "SEAWATER FEED", "TREATED WATER", "DRAIN RETURN", "BRINE CONCENTRATE", "SENSORS".
+Lighting/mood: optimistic daylight, credible modern university research facility, precise and calm.
+Color palette: navy seawater, cyan treated water, green drainage return, amber brine concentrate, magenta sensor icons.
+Text (verbatim): "CONTAINED MINI-ALMOND SALINITY RESEARCH"; "CONTROL"; "C1"; "C2"; "C3"; "C4"; "C5"; "C6"; "SEAWATER FEED"; "TREATED WATER"; "DRAIN RETURN"; "BRINE CONCENTRATE"; "SENSORS"; "CONCEPT — BIOLOGICAL PERFORMANCE UNPROVEN"
+Constraints: raw seawater must never connect to plant pots; brine line must never connect to drain return; drainage must be visibly captured; no roots in open ground; no claim of successful seawater growth; show physically plausible plumbing, service access, repeated experimental units, and sensor instrumentation. All trees should be almonds, compact but botanically plausible, with a mixture of leaves, blossoms, and a few developing hulls.
+Avoid: fantasy giant fruit, submerged plants, seawater poured on roots, open salty soil, broken pipes, unlabeled mixed streams, single-tree showcase, gene-editing laboratory imagery, DNA helices, people in hazmat suits, misleading yield claims, logos, watermarks.
+```
