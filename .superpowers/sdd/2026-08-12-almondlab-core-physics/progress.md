@@ -8,4 +8,4 @@ Task 2: complete (commits ce2a5ac..43e2dcb excluding independent visual commit e
 Task 3: fix round 1/5 (1 addressed, 0 open — explicit weak-label extrapolation only; commits 97efc12..416b71b)
 Task 3: complete (commits 43e2dcb..416b71b excluding visual-policy commit e54d7fa, review clean)
 Task 4: complete (finite-volume engine, paired transaction audit, per-compartment reconciliation, provenance, analytic fixtures; commits through 1628981, scoped re-review clean)
-Task 5: fix round 2/5 addressed — pending scoped re-review (T3 stop provenance preserved; T20 independent nonzero transfer/RO/blend branch oracles and mutation tests added; unsupported adjustment bound removed; malformed hydraulic inputs normalized; commit pending)
+Task 5: complete (osmotic/hydraulic gate, labeled stops, atomic verification, independent acceptance oracles 1–5/13/19–20; implementation and fixes through e8f7c45, scoped re-review clean)
