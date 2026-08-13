@@ -11,3 +11,4 @@
 /data/candidate_registry.csv text eol=lf
 /data/evidence_registry.csv text eol=lf
 /data/reference_chemistry.csv text eol=lf
+/scripts/registration/task4_registration_hash_materializer.py text eol=lf
