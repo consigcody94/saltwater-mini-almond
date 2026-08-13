@@ -1,0 +1,22 @@
+schema_version: "1.0.0"
+evidence_label: hypothesis_prior
+interpretation: synthetic_design_input_only
+candidates:
+  C1:
+    na_efflux_vmax_multiplier: 1.35
+    atp_cost_per_na: 2.40
+  C2:
+    ros_clearance_multiplier: 1.50
+    redox_growth_penalty: 0.015
+  C3:
+    mannitol_vmax_multiplier: 1.40
+    mannitol_carbon_cost: 0.50
+  C4:
+    na_efflux_vmax_multiplier: 1.30
+    xylem_loading_leak_multiplier: 1.20
+  C5:
+    xylem_na_retrieval_multiplier: 1.50
+    root_na_injury_multiplier: 1.10
+  C6:
+    sos_efflux_activation_multiplier: 1.25
+    cipk_pleiotropy_penalty: 0.025

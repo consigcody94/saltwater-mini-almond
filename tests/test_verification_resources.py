@@ -10,6 +10,7 @@ CANONICAL_FIXTURES = frozenset(
     {
         "all_conserved_entities.yaml",
         "chained_transaction_ids.yaml",
+        "candidate_effects.yaml",
         "chemistry_handcheck.yaml",
         "conservation_case_manifest.candidates.json",
         "conservation_case_manifest.yaml",

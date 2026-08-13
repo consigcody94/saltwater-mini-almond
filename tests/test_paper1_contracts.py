@@ -3,8 +3,11 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
+from almondlab.biology_surrogate import BiologyParameters, PlantState, RootZoneForcing
+from almondlab.contracts import CompartmentKind, ConservedEntity
 from almondlab.errors import AlmondLabError
 from almondlab.paper1_contracts import (
     AnalysisPopulation,
@@ -154,6 +157,14 @@ def test_candidate_registry_matches_independent_v13_identity_oracle() -> None:
     }
 
     assert actual == EXPECTED_CANDIDATE_IDENTITIES
+
+
+def test_candidate_nested_gate_mapping_is_deeply_immutable() -> None:
+    """Catches mutation of a gate after frozen CandidateSpec validation."""
+    candidate = load_candidate_specs(CONFIGS / "candidates.yaml").candidates[0]
+
+    with pytest.raises(TypeError):
+        candidate.gates["sequence_build"] = "blocked"  # type: ignore[index]
 
 
 @pytest.mark.parametrize("candidate_id", ["C1", "C2", "C3", "C4", "C5", "C6"])
@@ -395,7 +406,9 @@ def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> 
         )
 
     assert exc_info.value.code == "INCOMPLETE_SYNTHETIC_SCENARIO"
-    assert "root_na_permeability" in exc_info.value.details["missing"]
+    assert exc_info.value.details == {
+        "missing": ["forcing", "generator_parameters", "initial_state", "parameters"]
+    }
     scenarios = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")
     assert {scenario.evidence_label.value for scenario in scenarios} <= {
         "synthetic_only",
@@ -403,18 +416,121 @@ def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> 
     }
 
 
-def test_synthetic_scenario_rejects_unregistered_numeric_parameter() -> None:
-    """Catches a hidden generator knob outside the frozen parameter keyspace."""
+def test_synthetic_scenarios_expose_full_typed_biology_state_and_forcing() -> None:
+    """Catches reintroduction of aggregate root stocks or hidden equation constants."""
     scenario = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")[0]
-    payload = deepcopy(scenario.model_dump(mode="json"))
-    payload["parameters"]["unregistered_growth_magic"] = 1.25
+
+    assert isinstance(scenario.parameters, BiologyParameters)
+    assert isinstance(scenario.initial_state, PlantState)
+    assert isinstance(scenario.forcing, RootZoneForcing)
+    assert scenario.parameters.schema_version == "1.3.0"
+    assert scenario.parameters.shoot_partition_fraction == 1.0
+    assert scenario.forcing.hydraulic_domain.purpose == "model_applicability"
+    assert scenario.initial_state.network_state.tracked_entities >= {
+        ConservedEntity.NA,
+        ConservedEntity.CL,
+        ConservedEntity.K,
+    }
+    assert {
+        item.kind for item in scenario.initial_state.network_state.compartments.values()
+    } >= {
+        CompartmentKind.ROOT_ZONE,
+        CompartmentKind.ROOT_APOPLAST,
+        CompartmentKind.ROOT_SYMPLAST,
+        CompartmentKind.ROOT_VACUOLE,
+        CompartmentKind.XYLEM,
+        CompartmentKind.SHOOT_TISSUE,
+    }
+    with pytest.raises(TypeError):
+        scenario.generator_parameters["plant_variance"] = 100.0  # type: ignore[index]
+
+
+def _scenario_payload() -> dict[str, object]:
+    raw = yaml.safe_load((CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8"))
+    assert isinstance(raw, dict)
+    scenarios = raw["scenarios"]
+    assert isinstance(scenarios, list)
+    return deepcopy(scenarios[0])
+
+
+@pytest.mark.parametrize(
+    ("section", "field_name", "invalid_value"),
+    [
+        ("parameters", "root_area_cm2", True),
+        ("parameters", "root_area_cm2", "10.0"),
+        ("parameters", "root_area_cm2", float("nan")),
+        ("parameters", "root_area_cm2", 10**10000),
+        ("initial_state", "biomass_g", object()),
+        ("forcing", "apar_mol_h", float("inf")),
+        ("generator_parameters", "plant_variance", False),
+    ],
+    ids=["bool", "string", "nan", "overflow", "object", "infinity", "nested-bool"],
+)
+def test_synthetic_scenario_rejects_coercive_nonfinite_and_overflow_inputs(
+    section: str, field_name: str, invalid_value: object
+) -> None:
+    """Catches bool/string/object/nonfinite/copy-bypass at scenario boundaries."""
+    payload = _scenario_payload()
+    payload[section][field_name] = invalid_value
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        SyntheticScenarioConfig.model_validate(payload)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("section", "field_name"),
+    [
+        ("parameters", "unregistered_growth_magic"),
+        ("generator_parameters", "unregistered_growth_magic"),
+    ],
+)
+def test_synthetic_scenario_rejects_unregistered_parameter(
+    section: str, field_name: str
+) -> None:
+    """Catches a hidden generator knob outside either frozen keyspace."""
+    payload = _scenario_payload()
+    payload[section][field_name] = 1.25
 
     with pytest.raises(AlmondLabError) as exc_info:
         SyntheticScenarioConfig.model_validate(payload)
 
     assert exc_info.value.code == "UNREGISTERED_SYNTHETIC_PARAMETER"
-    assert exc_info.value.field_path == "parameters"
-    assert exc_info.value.details == {"extra": ["unregistered_growth_magic"]}
+    assert exc_info.value.field_path == section
+    assert exc_info.value.details == {"extra": [field_name]}
+
+
+def test_synthetic_scenario_revalidates_model_copy_and_nested_maps_are_deeply_frozen() -> None:
+    """Catches Pydantic model-copy bypass or mutation of canonical stock maps."""
+    scenario = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")[0]
+    malformed = scenario.model_copy(update={"generator_parameters": {"plant_variance": True}})
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        SyntheticScenarioConfig.model_validate(malformed)
+    with pytest.raises(TypeError):
+        scenario.initial_state.network_state.compartments["root-zone"].stocks[
+            ConservedEntity.NA
+        ] = 0.0  # type: ignore[index]
+
+    assert exc_info.value.code in {
+        "INCOMPLETE_SYNTHETIC_SCENARIO",
+        "SYNTHETIC_SCENARIO_INVALID",
+    }
+
+
+def test_legacy_aggregate_biology_keys_are_absent_from_scenario_config() -> None:
+    """Catches silent restoration of pre-addendum aggregate model knobs."""
+    payload = _scenario_payload()
+    registered_names = set(payload["parameters"]) | set(payload["forcing"])
+
+    assert {
+        "root_na_permeability",
+        "root_water_conductivity",
+        "na_efflux_capacity",
+        "root_na_initial_stock",
+        "forcing_ecw_ds_m",
+    }.isdisjoint(registered_names)
 
 
 def test_public_contracts_have_only_registered_labels_and_no_forbidden_output_keys() -> None:

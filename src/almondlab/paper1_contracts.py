@@ -1,15 +1,30 @@
 """Frozen Paper 1 registry, allocation, and synthetic-input contracts."""
 
+from collections.abc import Mapping, Sequence
+from dataclasses import fields, replace
 from enum import StrEnum
 from math import isclose, log
 from pathlib import Path
-from typing import Literal
+from types import MappingProxyType
+from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SkipValidation,
+    field_serializer,
+    model_serializer,
+    model_validator,
+)
 
-from almondlab.contracts import EvidenceLabel
-from almondlab.errors import fail
+from almondlab.biology_surrogate import BiologyParameters, PlantState, RootZoneForcing
+from almondlab.contracts import CompartmentKind, ConservedEntity, EvidenceLabel
+from almondlab.errors import AlmondLabError, fail, finite_float
+from almondlab.evidence_policy import compose_evidence_labels
+from almondlab.hydraulics import HydraulicDomain
+from almondlab.mass_balance import CompartmentState, NetworkState
 from almondlab.schemas import WaterChemistry
 
 
@@ -167,7 +182,7 @@ class CandidateSpec(StrictPaper1Model):
     evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
     primary_parameter_id: str = Field(min_length=1)
     h3_rule: H3Rule
-    gates: dict[str, Literal["required", "blocked"]]
+    gates: Mapping[str, Literal["required", "blocked"]]
     risk_warning: str = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -202,7 +217,16 @@ class CandidateSpec(StrictPaper1Model):
                 f"candidate {self.candidate_id} does not match frozen v1.3 fields: "
                 f"{sorted(mismatches)}"
             )
+        object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
         return self
+
+    @field_serializer("gates")
+    def serialize_gates(
+        self, gates: Mapping[str, Literal["required", "blocked"]]
+    ) -> dict[str, Literal["required", "blocked"]]:
+        """Preserve the JSON contract while retaining a read-only runtime map."""
+
+        return dict(gates)
 
     @property
     def h3(self) -> H3Rule:
@@ -349,35 +373,16 @@ class Paper1DesignConfig(StrictPaper1Model):
         return self
 
 
-REQUIRED_SYNTHETIC_SCENARIO_KEYS = frozenset(
+REQUIRED_SYNTHETIC_SCENARIO_SECTIONS = frozenset(
+    {"parameters", "initial_state", "forcing", "generator_parameters"}
+)
+REQUIRED_BIOLOGY_PARAMETER_KEYS = frozenset(
+    field.name for field in fields(BiologyParameters)
+)
+REQUIRED_INITIAL_STATE_KEYS = frozenset(field.name for field in fields(PlantState))
+REQUIRED_FORCING_KEYS = frozenset(field.name for field in fields(RootZoneForcing))
+REQUIRED_GENERATOR_PARAMETER_KEYS = frozenset(
     {
-        "root_na_permeability",
-        "root_cl_permeability",
-        "root_k_permeability",
-        "root_water_conductivity",
-        "na_efflux_capacity",
-        "hkt_retrieval_capacity",
-        "mannitol_synthesis_capacity",
-        "apx_capacity",
-        "sos2_kinase_capacity",
-        "na_influx_km",
-        "mannitol_km",
-        "mannitol_turnover_rate",
-        "biomass_loss_rate",
-        "senescence_rate",
-        "atp_per_na_efflux",
-        "carbon_cost_per_mannitol",
-        "apx_energy_cost",
-        "cipk_energy_cost",
-        "biomass_conversion",
-        "root_na_initial_stock",
-        "root_cl_initial_stock",
-        "root_k_initial_stock",
-        "initial_biomass",
-        "initial_canopy_area",
-        "forcing_ecw_ds_m",
-        "forcing_temperature_k",
-        "forcing_osmolality_osmol_kg",
         "run_variance",
         "batch_variance",
         "reservoir_variance",
@@ -393,34 +398,394 @@ REQUIRED_SYNTHETIC_SCENARIO_KEYS = frozenset(
 )
 
 
+def _scenario_invalid(
+    message: str,
+    field_path: str,
+    *,
+    cause: Exception | None = None,
+) -> None:
+    details = None
+    if cause is not None:
+        details = {"cause_type": type(cause).__name__}
+        if isinstance(cause, AlmondLabError):
+            details.update(
+                {"cause_code": cause.code, "cause_field_path": cause.field_path}
+            )
+    fail("SYNTHETIC_SCENARIO_INVALID", message, field_path, details)
+
+
+def _exact_scenario_keys(
+    supplied: object,
+    expected: frozenset[str],
+    field_path: str,
+) -> Mapping[str, object]:
+    if not isinstance(supplied, Mapping):
+        _scenario_invalid("section must be a mapping", field_path)
+    names = set(supplied)
+    if any(not isinstance(name, str) for name in names):
+        _scenario_invalid("section keys must be strings", field_path)
+    missing = sorted(expected - names)
+    if missing:
+        fail(
+            "INCOMPLETE_SYNTHETIC_SCENARIO",
+            "synthetic scenario omits registered inputs",
+            field_path,
+            {"missing": missing},
+        )
+    extra = sorted(names - expected)
+    if extra:
+        fail(
+            "UNREGISTERED_SYNTHETIC_PARAMETER",
+            "synthetic scenario contains unregistered inputs",
+            field_path,
+            {"extra": extra},
+        )
+    return supplied
+
+
+def _evidence(value: object, field_path: str) -> EvidenceLabel:
+    try:
+        label = value if isinstance(value, EvidenceLabel) else EvidenceLabel(value)
+    except (TypeError, ValueError) as error:
+        _scenario_invalid("evidence label is invalid", field_path, cause=error)
+    if label not in {EvidenceLabel.HYPOTHESIS_PRIOR, EvidenceLabel.SYNTHETIC_ONLY}:
+        _scenario_invalid(
+            "scenario evidence must be hypothesis_prior or synthetic_only",
+            field_path,
+        )
+    return label
+
+
+def _entity(value: object, field_path: str) -> ConservedEntity:
+    try:
+        return value if isinstance(value, ConservedEntity) else ConservedEntity(value)
+    except (TypeError, ValueError) as error:
+        _scenario_invalid("conserved entity is invalid", field_path, cause=error)
+
+
+def _compartment_kind(value: object, field_path: str) -> CompartmentKind:
+    try:
+        return value if isinstance(value, CompartmentKind) else CompartmentKind(value)
+    except (TypeError, ValueError) as error:
+        _scenario_invalid("compartment kind is invalid", field_path, cause=error)
+
+
+def _network_state(value: object, field_path: str) -> NetworkState:
+    if isinstance(value, NetworkState):
+        raw_compartments: object = value.compartments
+        raw_entities: object = value.tracked_entities
+        raw_label: object = value.evidence_label
+    else:
+        mapping = _exact_scenario_keys(
+            value,
+            frozenset({"compartments", "tracked_entities", "evidence_label"}),
+            field_path,
+        )
+        raw_compartments = mapping["compartments"]
+        raw_entities = mapping["tracked_entities"]
+        raw_label = mapping["evidence_label"]
+    if not isinstance(raw_compartments, Mapping) or not raw_compartments:
+        _scenario_invalid("network compartments must be a nonempty mapping", f"{field_path}.compartments")
+    compartments: dict[str, CompartmentState] = {}
+    compartment_keys = frozenset(field.name for field in fields(CompartmentState))
+    for raw_id, raw_compartment in raw_compartments.items():
+        if not isinstance(raw_id, str):
+            _scenario_invalid("compartment IDs must be strings", f"{field_path}.compartments")
+        if isinstance(raw_compartment, CompartmentState):
+            item = {
+                field.name: getattr(raw_compartment, field.name)
+                for field in fields(CompartmentState)
+            }
+        else:
+            item = dict(
+                _exact_scenario_keys(
+                    raw_compartment,
+                    compartment_keys,
+                    f"{field_path}.compartments.{raw_id}",
+                )
+            )
+        stocks = item["stocks"]
+        if not isinstance(stocks, Mapping):
+            _scenario_invalid("stocks must be a mapping", f"{field_path}.compartments.{raw_id}.stocks")
+        typed_stocks: dict[ConservedEntity, object] = {}
+        for raw_entity, amount in stocks.items():
+            entity = _entity(
+                raw_entity,
+                f"{field_path}.compartments.{raw_id}.stocks",
+            )
+            typed_stocks[entity] = amount
+        try:
+            compartments[raw_id] = CompartmentState(
+                compartment_id=item["compartment_id"],
+                kind=_compartment_kind(
+                    item["kind"], f"{field_path}.compartments.{raw_id}.kind"
+                ),
+                loop_id=item["loop_id"],
+                volume_l=item["volume_l"],
+                water_mass_kg=item["water_mass_kg"],
+                empty_reference_density_kg_l=item[
+                    "empty_reference_density_kg_l"
+                ],
+                stocks=typed_stocks,
+                evidence_label=_evidence(
+                    item["evidence_label"],
+                    f"{field_path}.compartments.{raw_id}.evidence_label",
+                ),
+            )
+        except AlmondLabError as error:
+            _scenario_invalid(
+                "network compartment is invalid",
+                f"{field_path}.compartments.{raw_id}",
+                cause=error,
+            )
+    if isinstance(raw_entities, (str, bytes, Mapping)) or not isinstance(
+        raw_entities, (Sequence, set, frozenset)
+    ):
+        _scenario_invalid("tracked_entities must be a sequence", f"{field_path}.tracked_entities")
+    tracked = frozenset(
+        _entity(item, f"{field_path}.tracked_entities") for item in raw_entities
+    )
+    try:
+        return NetworkState(
+            compartments=compartments,
+            tracked_entities=tracked,
+            evidence_label=_evidence(raw_label, f"{field_path}.evidence_label"),
+        )
+    except AlmondLabError as error:
+        _scenario_invalid("network state is invalid", field_path, cause=error)
+
+
+def _biology_parameters(value: object) -> BiologyParameters:
+    if isinstance(value, BiologyParameters):
+        try:
+            return replace(value)
+        except AlmondLabError as error:
+            _scenario_invalid("biology parameters are invalid", "parameters", cause=error)
+    mapping = _exact_scenario_keys(
+        value, REQUIRED_BIOLOGY_PARAMETER_KEYS, "parameters"
+    )
+    payload = dict(mapping)
+    payload["evidence_label"] = _evidence(
+        payload["evidence_label"], "parameters.evidence_label"
+    )
+    try:
+        return BiologyParameters(**payload)
+    except (AlmondLabError, TypeError, ValueError) as error:
+        _scenario_invalid("biology parameters are invalid", "parameters", cause=error)
+
+
+def _initial_state(value: object) -> PlantState:
+    if isinstance(value, PlantState):
+        try:
+            return replace(value)
+        except AlmondLabError as error:
+            _scenario_invalid("initial plant state is invalid", "initial_state", cause=error)
+    mapping = _exact_scenario_keys(value, REQUIRED_INITIAL_STATE_KEYS, "initial_state")
+    payload = dict(mapping)
+    payload["network_state"] = _network_state(
+        payload["network_state"], "initial_state.network_state"
+    )
+    payload["evidence_label"] = _evidence(
+        payload["evidence_label"], "initial_state.evidence_label"
+    )
+    try:
+        return PlantState(**payload)
+    except (AlmondLabError, TypeError, ValueError) as error:
+        _scenario_invalid("initial plant state is invalid", "initial_state", cause=error)
+
+
+def _hydraulic_domain(value: object) -> HydraulicDomain:
+    if isinstance(value, HydraulicDomain):
+        payload: object = value.model_dump(mode="python")
+    else:
+        payload = value
+    try:
+        return HydraulicDomain.model_validate(payload)
+    except Exception as error:
+        _scenario_invalid("hydraulic domain is invalid", "forcing.hydraulic_domain", cause=error)
+
+
+def _forcing(value: object) -> RootZoneForcing:
+    if isinstance(value, RootZoneForcing):
+        try:
+            return replace(value)
+        except AlmondLabError as error:
+            _scenario_invalid("root-zone forcing is invalid", "forcing", cause=error)
+    mapping = _exact_scenario_keys(value, REQUIRED_FORCING_KEYS, "forcing")
+    payload = dict(mapping)
+    payload["evidence_label"] = _evidence(
+        payload["evidence_label"], "forcing.evidence_label"
+    )
+    payload["hydraulic_domain"] = _hydraulic_domain(payload["hydraulic_domain"])
+    try:
+        return RootZoneForcing(**payload)
+    except (AlmondLabError, TypeError, ValueError) as error:
+        _scenario_invalid("root-zone forcing is invalid", "forcing", cause=error)
+
+
+def _generator_parameters(value: object) -> Mapping[str, float]:
+    mapping = _exact_scenario_keys(
+        value, REQUIRED_GENERATOR_PARAMETER_KEYS, "generator_parameters"
+    )
+    copied: dict[str, float] = {}
+    for name, raw_value in mapping.items():
+        try:
+            copied[name] = finite_float(
+                raw_value,
+                code="SYNTHETIC_SCENARIO_INVALID",
+                field_path=f"generator_parameters.{name}",
+                nonnegative=name != "missingness_intercept",
+                positive=name == "duration_days",
+            )
+        except AlmondLabError:
+            raise
+    return MappingProxyType(copied)
+
+
 class SyntheticScenarioConfig(StrictPaper1Model):
+    """Every synthetic generator input, including typed biology state/forcing."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+        arbitrary_types_allowed=True,
+        revalidate_instances="always",
+    )
+
     scenario_id: str = Field(min_length=1)
-    schema_version: str = Field(default="1.0.0", min_length=1)
-    evidence_label: Literal[EvidenceLabel.SYNTHETIC_ONLY, EvidenceLabel.HYPOTHESIS_PRIOR]
-    parameters: dict[str, float] = Field(default_factory=dict)
+    schema_version: str = Field(min_length=1)
+    evidence_label: Literal[
+        EvidenceLabel.SYNTHETIC_ONLY, EvidenceLabel.HYPOTHESIS_PRIOR
+    ]
+    parameters: Annotated[BiologyParameters, SkipValidation]
+    initial_state: Annotated[PlantState, SkipValidation]
+    forcing: Annotated[RootZoneForcing, SkipValidation]
+    generator_parameters: Mapping[str, float]
 
     @model_validator(mode="before")
     @classmethod
-    def reject_incomplete_scenario(cls, values: object) -> object:
-        parameters = values.get("parameters", {}) if isinstance(values, dict) else {}
-        parameter_names = set(parameters) if isinstance(parameters, dict) else set()
-        missing = sorted(REQUIRED_SYNTHETIC_SCENARIO_KEYS - parameter_names)
+    def validate_complete_scenario(cls, values: object) -> object:
+        if isinstance(values, SyntheticScenarioConfig):
+            supplied: dict[str, object] = {
+                "scenario_id": values.scenario_id,
+                "schema_version": values.schema_version,
+                "evidence_label": values.evidence_label,
+                "parameters": values.parameters,
+                "initial_state": values.initial_state,
+                "forcing": values.forcing,
+                "generator_parameters": values.generator_parameters,
+            }
+        elif isinstance(values, Mapping):
+            supplied = dict(values)
+        else:
+            _scenario_invalid("synthetic scenario must be a mapping", "scenario")
+        missing = sorted(REQUIRED_SYNTHETIC_SCENARIO_SECTIONS - set(supplied))
         if missing:
             fail(
                 "INCOMPLETE_SYNTHETIC_SCENARIO",
-                "synthetic scenario omits registered generator inputs",
-                "parameters",
+                "synthetic scenario omits registered sections",
+                "scenario",
                 {"missing": missing},
             )
-        extra = sorted(parameter_names - REQUIRED_SYNTHETIC_SCENARIO_KEYS)
-        if extra:
+        supplied["parameters"] = _biology_parameters(supplied["parameters"])
+        supplied["initial_state"] = _initial_state(supplied["initial_state"])
+        supplied["forcing"] = _forcing(supplied["forcing"])
+        supplied["generator_parameters"] = _generator_parameters(
+            supplied["generator_parameters"]
+        )
+        return supplied
+
+    @model_validator(mode="after")
+    def require_conservative_evidence(self) -> "SyntheticScenarioConfig":
+        composed = compose_evidence_labels(
+            self.parameters.evidence_label,
+            self.initial_state.evidence_label,
+            self.forcing.evidence_label,
+        )
+        if self.evidence_label is not composed:
             fail(
-                "UNREGISTERED_SYNTHETIC_PARAMETER",
-                "synthetic scenario contains unregistered generator inputs",
-                "parameters",
-                {"extra": extra},
+                "SYNTHETIC_SCENARIO_INVALID",
+                "scenario evidence must equal its conservatively composed inputs",
+                "evidence_label",
+                {"expected": composed.value, "received": self.evidence_label.value},
             )
-        return values
+        object.__setattr__(
+            self, "generator_parameters", MappingProxyType(dict(self.generator_parameters))
+        )
+        return self
+
+    @model_serializer(mode="plain")
+    def serialize_registered_inputs(self) -> dict[str, object]:
+        """Emit plain JSON-compatible fields without exposing immutable proxies."""
+
+        parameters = {
+            field.name: (
+                getattr(self.parameters, field.name).value
+                if isinstance(getattr(self.parameters, field.name), EvidenceLabel)
+                else getattr(self.parameters, field.name)
+            )
+            for field in fields(BiologyParameters)
+        }
+        compartments = {
+            compartment_id: {
+                "compartment_id": compartment.compartment_id,
+                "kind": compartment.kind.value,
+                "loop_id": compartment.loop_id,
+                "volume_l": compartment.volume_l,
+                "water_mass_kg": compartment.water_mass_kg,
+                "empty_reference_density_kg_l": (
+                    compartment.empty_reference_density_kg_l
+                ),
+                "stocks": {
+                    entity.value: amount
+                    for entity, amount in compartment.stocks.items()
+                },
+                "evidence_label": compartment.evidence_label.value,
+            }
+            for compartment_id, compartment in (
+                self.initial_state.network_state.compartments.items()
+            )
+        }
+        initial_state = {
+            field.name: getattr(self.initial_state, field.name)
+            for field in fields(PlantState)
+            if field.name not in {"network_state", "evidence_label"}
+        }
+        initial_state.update(
+            {
+                "network_state": {
+                    "compartments": compartments,
+                    "tracked_entities": sorted(
+                        entity.value
+                        for entity in self.initial_state.network_state.tracked_entities
+                    ),
+                    "evidence_label": (
+                        self.initial_state.network_state.evidence_label.value
+                    ),
+                },
+                "evidence_label": self.initial_state.evidence_label.value,
+            }
+        )
+        forcing = {
+            field.name: (
+                self.forcing.hydraulic_domain.model_dump(mode="json")
+                if field.name == "hydraulic_domain"
+                else getattr(self.forcing, field.name).value
+                if isinstance(getattr(self.forcing, field.name), EvidenceLabel)
+                else getattr(self.forcing, field.name)
+            )
+            for field in fields(RootZoneForcing)
+        }
+        return {
+            "scenario_id": self.scenario_id,
+            "schema_version": self.schema_version,
+            "evidence_label": self.evidence_label.value,
+            "parameters": parameters,
+            "initial_state": initial_state,
+            "forcing": forcing,
+            "generator_parameters": dict(self.generator_parameters),
+        }
 
 
 def _load_yaml_mapping(path: str | Path) -> dict[str, object]:

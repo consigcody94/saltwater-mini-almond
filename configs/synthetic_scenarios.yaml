@@ -1,32 +1,177 @@
-# Versioned hypothesis inputs for virtual operating-characteristic work only.
-scenario_parameters: &scenario_parameters
-  root_na_permeability: 0.12
-  root_cl_permeability: 0.10
-  root_k_permeability: 0.08
-  root_water_conductivity: 0.50
-  na_efflux_capacity: 0.25
-  hkt_retrieval_capacity: 0.20
-  mannitol_synthesis_capacity: 0.15
-  apx_capacity: 0.18
-  sos2_kinase_capacity: 0.16
-  na_influx_km: 2.0
-  mannitol_km: 0.50
-  mannitol_turnover_rate: 0.05
-  biomass_loss_rate: 0.03
-  senescence_rate: 0.02
-  atp_per_na_efflux: 1.0
-  carbon_cost_per_mannitol: 0.05
-  apx_energy_cost: 0.03
-  cipk_energy_cost: 0.03
-  biomass_conversion: 0.80
-  root_na_initial_stock: 1.0
-  root_cl_initial_stock: 1.0
-  root_k_initial_stock: 1.0
-  initial_biomass: 5.0
-  initial_canopy_area: 25.0
-  forcing_ecw_ds_m: 6.0
-  forcing_temperature_k: 298.15
-  forcing_osmolality_osmol_kg: 0.15
+# Versioned synthetic-design inputs for the transparent Paper 1 surrogate.
+# These are hypothesis anchors, not calibrated almond effects or efficacy claims.
+biology_parameters: &biology_parameters
+  schema_version: "1.3.0"
+  evidence_label: hypothesis_prior
+  root_area_cm2: 10.0
+  root_na_permeability_l_cm2_h: 0.01
+  root_cl_permeability_l_cm2_h: 0.02
+  root_k_permeability_l_cm2_h: 0.03
+  na_partition_coefficient: 1.0
+  cl_partition_coefficient: 2.0
+  k_partition_coefficient: 1.0
+  na_efflux_vmax_mmol_h: 0.40
+  na_efflux_km_mmol_l: 1.0
+  atp_cost_per_na_atp_eq_mmol_inv: 2.0
+  na_sequestration_vmax_mmol_h: 0.10
+  cl_sequestration_vmax_mmol_h: 0.20
+  k_sequestration_vmax_mmol_h: 0.30
+  na_sequestration_km_mmol_l: 1.0
+  cl_sequestration_km_mmol_l: 1.0
+  k_sequestration_km_mmol_l: 1.0
+  na_vacuole_capacity_mmol: 2.0
+  cl_vacuole_capacity_mmol: 2.0
+  k_vacuole_capacity_mmol: 2.0
+  na_vacuole_release_h_inv: 0.10
+  cl_vacuole_release_h_inv: 0.20
+  k_vacuole_release_h_inv: 0.30
+  na_xylem_loading_l_h: 0.10
+  cl_xylem_loading_l_h: 0.20
+  k_xylem_loading_l_h: 0.30
+  na_xylem_retrieval_l_h: 0.10
+  cl_xylem_retrieval_l_h: 0.20
+  k_xylem_retrieval_l_h: 0.30
+  xylem_flow_l_h: 0.10
+  shoot_partition_fraction: 1.0
+  root_conductance_l_day_mpa: 0.50
+  osmotic_reference_mpa: 0.10
+  osmotic_scale_mpa: 0.50
+  root_na_stress_weight: 0.50
+  root_cl_stress_weight: 0.30
+  root_k_stress_weight: 0.20
+  root_na_critical_mmol_l: 0.50
+  root_cl_critical_mmol_l: 0.50
+  root_k_critical_mmol_l: 0.50
+  root_na_stress_scale_mmol_l: 2.0
+  root_cl_stress_scale_mmol_l: 2.0
+  root_k_stress_scale_mmol_l: 2.0
+  root_na_injury_multiplier: 1.0
+  ion_weight_sum_tolerance: 1.0e-12
+  ros_production_h_inv: 0.10
+  ros_clearance_h_inv: 0.20
+  injury_damage_h_inv: 0.30
+  injury_repair_h_inv: 0.10
+  mannitol_vmax_mmol_h: 0.20
+  mannitol_km_dimensionless: 0.50
+  mannitol_turnover_h_inv: 0.10
+  mannitol_osmotic_coefficient_mpa_mmol_inv: 0.20
+  mannitol_carbon_cost_mmol_c_mmol_inv: 0.40
+  mannitol_adjustment_min_mpa: -0.50
+  mannitol_adjustment_max_mpa: 0.50
+  radiation_use_efficiency_g_mol_apar_inv: 0.50
+  maintenance_cost_g_h: 0.01
+  atp_to_biomass_g_atp_eq_inv: 0.10
+  carbon_to_biomass_g_mmol_c_inv: 0.20
+  redox_growth_penalty_h_inv: 0.01
+  cipk_pleiotropy_penalty_h_inv: 0.02
+  biomass_loss_h_inv: 0.03
+  specific_leaf_area_cm2_g: 20.0
+  leaf_allocation_fraction: 0.40
+  senescence_h_inv: 0.01
+  energy_epsilon_atp_eq_h: 1.0e-12
+  integrator_max_step_hours: 0.25
+  step_halving_absolute_tolerance: 0.10
+  step_halving_relative_tolerance: 0.10
+  biomass_death_threshold_g: 0.05
+  injury_death_threshold: 5.0
+  sustained_injury_duration_hours: 24.0
+
+initial_state: &initial_state
+  time_hours: 0.0
+  biomass_g: 5.0
+  canopy_area_cm2: 25.0
+  ros_dimensionless: 0.20
+  injury_dimensionless: 0.10
+  mannitol_mmol: 0.20
+  allocatable_energy_atp_eq: 10.0
+  apx_expression_fraction: 0.50
+  cipk_expression_fraction: 0.40
+  injury_exposure_hours: 0.0
+  alive: true
+  death_time_hours: null
+  evidence_label: synthetic_only
+  network_state:
+    tracked_entities: [na, cl, k]
+    evidence_label: synthetic_only
+    compartments:
+      root-zone:
+        compartment_id: root-zone
+        kind: root_zone
+        loop_id: plant-loop
+        volume_l: 1.0
+        water_mass_kg: 0.997
+        empty_reference_density_kg_l: 0.997
+        stocks: {na: 4.0, cl: 3.0, k: 2.0}
+        evidence_label: synthetic_only
+      root-apoplast:
+        compartment_id: root-apoplast
+        kind: root_apoplast
+        loop_id: plant-loop
+        volume_l: 0.20
+        water_mass_kg: 0.1994
+        empty_reference_density_kg_l: 0.997
+        stocks: {na: 0.20, cl: 0.20, k: 0.10}
+        evidence_label: synthetic_only
+      root-symplast:
+        compartment_id: root-symplast
+        kind: root_symplast
+        loop_id: plant-loop
+        volume_l: 0.10
+        water_mass_kg: 0.0997
+        empty_reference_density_kg_l: 0.997
+        stocks: {na: 0.10, cl: 0.10, k: 0.10}
+        evidence_label: synthetic_only
+      root-vacuole:
+        compartment_id: root-vacuole
+        kind: root_vacuole
+        loop_id: plant-loop
+        volume_l: 0.10
+        water_mass_kg: 0.0997
+        empty_reference_density_kg_l: 0.997
+        stocks: {na: 0.05, cl: 0.05, k: 0.05}
+        evidence_label: synthetic_only
+      xylem:
+        compartment_id: xylem
+        kind: xylem
+        loop_id: plant-loop
+        volume_l: 0.10
+        water_mass_kg: 0.0997
+        empty_reference_density_kg_l: 0.997
+        stocks: {na: 0.05, cl: 0.05, k: 0.05}
+        evidence_label: synthetic_only
+      shoot:
+        compartment_id: shoot
+        kind: shoot_tissue
+        loop_id: plant-loop
+        volume_l: 0.50
+        water_mass_kg: 0.4985
+        empty_reference_density_kg_l: 0.997
+        stocks: {na: 0.20, cl: 0.20, k: 0.20}
+        evidence_label: synthetic_only
+
+forcing: &forcing
+  measured_osmolality_osmol_kg: 0.15
+  temperature_k: 298.15
+  water_density_kg_l: 0.997
+  matric_potential_mpa: -0.10
+  leaf_critical_potential_mpa: -2.00
+  apar_mol_h: 1.0
+  temperature_factor: 0.80
+  potential_transpiration_l_day: 1.0
+  duration_hours: 0.25
+  evidence_label: synthetic_only
+  hydraulic_domain:
+    model_id: paper1-biology-v1
+    version: 1.0.0
+    purpose: model_applicability
+    osmolality_min: 0.0
+    osmolality_max: 0.50
+    temperature_k_min: 290.0
+    temperature_k_max: 305.0
+    permitted_evidence_label: physics_constrained
+    extrapolation_policy: deny
+
+generator_parameters: &generator_parameters
   run_variance: 0.02
   batch_variance: 0.02
   reservoir_variance: 0.04
@@ -38,63 +183,96 @@ scenario_parameters: &scenario_parameters
   missingness_stress_slope: 0.20
   mnar_tipping_delta: 0.10
   duration_days: 84.0
+
 scenarios:
   - scenario_id: perfect_control
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
-    parameters: *scenario_parameters
+    parameters: *biology_parameters
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters: *generator_parameters
   - scenario_id: true_ion_exclusion
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
     parameters:
-      <<: *scenario_parameters
-      na_efflux_capacity: 0.35
+      <<: *biology_parameters
+      root_na_permeability_l_cm2_h: 0.0
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters: *generator_parameters
   - scenario_id: root_na_accumulation
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
     parameters:
-      <<: *scenario_parameters
-      root_na_initial_stock: 2.0
+      <<: *biology_parameters
+      na_efflux_vmax_mmol_h: 0.10
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters: *generator_parameters
   - scenario_id: marker_only
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
     parameters:
-      <<: *scenario_parameters
-      apx_capacity: 0.30
+      <<: *biology_parameters
+      ros_clearance_h_inv: 0.40
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters: *generator_parameters
   - scenario_id: nonsaline_penalty
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
     parameters:
-      <<: *scenario_parameters
-      carbon_cost_per_mannitol: 0.15
+      <<: *biology_parameters
+      mannitol_carbon_cost_mmol_c_mmol_inv: 0.80
+    initial_state: *initial_state
+    forcing:
+      <<: *forcing
+      measured_osmolality_osmol_kg: 0.05
+    generator_parameters: *generator_parameters
   - scenario_id: chassis_interaction
-    schema_version: "1.3"
-    evidence_label: hypothesis_prior
+    schema_version: "1.3.0"
+    evidence_label: synthetic_only
     parameters:
-      <<: *scenario_parameters
-      root_water_conductivity: 0.35
+      <<: *biology_parameters
+      root_conductance_l_day_mpa: 0.35
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters: *generator_parameters
   - scenario_id: delayed_toxicity
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
     parameters:
-      <<: *scenario_parameters
-      senescence_rate: 0.06
+      <<: *biology_parameters
+      senescence_h_inv: 0.06
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters: *generator_parameters
   - scenario_id: sensor_drift_missingness
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
-    parameters:
-      <<: *scenario_parameters
+    parameters: *biology_parameters
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters:
+      <<: *generator_parameters
       canopy_observation_error_sd: 0.12
       missingness_stress_slope: 0.60
   - scenario_id: insufficient_purge
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
-    parameters:
-      <<: *scenario_parameters
-      forcing_ecw_ds_m: 10.0
+    parameters: *biology_parameters
+    initial_state: *initial_state
+    forcing:
+      <<: *forcing
+      measured_osmolality_osmol_kg: 0.30
+    generator_parameters: *generator_parameters
   - scenario_id: selection_bias_false_leader
-    schema_version: "1.3"
+    schema_version: "1.3.0"
     evidence_label: synthetic_only
-    parameters:
-      <<: *scenario_parameters
+    parameters: *biology_parameters
+    initial_state: *initial_state
+    forcing: *forcing
+    generator_parameters:
+      <<: *generator_parameters
       plant_variance: 0.20
