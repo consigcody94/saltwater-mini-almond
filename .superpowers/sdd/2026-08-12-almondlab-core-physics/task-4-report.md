@@ -318,3 +318,89 @@ entire entity pair relative to water, and changing both entity rows to a
 different physical transfer ID. A valid complete transaction remains balanced.
 Unrelated untracked public-data paths and `tests/test_paper1_contracts.py` were
 not staged or committed.
+
+## Review fix round 2/5
+
+Fix commit: `f7f7d5c fix: reconcile ledger by compartment`.
+
+The scoped re-review confirmed mandatory record-level `EvidenceLabel` was
+resolved and identified three remaining ledger-audit defects. They were fixed
+test-first without relaxing the round-1 structural transaction checks:
+
+1. `BalanceAudit` now exposes immutable `compartment_residuals` and
+   `relative_compartment_residuals`, with accessors for each compartment and
+   quantity. `balanced` requires every water/entity compartment residual as
+   well as every network residual and structural invariant to pass `1e-10`.
+2. Every ledger row's owning compartment must exist in the union of the before
+   and after states. Both endpoints of an internal row must exist there;
+   otherwise `audit_ledger` raises `LEDGER_UNKNOWN_COMPARTMENT`. Named external
+   boundaries remain valid non-compartment counterparties.
+3. Internal entity-pair direction is anchored to the transaction's signed
+   water debit/credit. A `0/0` entity pair validates reciprocal water endpoints
+   without inventing direction from lexical names or zero signs.
+
+### Review round 2 RED
+
+Command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_mass_balance.py -v -p no:cacheprovider
+```
+
+Output (exit 1):
+
+```text
+collecting ... collected 33 items
+tests/test_mass_balance.py::test_audit_reconciles_complete_internal_deletion_by_compartment FAILED
+tests/test_mass_balance.py::test_audit_rejects_consistent_paired_corruption_by_compartment[amount] FAILED
+tests/test_mass_balance.py::test_audit_rejects_consistent_paired_corruption_by_compartment[endpoints] FAILED
+tests/test_mass_balance.py::test_audit_rejects_unknown_internal_endpoint[compartment] FAILED
+tests/test_mass_balance.py::test_audit_rejects_unknown_internal_endpoint[counterparty] FAILED
+tests/test_mass_balance.py::test_audit_rejects_unknown_external_owning_compartment FAILED
+tests/test_mass_balance.py::test_zero_stock_pair_inherits_water_direction_without_lexical_inference FAILED
+E AttributeError: 'BalanceAudit' object has no attribute 'relative_compartment_residual'
+E Failed: DID NOT RAISE AlmondLabError
+E AssertionError: quantity pairs disagree on direction
+======================== 7 failed, 26 passed in 0.95s =========================
+```
+
+Each failure was caused by the reviewed production defect: missing compartment
+reconciliation, absent endpoint validation, or lexical direction inference.
+
+### Review round 2 GREEN and final verification
+
+The same focused command produced (exit 0, no warnings):
+
+```text
+collecting ... collected 33 items
+============================= 33 passed in 0.84s ==============================
+```
+
+Prior Tasks 1–3 regression command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_contracts.py tests/test_cli.py tests/test_schemas.py tests/test_chemistry.py tests/test_treatment.py tests/test_domains.py -v -p no:cacheprovider
+```
+
+Output (exit 0, no warnings):
+
+```text
+collecting ... collected 63 items
+============================= 63 passed in 1.65s ==============================
+```
+
+### Identifiability limit
+
+Before/after snapshots and ledger rows can prove structural pair validity and
+reconcile the signed aggregate for every compartment and quantity. They cannot
+identify a theoretically coordinated alteration of multiple structurally valid
+transactions when that alteration leaves all those signed aggregates exactly
+unchanged. Detecting which event changed in that observationally equivalent
+case requires an independent event schedule, sequence commitment, or signed
+source record beyond the Task 4 interface. Simple complete deletion, paired
+amount corruption, and paired endpoint reassignment are not in that ambiguous
+class and are now detected by compartment reconciliation.
+
+Round-2 Task 4 commits exclude all public-data and Paper 1 worktree paths.
