@@ -24,7 +24,7 @@ greenhouse, safety, or field efficacy.
 - `tests/test_verification_resources.py`
 - `pyproject.toml` (authorized JSON resource include only)
 - `.gitattributes` (authorized LF rules for exact-byte verifier resources only)
-- this report and one `progress.md` ledger line
+- this report and scoped `progress.md` ledger entries
 
 Concurrent mass changes and `tests/test_mass_balance.py` were preserved and
 excluded from this commit.
