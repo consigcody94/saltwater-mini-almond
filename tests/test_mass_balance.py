@@ -171,11 +171,69 @@ def test_audit_rejects_internal_transaction_with_both_entity_rows_deleted() -> N
     assert not audit.balanced
 
 
+def test_audit_reconciles_complete_internal_deletion_by_compartment() -> None:
+    state = NetworkState.from_dict(
+        {"z_source": 10.0, "a_target": 0.0},
+        {
+            "z_source": {"na": 20.0},
+            "a_target": {"na": 0.0},
+        },
+    )
+    result = step_state(state, [Flow("z_source", "a_target", 1.0)], [], 0.25)
+
+    audit = audit_ledger(state, result.state, [])
+
+    assert audit.relative_residual("water") <= 1e-10
+    assert audit.relative_residual("na") <= 1e-10
+    assert audit.relative_compartment_residual("z_source", "water") > 1e-10
+    assert audit.relative_compartment_residual("a_target", "na") > 1e-10
+    assert not audit.balanced
+
+
+@pytest.mark.parametrize("corruption", ["amount", "endpoints"])
+def test_audit_rejects_consistent_paired_corruption_by_compartment(
+    corruption: str,
+) -> None:
+    state = NetworkState.from_dict(
+        {"source": 10.0, "target": 0.0, "decoy": 0.0},
+        {
+            "source": {"na": 20.0},
+            "target": {"na": 0.0},
+            "decoy": {"na": 0.0},
+        },
+    )
+    result = step_state(state, [Flow("source", "target", 1.0)], [], 0.25)
+    ledger = list(result.ledger)
+    for index, row in enumerate(ledger):
+        if corruption == "amount":
+            ledger[index] = replace(row, amount=row.amount / 2.0)
+        elif row.compartment == "source":
+            ledger[index] = replace(row, counterparty="decoy")
+        else:
+            ledger[index] = replace(
+                row,
+                compartment="decoy",
+                counterparty="source",
+            )
+
+    audit = audit_ledger(state, result.state, ledger)
+
+    assert audit.relative_residual("water") <= 1e-10
+    assert audit.relative_residual("na") <= 1e-10
+    assert audit.internal_transaction_errors == ()
+    assert any(
+        audit.relative_compartment_residual(compartment, quantity) > 1e-10
+        for compartment in state.volumes_l
+        for quantity in ("water", "na")
+    )
+    assert not audit.balanced
+
+
 @pytest.mark.parametrize("corruption", ["transaction_id", "counterparty", "unit"])
 def test_audit_rejects_corrupted_internal_pair_metadata(corruption: str) -> None:
     state = NetworkState.from_dict(
-        {"a": 10.0, "b": 0.0},
-        {"a": {"na": 20.0}, "b": {"na": 0.0}},
+        {"a": 10.0, "b": 0.0, "c": 0.0},
+        {"a": {"na": 20.0}, "b": {"na": 0.0}, "c": {"na": 0.0}},
     )
     result = step_state(state, [Flow("a", "b", 1.0)], [], 0.25)
     ledger = list(result.ledger)
@@ -184,7 +242,7 @@ def test_audit_rejects_corrupted_internal_pair_metadata(corruption: str) -> None
     if corruption == "transaction_id":
         changes = {"transaction_id": "internal:99:99"}
     elif corruption == "counterparty":
-        changes = {"counterparty": "wrong"}
+        changes = {"counterparty": "c"}
     else:
         changes = {"unit": "L"}
     ledger[index] = replace(ledger[index], **changes)
@@ -193,6 +251,38 @@ def test_audit_rejects_corrupted_internal_pair_metadata(corruption: str) -> None
 
     assert audit.internal_transaction_errors
     assert not audit.balanced
+
+
+@pytest.mark.parametrize("field", ["compartment", "counterparty"])
+def test_audit_rejects_unknown_internal_endpoint(field: str) -> None:
+    state = NetworkState.from_dict(
+        {"source": 10.0, "target": 0.0},
+        {"source": {"na": 20.0}, "target": {"na": 0.0}},
+    )
+    result = step_state(state, [Flow("source", "target", 1.0)], [], 0.25)
+    ledger = list(result.ledger)
+    ledger[0] = replace(ledger[0], **{field: "ghost"})
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        audit_ledger(state, result.state, ledger)
+
+    assert exc_info.value.code == "LEDGER_UNKNOWN_COMPARTMENT"
+
+
+def test_audit_rejects_unknown_external_owning_compartment() -> None:
+    state = NetworkState.from_dict({"tank": 10.0}, {"tank": {"na": 20.0}})
+    result = step_state(
+        state,
+        [],
+        [ExternalFlux("tank", "rain", 1.0, {"na": 2.0})],
+        0.25,
+    )
+    ledger = [replace(row, compartment="ghost") for row in result.ledger]
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        audit_ledger(state, result.state, ledger)
+
+    assert exc_info.value.code == "LEDGER_UNKNOWN_COMPARTMENT"
 
 
 def test_audit_accepts_valid_internal_pairs_and_explicit_evidence() -> None:
@@ -248,6 +338,23 @@ def test_audit_requires_consistent_metadata_across_transaction_quantities(
 
     assert audit.internal_transaction_errors
     assert not audit.balanced
+
+
+def test_zero_stock_pair_inherits_water_direction_without_lexical_inference() -> None:
+    state = NetworkState.from_dict(
+        {"z_source": 10.0, "a_target": 0.0},
+        {
+            "z_source": {"na": 0.0},
+            "a_target": {"na": 0.0},
+        },
+    )
+    result = step_state(state, [Flow("z_source", "a_target", 1.0)], [], 0.25)
+
+    audit = audit_ledger(state, result.state, result.ledger)
+
+    assert audit.internal_transaction_errors == ()
+    assert audit.relative_compartment_residual("z_source", "na") <= 1e-10
+    assert audit.balanced
 
 
 def test_ledger_entry_requires_explicit_evidence_label() -> None:

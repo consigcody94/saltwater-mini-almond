@@ -200,6 +200,8 @@ class BalanceAudit:
     relative_residuals: Mapping[str, float]
     quantities: frozenset[str]
     internal_transaction_errors: tuple[str, ...]
+    compartment_residuals: Mapping[str, Mapping[str, float]]
+    relative_compartment_residuals: Mapping[str, Mapping[str, float]]
 
     def residual(self, quantity: str) -> float:
         return self.residuals[quantity]
@@ -207,10 +209,27 @@ class BalanceAudit:
     def relative_residual(self, quantity: str) -> float:
         return self.relative_residuals[quantity]
 
+    def compartment_residual(self, compartment: str, quantity: str) -> float:
+        return self.compartment_residuals[compartment][quantity]
+
+    def relative_compartment_residual(
+        self, compartment: str, quantity: str
+    ) -> float:
+        return self.relative_compartment_residuals[compartment][quantity]
+
     @property
     def balanced(self) -> bool:
-        return not self.internal_transaction_errors and all(
-            value <= BALANCE_TOLERANCE for value in self.relative_residuals.values()
+        return (
+            not self.internal_transaction_errors
+            and all(
+                value <= BALANCE_TOLERANCE
+                for value in self.relative_residuals.values()
+            )
+            and all(
+                value <= BALANCE_TOLERANCE
+                for compartment in self.relative_compartment_residuals.values()
+                for value in compartment.values()
+            )
         )
 
 
@@ -612,10 +631,15 @@ def audit_ledger(
     after: NetworkState,
     ledger: list[LedgerEntry] | tuple[LedgerEntry, ...],
 ) -> BalanceAudit:
-    """Audit water volume and every registered entity as separate quantities."""
+    """Audit every quantity globally and within each physical compartment."""
     quantities = frozenset({"water", *before.entities, *after.entities})
-    transaction_errors = _audit_internal_transactions(before, ledger, quantities)
+    compartments = frozenset({*before.volumes_l, *after.volumes_l})
+    loop_ids = {**before.loop_ids, **after.loop_ids}
     ledger_net = {quantity: 0.0 for quantity in quantities}
+    compartment_ledger_net = {
+        compartment: {quantity: 0.0 for quantity in quantities}
+        for compartment in compartments
+    }
     for index, row in enumerate(ledger):
         if row.quantity not in quantities:
             fail(
@@ -629,7 +653,24 @@ def audit_ledger(
                 "ledger amount must be finite",
                 f"ledger.{index}.amount",
             )
+        if row.compartment not in compartments:
+            fail(
+                "LEDGER_UNKNOWN_COMPARTMENT",
+                "ledger row names an owning compartment absent from both states",
+                f"ledger.{index}.compartment",
+            )
+        if row.kind == "internal" and row.counterparty not in compartments:
+            fail(
+                "LEDGER_UNKNOWN_COMPARTMENT",
+                "internal ledger row names an endpoint absent from both states",
+                f"ledger.{index}.counterparty",
+            )
         ledger_net[row.quantity] += row.amount
+        compartment_ledger_net[row.compartment][row.quantity] += row.amount
+
+    transaction_errors = _audit_internal_transactions(
+        loop_ids, ledger, quantities
+    )
 
     residuals: dict[str, float] = {}
     relative: dict[str, float] = {}
@@ -644,16 +685,63 @@ def audit_ledger(
         scale = max(abs(before_total), abs(after_total), abs(ledger_net[quantity]), 1e-30)
         residuals[quantity] = residual
         relative[quantity] = abs(residual) / scale
+
+    compartment_residuals: dict[str, dict[str, float]] = {}
+    relative_compartment_residuals: dict[str, dict[str, float]] = {}
+    for compartment in compartments:
+        compartment_residuals[compartment] = {}
+        relative_compartment_residuals[compartment] = {}
+        for quantity in quantities:
+            before_amount = _compartment_quantity(before, compartment, quantity)
+            after_amount = _compartment_quantity(after, compartment, quantity)
+            ledger_amount = compartment_ledger_net[compartment][quantity]
+            residual = after_amount - before_amount - ledger_amount
+            scale = max(
+                abs(before_amount),
+                abs(after_amount),
+                abs(ledger_amount),
+                1e-30,
+            )
+            compartment_residuals[compartment][quantity] = residual
+            relative_compartment_residuals[compartment][quantity] = (
+                abs(residual) / scale
+            )
+
     return BalanceAudit(
-        MappingProxyType(residuals),
-        MappingProxyType(relative),
-        quantities,
-        transaction_errors,
+        residuals=MappingProxyType(residuals),
+        relative_residuals=MappingProxyType(relative),
+        quantities=quantities,
+        internal_transaction_errors=transaction_errors,
+        compartment_residuals=_freeze_nested(compartment_residuals),
+        relative_compartment_residuals=_freeze_nested(
+            relative_compartment_residuals
+        ),
+    )
+
+
+def _compartment_quantity(
+    state: NetworkState, compartment: str, quantity: str
+) -> float:
+    if compartment not in state.volumes_l:
+        return 0.0
+    if quantity == "water":
+        return state.volumes_l[compartment]
+    return state.stocks_mmol[compartment].get(quantity, 0.0)
+
+
+def _freeze_nested(
+    values: Mapping[str, Mapping[str, float]],
+) -> Mapping[str, Mapping[str, float]]:
+    return MappingProxyType(
+        {
+            outer_key: MappingProxyType(dict(inner_values))
+            for outer_key, inner_values in values.items()
+        }
     )
 
 
 def _audit_internal_transactions(
-    state: NetworkState,
+    loop_ids: Mapping[str, str],
     ledger: list[LedgerEntry] | tuple[LedgerEntry, ...],
     quantities: frozenset[str],
 ) -> tuple[str, ...]:
@@ -665,11 +753,22 @@ def _audit_internal_transactions(
 
     errors: list[str] = []
     for transaction_id, rows in transactions.items():
-        transaction_directions: set[tuple[str, str]] = set()
         transfer_ids: set[str | None] = set()
         observed_quantities = {row.quantity for row in rows}
         if observed_quantities != quantities:
             errors.append(f"{transaction_id}: quantities do not match network registry")
+
+        water_pair = [row for row in rows if row.quantity == "water"]
+        water_direction = (
+            _signed_pair_direction(*water_pair)
+            if len(water_pair) == 2
+            else None
+        )
+        water_endpoints = (
+            frozenset(row.compartment for row in water_pair)
+            if len(water_pair) == 2
+            else None
+        )
         for quantity in quantities:
             pair = [row for row in rows if row.quantity == quantity]
             if len(pair) != 2:
@@ -701,16 +800,23 @@ def _audit_internal_transactions(
             transfer_ids.update(
                 (first.physical_transfer_id, second.physical_transfer_id)
             )
-            if first.amount < second.amount:
-                transaction_directions.add((first.compartment, first.counterparty))
-            elif second.amount < first.amount:
-                transaction_directions.add((second.compartment, second.counterparty))
-            else:
-                transaction_directions.add(tuple(sorted((first.compartment, second.compartment))))
+            pair_direction = _signed_pair_direction(first, second)
+            pair_endpoints = frozenset((first.compartment, second.compartment))
+            if water_endpoints is not None and pair_endpoints != water_endpoints:
+                errors.append(
+                    f"{transaction_id}:{quantity}: endpoints disagree with water pair"
+                )
             if (
-                first.compartment in state.loop_ids
-                and first.counterparty in state.loop_ids
-                and state.loop_ids[first.compartment] != state.loop_ids[first.counterparty]
+                quantity != "water"
+                and pair_direction is not None
+                and water_direction is not None
+                and pair_direction != water_direction
+            ):
+                errors.append(
+                    f"{transaction_id}:{quantity}: direction disagrees with water pair"
+                )
+            if (
+                loop_ids[first.compartment] != loop_ids[first.counterparty]
                 and not (
                     first.physical_transfer_id
                     and first.physical_transfer_id.strip()
@@ -719,11 +825,19 @@ def _audit_internal_transactions(
                 errors.append(
                     f"{transaction_id}:{quantity}: cross-loop pair lacks physical transfer ID"
                 )
-        if len(transaction_directions) > 1:
-            errors.append(f"{transaction_id}: quantity pairs disagree on direction")
         if len(transfer_ids) > 1:
             errors.append(f"{transaction_id}: quantity pairs disagree on transfer metadata")
     return tuple(errors)
+
+
+def _signed_pair_direction(
+    first: LedgerEntry, second: LedgerEntry
+) -> tuple[str, str] | None:
+    if first.amount < 0.0 < second.amount:
+        return first.compartment, first.counterparty
+    if second.amount < 0.0 < first.amount:
+        return second.compartment, second.counterparty
+    return None
 
 
 def closed_form_tank_concentration(
