@@ -140,7 +140,7 @@ def _strict_number(value: object, field_path: str) -> float:
 
 
 def _strict_positive_integer(value: object, field_path: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if type(value) is not int or value <= 0:
         raise ValueError(f"{field_path} must be a positive integer")
     return value
 
@@ -492,7 +492,13 @@ def load_conservation_case_manifest(
         if not isinstance(value, dict):
             raise ValueError(f"manifest generator {property_id} must be a mapping")
         _exact_keys(value, {"seed", "max_examples"}, f"generator.{property_id}")
-        if value != expected:
+        received = {
+            field: _strict_positive_integer(
+                value[field], f"generator.{property_id}.{field}"
+            )
+            for field in ("seed", "max_examples")
+        }
+        if any(received[field] != expected[field] for field in received):
             raise ValueError(f"manifest generator {property_id} settings are locked")
 
     extrema = payload["extrema_schema"]

@@ -96,6 +96,31 @@ def test_manifest_rejects_collectively_corrupted_schema(
         load_conservation_case_manifest(source)
 
 
+@pytest.mark.parametrize("property_id", ("flow", "ro", "blend"))
+@pytest.mark.parametrize("field", ("seed", "max_examples"))
+@pytest.mark.parametrize("alias_kind", ("matching_float", "bool"))
+def test_manifest_rejects_non_integer_generator_metadata_aliases(
+    tmp_path: Path,
+    property_id: str,
+    field: str,
+    alias_kind: str,
+) -> None:
+    contents = (
+        resources.files("almondlab.resources")
+        .joinpath("fixtures/conservation_case_manifest.yaml")
+        .read_text()
+    )
+    payload = yaml.safe_load(contents)
+    expected = payload["generator"]["properties"][property_id][field]
+    alias: object = float(expected) if alias_kind == "matching_float" else True
+    payload["generator"]["properties"][property_id][field] = alias
+    source = tmp_path / "conservation_case_manifest.yaml"
+    source.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(ValueError, match="positive integer"):
+        load_conservation_case_manifest(source)
+
+
 def test_strategy_digest_covers_exact_candidate_payload() -> None:
     manifest, _ = load_conservation_case_manifest()
     canonical_cases = resources.files("almondlab.resources").joinpath(
