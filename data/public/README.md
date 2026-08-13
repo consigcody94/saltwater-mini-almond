@@ -67,11 +67,33 @@ verified. No Ectocarpus identifier crosswalk or sequence claim is made. Phase 2
 does not request SRA, ENA, FASTQ, FQ, BAM, CRAM, or any other raw-read payload;
 the repository still has no RNA-seq downloader.
 
-`local_snapshot.sha256` contains locally calculated hashes for the audited
-manifest, audit, evidence seed, and acquisition code. These are repository
-snapshot hashes, not publisher, NCBI, ENA, or other remote checksums.
+`local_snapshot.sha256` freezes locally calculated hashes for the audited
+manifest, audit, evidence seed, and acquisition code at downloader integration
+commit `0c61054`; it is a historical snapshot rather than an automatically
+updated current-tree manifest. These are repository snapshot hashes, not
+publisher, NCBI, ENA, or other remote checksums.
 The independent `scripts/public_data/phase2/local_snapshot.sha256` freezes the
 Phase 2 acquisition module, entry point, offline tests, and documentation.
+
+## Completed Phase 2 small snapshot
+
+An explicitly authorized live acquisition completed at
+`2026-08-13T01:09:11.1264799+00:00` using downloader commit `0c61054` and no
+injected test transport. The sanitized tracked
+[`phase2_acquisition_receipt.json`](phase2_acquisition_receipt.json) records:
+
+- five GSE254853 processed supplementary gzip files totaling 17,602,426 bytes;
+- twelve exact NCBI EFetch FASTA records totaling 20,259 bytes; and
+- source URLs, response Content-Length values, locally calculated SHA-256
+  hashes, listing and parsed-listing hashes, exclusions, and the original raw
+  receipt SHA-256.
+
+The tracked receipt contains no absolute local paths. Before it was recorded,
+all 17 payloads were independently rehashed against the live raw receipt and
+their sidecars; request and response URL policy was rechecked; all GEO gzip
+streams decompressed to nonempty content; and every NCBI FASTA contained exactly
+one record with the requested accession-version header. This snapshot includes
+no SRA/ENA raw reads, PyAPX sequence, or Ectocarpus crosswalk claim.
 
 ## Completed reference snapshot
 
