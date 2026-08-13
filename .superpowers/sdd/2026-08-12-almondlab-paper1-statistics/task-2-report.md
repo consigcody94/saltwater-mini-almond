@@ -391,6 +391,22 @@ repair. No scientific efficacy, survival, yield, food-safety, calibration, or
 preferred-candidate claim is made. A fresh independent review will target the
 exact repair commit.
 
+### Final scoped verdict
+
+Task 2 is complete across commits `18724f4..d6eb9ee`. The implementation and
+successive reviews include the initial Paper 1 biology surrogate, its earlier
+review repairs, and three final scoped repair rounds culminating in the
+expanded-merge-work boundary at `d6eb9ee`. The fresh final scoped rereview of
+that exact commit is **APPROVED with no substantive findings**.
+
+The final owned verification evidence remains **181/181 focused biology and
+Paper 1 contract tests** and **555/555 expanded biology/core tests**. No stable
+complete-suite pass after the parser/merge commit is claimed here: the only
+such attempt overlapped the provenance agent's deliberate RED window and is
+recorded above as 1071 passed, 3 POSIX-only skips, and 6 provenance-only
+failures. The imminent provenance combined gate will supply the stable-tree
+full-suite evidence separately.
+
 ## Final rereview repair
 
 The exact rereview of `18724f4` plus `7d0a01a` found five remaining numerical
