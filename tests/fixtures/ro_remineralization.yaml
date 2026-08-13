@@ -1,0 +1,49 @@
+schema_version: "1.0"
+feed:
+  stream_id: ro-feed
+  volume_l: 100.0
+  water_density_kg_l: 0.997
+  water_mass_kg: 99.7
+  stocks:
+    na: 5000.0
+    alkalinity: 100.0
+parameters:
+  model_id: ro-bench
+  version: 1.0.0
+  recovery: 0.60
+  rejection:
+    na: 0.95
+    alkalinity: 0.50
+expected_ro:
+  permeate:
+    stream_id: ro-permeate
+    volume_l: 60.0
+    water_mass_kg: 59.82
+    stocks:
+      na: 150.0
+      alkalinity: 30.0
+  concentrate:
+    stream_id: ro-concentrate
+    volume_l: 40.0
+    water_mass_kg: 39.88
+    stocks:
+      na: 4850.0
+      alkalinity: 70.0
+  selectively_rejected:
+    na: 2850.0
+    alkalinity: 30.0
+amendment:
+  dose_id: mineral-dose
+  water_volume_l: 2.0
+  water_density_kg_l: 1.0
+  stock_additions:
+    na: 10.0
+    alkalinity: 6.0
+expected_final:
+  stream_id: final-product
+  volume_l: 62.0
+  water_mass_kg: 61.82
+  density_kg_l: 0.9970967741935484
+  stocks:
+    na: 160.0
+    alkalinity: 36.0
