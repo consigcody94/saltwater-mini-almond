@@ -1,83 +1,112 @@
 # Task 2 publication report: evidence registries and protected joins
 
-Status: implementation and local verification complete; independent code review pending an available review slot.
+Status: review-repair implementation and local verification are complete; fresh independent exact review is pending.
 
 ## Delivered scope
 
 - `data/evidence_registry.csv`: the complete 24-source Section 16 evidence set, with 19 DOI-anchored records and 5 official URL-only records.
 - `data/candidate_registry.csv`: 6 frozen primary candidates plus all 14 held prequalification candidates. It contains no winner, best-candidate, or biological-efficacy field.
-- `data/reference_chemistry.csv`: all 5 source-reported rootstock-screen recipes. EC is stored as a reported measurement and is never used to derive ion composition.
-- `src/almondlab/registries.py`: strict UTF-8/LF CSV parsing, exact schemas and source identities, stable-ID validation, duplicate DOI/URL/row/header rejection, canonical evidence-list parsing, defensive dataframes, frozen candidate cross-checks, and typed chemistry validation.
-- `src/almondlab/safe_data.py`: defensive `ProvenanceFrame` snapshots and fail-closed `safe_join` enforcement before `pandas.merge`.
-- `tests/test_registries.py` and `tests/test_safe_data.py`: focused positive, malformed-input, and adversarial coverage.
+- `data/reference_chemistry.csv`: all 5 source-reported rootstock-screen recipes. EC remains a reported measurement and is never used to derive ion composition.
+- `src/almondlab/registries.py`: strict UTF-8/LF parsing, exact schemas and associations, canonical decimal grammar, literal whole-file audit seals, candidate cross-checks, and typed chemistry validation.
+- `src/almondlab/safe_data.py`: sealed defensive `ProvenanceFrame` snapshots and fail-closed, arbitrarily chainable `safe_join` behavior.
+- `tests/test_registries.py` and `tests/test_safe_data.py`: focused positive, malformed-input, mutation, and adversarial regression coverage.
 
-## Registry reconciliation
+## Literature and sequence-record correction
 
-Evidence records carry title, DOI and/or primary URL, organism/donor, life stage, chemistry/concentration/EC context, exposure duration, experimental unit, sample size, endpoint, reported effect and units/context, limitation, evidence tier, retrieval date, source reference identity, source-hash status, metadata basis, and explicit program assumptions. Values unavailable from the audited source are represented as `not_reported`, `unresolved`, `not_applicable`, or `not_evaluable`; no missing values were inferred.
+The official 2025 rice paper reports three sequence accessions: PyAPX `AY282755.1`, PyMnSOD `DQ146477.2`, and the *Kappaphycus alvarezii* Na+/H+ antiporter under the author label `KaNa+/H+` as `MT473962`. The deposited `MT473962` record resolves to accession.version `MT473962.1`.
 
-The source PDFs/pages themselves are not vendored as immutable payloads. Consequently, every current evidence row truthfully records `source_sha256=not_available` and `source_sha256_status=primary_source_not_archived`, while `source_reference_identity` provides its stable DOI or official URL anchor. A manifest or HTML index hash was not mislabeled as a primary-source payload hash.
+The paper reports 250 mM NaCl applied every 3 days, 30 seeds per dish with 3 dishes, germination read on day 10, and 12, 11, and 9 homozygous T1 lines for the respective constructs. These are source-reported experimental details; they are not efficacy claims for the AlmondLab program.
 
-The source set is fail-closed in code: removing, adding, reordering, or reassigning a stable evidence ID to another DOI/URL is rejected as `EVIDENCE_REGISTRY_INCOMPLETE`.
+The guarded small-data workflow independently fetched and validated the corresponding NCBI records:
 
-Primary-source reconciliation retained important study-specific details and contradictions rather than smoothing them over, including:
+- `AY282755.1`: 1,041 bp *Pyropia yezoensis* cytosolic APX mRNA with complete CDS; FASTA SHA-256 `1fa50794a31470077978611121ada346a9a0d5f8fe8a1bd58864617e3804113a`.
+- `DQ146477.2`: 910 bp *Pyropia yezoensis* MnSOD complete CDS; FASTA SHA-256 `cd64caf3868d196b869e45415fbb09b21a97c0a7d96e555f11e449ba69da0d0d`.
+- `MT473962.1`: 1,194 bp *Kappaphycus alvarezii* Na+/H+ antiporter partial CDS; FASTA SHA-256 `182bc6de02e53212b7319f7ed9f1549ad32e34f8f12654492b12cbe8fdf14733`.
 
-- Ectocarpus mannitol: three independent fifth-generation Arabidopsis lines, 100 mM NaCl, 10-day soil exposure, and figure-level `n=30` context.
-- Esi0017_0056: two 35S plus three RD29A fifth-generation lines, plate `n=90`, peat `n=15`, and assay-specific durations.
-- PpHKT1: two named stable lines, treatment-specific 80/90/120/150 mM contexts, 12 soil plants per line, and the retained methods-versus-figure seedling-count discrepancy.
-- Intensia: the reported seven-year primary trial, a later 2010 trial, 6-12 trees per replicate, and its Texas-by-Earlygold parentage.
-- PavNHX37: source-reported assay conditions are retained, but no public sequence accession is invented.
+The guarded receipt covers 5 GEO and 15 NCBI payloads; its SHA-256 is `6a414634e72db373b86dbd702e40e47db31a58acb2fb0a124cbe30cac5aaeb06`. All 20 payload hashes and sidecars were independently revalidated, all GEO gzip payloads were nonempty, and every FASTA header matched its requested accession.version.
 
-## Candidate identity and unresolved fields
+These are three distinct evidence states and must not be conflated:
+
+1. The paper reports an accession for an experimental construct.
+2. The repository independently verifies the identity and deposited completeness state of the matching NCBI record.
+3. Exact experimental construct mapping, event identity, targeting, and other build-readiness validation may still be unresolved.
+
+NCBI record verification therefore does not make any candidate construct-ready.
+
+## Candidate identity and readiness
 
 The six primary identities cross-check the frozen `configs/candidates.yaml` contract, including sequence identity/accessions, construct and donor, evidence tier/label, primary parameter, H3 rule, gates, and principal failure mode. Prequalification sequence identity, readiness, status, and evidence tier are also fail-closed against the audited registry.
 
-Six records currently have unresolved exact sequence identity: C2 PyAPX, PQ_PyMnSOD, PQ_KaNa+/H+, PQ_KCS1-like, PQ_NHX1/2, and PQ_PavNHX37. In particular, the publication-required gaps remain explicit:
+- C1 is frozen to nucleotide `AJ972674.1` and protein `CAI99405.1`.
+- C2 is frozen to paper-reported and repository-verified `AY282755.1`, with status `accession_verified`. Its exact construct map, event, and targeting remain unresolved, so sequence build remains blocked.
+- C3 retains `Esi0017_0062|Esi0100_0020`, but its assembly crosswalk is unproven and its status is `crosswalk_pending`, not verified.
+- C4 is frozen to nucleotide `EU879059.1` and protein `ACJ63441.1`.
+- PQ_PyMnSOD uses repository-verified complete-CDS record `DQ146477.2`; exact construct mapping and targeting remain unresolved.
+- PQ_KaNa+/H+ uses repository-verified partial-CDS record `MT473962.1`; exact construct mapping, a complete construct sequence, and direct transport characterization remain unresolved.
+- Exact construct-ready identities remain unresolved for the *Prunus* KCS1-like, generic NHX1/2, and PavNHX37 candidates.
 
-- PyAPX nucleotide accession: unresolved.
-- KaNa+/H+ deposited sequence/accession: unresolved.
-- exact construct-ready Prunus KCS1-like locus: unresolved.
-- PavNHX37 public sequence accession/frozen donor sequence: unresolved.
+No source label, coordinate, protein length, reference ortholog, or homolog analogy was promoted into an accession, construct map, event certificate, targeting certificate, or biological-efficacy claim.
 
-No source label, chromosome coordinate, protein length, reference ortholog, or homolog analogy was promoted into an accession or experimental-clone certificate.
+## Semantically frozen registries
+
+All three audited CSVs are pinned by independent literal SHA-256 constants in code. The seals are not calculated from the files at import time and cannot self-authorize a mutation. Each loader performs semantic validation before checking its expected whole-file seal, so malformed inputs retain specific diagnostics while any otherwise valid mutation still fails closed.
+
+The freeze includes complete row meaning, not just identifiers: title, DOI, primary URL, sample context, reported effect, limitation, candidate-to-evidence links, and chemistry values are all covered. Candidate/evidence associations and DOI/URL pairings are exact. Numeric CSV text has one canonical decimal spelling, so aliases such as `3.00` and `0.900` are rejected.
+
+The `.gitattributes` contract pins the three sealed CSV paths to `text eol=lf`; `git check-attr` confirmed the rule under the Windows checkout where `core.autocrlf=true`.
 
 ## Protected-join guarantees
 
-`safe_join` validates both complete input snapshots and all private ancestry before merge. It requires exact row-level `record_id` and `source_type` fields, validates every record namespace (`SYN_`, `OBS_`, `EMP_`, or `LIT_`), rejects unknown or mixed source types, checks null and duplicate join keys against declared cardinality, forbids many-to-many joins, and rejects protected suffix/internal-column collisions. A synthetic/empirical collision always raises `SYNTHETIC_CONTAMINATION`; there is no production override and caller-controlled dataframe attributes cannot launder origin.
+Raw frames must have exact type `pandas.DataFrame`; subclasses are rejected before caller-overridable dataframe methods can run. Provenance cells require exact strings and registered `record_id` namespaces. Raw row provenance is consumed into the immutable `almondlab.provenance.v1` ancestry namespace rather than retained as mergeable or reserved user columns.
 
-Output row order is deterministic, both immediate source records remain visible with protected suffixes, and immutable row-aligned ancestry is retained in the returned `ProvenanceFrame`. Materialization returns a defensive copy.
+`ProvenanceFrame` snapshots deep-freeze supported nested list, tuple, dict, set, and frozenset cells. `to_pandas()` recursively detaches those cells, so caller mutation cannot change protected state in either direction. Private assignment is blocked, and a SHA-256 content seal covering the frame, ancestry, and metadata is checked on every protected use; direct private-state tampering fails closed.
+
+Joins preserve complete row ancestry through arbitrary chains, including empty intermediate results, without reserving ordinary user column names. Collision-free suffixes are planned deterministically. Join keys require one registered exact non-boolean kind per column and the same exact kind on both sides; boolean/integer and integer/float equality cannot pass by coercion. Null and cardinality validation complete before `pandas.merge` executes.
+
+`measured`, `empirical`, and `literature_derived` are intentionally one empirical ancestry family and may be joined when all other contracts pass. Any join that would mix synthetic and empirical ancestry raises `SYNTHETIC_CONTAMINATION`; there is no production override or caller-controlled attribute path that can launder origin.
 
 ## TDD and verification record
 
-The initial focused tests failed on missing modules/files. Later hardening cases were also observed RED before implementation: 8 failures for incomplete/drifted source identities, prequalification identity drift, compact ISO dates, and noncanonical decimal text.
+Review repairs were reproduced RED before implementation. Exact regressions now cover the false PyAPX absence statement, recent-rice accession/readiness boundaries, complete registry-row mutation and DOI/URL reassociation, numeric aliases, chained ancestry and former reserved-name collisions, nested-cell mutation, private-state tampering, dataframe subclasses, exact provenance strings, exact key kinds and pre-merge validation, and the intentional measured-plus-literature empirical-family rule.
 
-Final commands and results (Windows virtual environment used because `uv` is unavailable on PATH):
+Final commands and observed results:
 
 ```text
 .venv\Scripts\python.exe -m pytest tests/test_registries.py tests/test_safe_data.py -q -p no:cacheprovider
-83 passed in 2.32s
+111 passed in 2.49s
 
-.venv\Scripts\python.exe -m pytest tests/test_paper1_contracts.py tests/test_chemistry.py tests/test_contracts.py tests/test_schemas.py tests/test_provenance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider
-381 passed in 12.12s
+.venv\Scripts\python.exe -m pytest tests/test_safe_data.py tests/test_registries.py tests/test_paper1_contracts.py -q -p no:cacheprovider
+163 passed in 3.93s
 
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
-887 passed in 116.80s
+967 passed, 3 expected POSIX-only skips in 117.34s
 
-.venv\Scripts\python.exe -m compileall -q src
+.venv\Scripts\python.exe -m compileall -q src tests
 exit 0
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\public_data\phase2\Test-Phase2PublicData.ps1
+Smoke tests: 22 passed, 0 failed
 ```
 
-The focused suite includes a mixed-origin collision, prefix spoofing, a synthetic row hidden at position 10,001, untrusted attributes, renamed provenance columns, null keys, duplicate and many-to-many keys, suffix collisions, malformed CSV, missing sources/links/limitations, invented unresolved identities, and defensive-caller-mutation cases.
+The three skipped tests exercise POSIX descriptor-relative cleanup and are platform-skipped on Windows.
+
+## Repair commits
+
+- `f739404`: admit the three verified rice-comparator NCBI records to the exact Phase 2 allowlist and correct exclusion text.
+- `99dbbb7`: correct frozen candidate accession.version identities and readiness states.
+- `61f5c37`: correct public evidence audit, manifest, seed, README, and sanitized acquisition receipt.
+- `507f89a`: seal registry semantics and redesign protected joins.
 
 ## SHA-256 manifest
 
 ```text
-d0f6a120361076d98d82f93f17e5c7503fbd841551a527e206304ce550a0dcb1  src/almondlab/registries.py
-a878e90260361afcd6027ce449a5c0f85a8590309ac4cc1519094dcfacf2b299  src/almondlab/safe_data.py
-0e1bfbd32c10d22546b33f2b4b193fca109d7e03f89167dbbe633250a90986c3  data/evidence_registry.csv
-8c9182e1cc3e2cd951d8e99002a2de7af40591b8835bf53ecd4d90b9d7166146  data/candidate_registry.csv
-7a68b21873a3fabc2dd6467fb0ec7bba2760378f31d3f9b63c9a7803f05e4f5a  data/reference_chemistry.csv
-9473aac347deed9a131383d905e29ccc470ddc1c163dcb9d5f96efd1faed3ad5  tests/test_registries.py
-a7240bc5fda0fcf1e4e02d8b7e065b2c78e523bb791e5d8753d24ca045f07c3c  tests/test_safe_data.py
+e118ac2d590e054b2073cfa1677dd9dd8c1848dd9000a53267e33126fdb3e02f  src/almondlab/registries.py
+fdb9823dcfcaed5ef10c14d5594bf1ccabe501df2808cb876084075aed650fc1  src/almondlab/safe_data.py
+3296138c408220c9b5919cc5f1126bc18e1def9c5dd72ff0188d1c5ce8159bb8  data/evidence_registry.csv
+8e95c90ee9d85180a0b2dee7ef71ae8471b9784da1bafd52bf4d0d9aa044d0ae  data/candidate_registry.csv
+262a3b3210181d73bac416a6c0e09151de397fc8cc3752692a88d296a75f430a  data/reference_chemistry.csv
+ef6a4127335c14b408827ee412f0b54132d9333508dd6fdb7c3a8e9a4a6b28ff  tests/test_registries.py
+d8ee415146585c3dfe14a394c38c1dcfe28a62e6cb9309442852369728c5b75c  tests/test_safe_data.py
 ```
 
-These hashes describe the pre-review implementation. If review changes any owned file, the manifest and affected verification results must be refreshed before publication handoff.
+These hashes describe commit `507f89a`. Any later change to an owned file requires a refreshed manifest and affected verification results before publication handoff.
