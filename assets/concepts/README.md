@@ -52,6 +52,16 @@ drain-return plumbing remain separate, while reverse osmosis and the isolated
 amber brine system sit behind a glazed service partition. The image is a
 facility concept only; plant performance remains unproven.
 
+## 07 — Blinded discovery and confirmation layout, version 5
+
+Shows the registered experiment as two physically distinct cohorts. Neutral,
+opaque pot tags conceal treatment identity from greenhouse staff; the larger
+discovery cohort and independent confirmation cohort each use replicated
+contained benches. Blue plumbing supplies only treated and remineralized water,
+amber plumbing captures every drain return, and brine remains in a separate
+unconnected holding vessel. This is a design visualization, not a completed
+facility or evidence of biological efficacy.
+
 Built-in OpenAI image generation was used. The exact production prompts are in
 [PROMPTS.md](PROMPTS.md).
 

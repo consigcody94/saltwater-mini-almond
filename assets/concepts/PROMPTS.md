@@ -96,3 +96,45 @@ Text: use only these short labels if rendered accurately: "CONTROL", "C1", "C2",
 Constraints: seawater must never visibly irrigate a plant; every irrigation line to plants must originate from treated/remineralized water; all drains must be captured; no open soil; no discharge outdoors; keep controls and candidate groups separated; no claim of successful GMO performance or commercial production.
 Avoid: raw seawater poured on roots, field planting, soil salinization, uncontrolled runoff, giant mature orchard trees, mutant or fantasy plants, exaggerated fruit, hazardous lab imagery, logos, watermarks, illegible paragraphs.
 ```
+
+## 07 — Blinded discovery and confirmation layout, version 5
+
+Base generation prompt:
+
+```text
+Use case: scientific-educational
+Asset type: concept image for a research-program manuscript and project update
+Primary request: create a polished, scientifically plausible bird's-eye three-quarter cutaway illustration of a contained greenhouse almond salinity experiment, emphasizing rigorous blinded experimental design and closed water handling.
+Scene/backdrop: one clean modern greenhouse bay with two visually distinct zones: a larger discovery cohort and a smaller confirmation cohort, separated by a central service aisle; all plants are young potted almond rootstocks in individual containment trays.
+Subject: orderly randomized plant positions identified only by opaque neutral black-and-white alphanumeric tags with no treatment-revealing names; multiple independent reservoir loops feed short irrigation manifolds; every pot drains into sealed return gutters; separate equipment area contains a treated-water tank, remineralization vessel, captured-drain return tank, and closed brine-holding tank.
+Style/medium: premium isometric scientific visualization, realistic materials with subtle vector-like clarity, publication-ready, visually credible rather than futuristic.
+Composition/framing: wide 16:9 landscape, readable spatial organization, elevated three-quarter view; discovery zone dominates but confirmation zone is clearly separate; water-loop tubing and captured-return paths are easy to follow.
+Lighting/mood: bright diffuse daylight, calm, rigorous, clean.
+Color palette: pale greenhouse neutrals, healthy muted greens, treated-water lines in restrained blue, captured-return lines in amber, brine vessel in dark gray; no alarming neon colors.
+Materials/textures: glass, stainless steel, opaque polymer tubing, containment trays, young almond leaves, clean concrete floor.
+Constraints: show only treated and remineralized irrigation water; all drainage is captured; brine is contained; no discharge to soil; no raw seawater applied to plants; no visible claims of success or efficacy; all plant identifiers must look opaque and nonsemantic; no logos, no watermark, no decorative DNA helix, no exaggerated fruiting trees.
+Avoid: oceans, beach imagery, open drains, field planting, mature orchards, glowing sci-fi interfaces, gene-editing hero imagery, treatment labels such as control/saline/C1/C2, illegible paragraphs of text.
+```
+
+First targeted plumbing correction:
+
+```text
+Use case: precise-object-edit
+Asset type: scientific greenhouse concept image
+Input images: Image 1 is the edit target.
+Primary request: correct only the plumbing in the lower equipment area so the captured-drain return system and brine-concentrate system are unmistakably separate.
+Required edit: keep the gold "CAPTURED DRAIN RETURN TANK" connected to the amber captured-return pipes from the plant benches and to a dedicated amber recirculation/reclamation pipe back toward the central treatment equipment. Connect the dark "BRINE HOLDING TANK" only to a separate dark-amber reject line coming directly from the central treatment/reverse-osmosis equipment. There must be no pipe, valve, junction, or shared manifold between the captured-drain tank and the brine tank. Leave visible floor space between their separate lines if helpful.
+Constraints: change only this lower plumbing relationship; preserve the greenhouse, cohort layout, all plants, opaque plant tags, cohort signs, tanks, colors, framing, lighting, labels, and overall style. Do not add raw seawater irrigation, open drains, soil discharge, treatment claims, biological efficacy claims, logos, or watermarks.
+```
+
+Final targeted correction used for the saved asset:
+
+```text
+Use case: precise-object-edit
+Asset type: scientific greenhouse concept image
+Input images: Image 1 is the edit target.
+Primary request: remove one specific plumbing error and change nothing else.
+Required edit: completely DELETE the brown horizontal pipe and every connector that currently runs between the gold "CAPTURED DRAIN RETURN TANK" and the dark "BRINE HOLDING TANK." Cap or cleanly terminate the right-side outlet of the gold tank. Remove the visible pipe attachments from the dark tank if necessary. Leave a broad, unmistakable area of bare clean concrete floor between these two tanks. DO NOT draw any replacement pipe across that gap. The two tanks must have zero visible connection to each other.
+Preserve exactly: all plants, opaque tags, discovery and confirmation cohort signs, benches, blue and amber bench piping, treated-water tank, remineralization vessel, central treatment equipment, gold captured-drain tank, dark brine tank, labels, composition, lighting, colors, and overall style.
+Constraints: no new objects, no new text, no raw seawater irrigation, no open drain, no soil discharge, no efficacy claim, no logo, no watermark.
+```
