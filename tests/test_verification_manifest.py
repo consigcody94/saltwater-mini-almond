@@ -1,91 +1,107 @@
+from __future__ import annotations
+
+import hashlib
 from importlib import resources
+from pathlib import Path
 
 import hypothesis
+import pytest
 import yaml
-from hypothesis import Phase, given, seed, settings, strategies as st
+
+from almondlab.verification_policy import load_conservation_case_manifest
 
 
-def _generated_examples(candidates: tuple[object, ...], seed_value: int) -> list[object]:
-    observed: list[object] = []
+GENERATOR_SCHEMA = {
+    "name": "hypothesis",
+    "version": hypothesis.__version__,
+    "phase": "generate_only",
+    "shrinking": False,
+    "strategy": "sampled_from_frozen_candidate_set",
+    "properties": {
+        "blend": {"seed": 20260814, "max_examples": 2},
+        "flow": {"seed": 20260812, "max_examples": 2},
+        "ro": {"seed": 20260813, "max_examples": 2},
+    },
+}
 
-    @seed(seed_value)
-    @settings(
-        max_examples=2,
-        database=None,
-        deadline=None,
-        phases=(Phase.generate,),
+
+def test_manifest_generator_and_collective_schema_are_exact() -> None:
+    manifest, digest = load_conservation_case_manifest()
+
+    assert len(digest) == 64
+    generator = manifest["generator"]
+    assert generator["name"] == GENERATOR_SCHEMA["name"]
+    assert generator["version"] == GENERATOR_SCHEMA["version"]
+    assert generator["phase"] == "generate_only"
+    assert generator["shrinking"] is False
+    assert generator["strategy"] == "sampled_from_frozen_candidate_set"
+    assert len(generator["candidate_set_sha256"]) == 64
+    assert tuple(manifest["cases"]) == ("flow", "ro", "blend")
+    assert tuple(case["id"] for case in manifest["cases"]["flow"]) == (
+        "flow_seed_20260812_01",
+        "flow_seed_20260812_02",
     )
-    @given(st.sampled_from(candidates))
-    def generate(candidate: object) -> None:
-        observed.append(candidate)
-
-    generate()
-    return observed
 
 
-def test_frozen_conservation_manifest_is_reproducible_from_pinned_hypothesis() -> None:
-    manifest = yaml.safe_load(
+def test_manifest_rejects_reordered_extrema_even_when_membership_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    contents = (
         resources.files("almondlab.resources")
         .joinpath("fixtures/conservation_case_manifest.yaml")
-        .read_bytes()
+        .read_text()
     )
-    generator = manifest["generator"]
+    payload = yaml.safe_load(contents)
+    values = payload["extrema_schema"]["flow"]["global_relative_residual"]
+    values[0], values[1] = values[1], values[0]
+    source = tmp_path / "conservation_case_manifest.yaml"
+    source.write_text(yaml.safe_dump(payload, sort_keys=False))
 
-    assert generator == {
-        "name": "hypothesis",
-        "version": hypothesis.__version__,
-        "properties": {
-            "blend": {"seed": 20260814, "max_examples": 2, "database": None, "deadline": None},
-            "flow": {"seed": 20260812, "max_examples": 2, "database": None, "deadline": None},
-            "ro": {"seed": 20260813, "max_examples": 2, "database": None, "deadline": None},
-        },
-    }
-    assert {
-        property_id: [case["id"] for case in manifest["cases"][property_id]]
-        for property_id in ("blend", "flow", "ro")
-    } == {
-        "blend": ["blend_seed_20260814_01", "blend_seed_20260814_02"],
-        "flow": ["flow_seed_20260812_01", "flow_seed_20260812_02"],
-        "ro": ["ro_seed_20260813_01", "ro_seed_20260813_02"],
-    }
+    with pytest.raises(ValueError, match="exact canonical set"):
+        load_conservation_case_manifest(source)
 
-    flow_candidates = (
-        (12.0, 3.0, 2.0, 1.0),
-        (25.0, 5.0, 1.5, 2.0),
-        (18.0, 2.0, 1.0, 3.0),
-        (30.0, 10.0, 4.0, 1.0),
-    )
-    ro_candidates = (
-        (12.0, 0.25, 0.90, 0.80),
-        (40.0, 0.75, 0.25, 1.0),
-        (25.0, 0.50, 0.50, 0.75),
-        (10.0, 0.60, 1.0, 0.0),
-    )
-    blend_candidates = (
-        (1.0, 3.0),
-        (5.0, 2.0),
-        (2.0, 5.0),
-        (4.0, 1.0),
-    )
 
-    assert [
-        (
-            case["source_volume_l"],
-            case["target_volume_l"],
-            case["rate_l_per_hour"],
-            case["duration_hours"],
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("drop_flow_entity", "keys mismatch"),
+        ("drop_extrema_entity", "exact canonical set"),
+        ("generator_name", "generator"),
+        ("enable_shrinking", "shrinking"),
+    ],
+)
+def test_manifest_rejects_collectively_corrupted_schema(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    contents = (
+        resources.files("almondlab.resources")
+        .joinpath("fixtures/conservation_case_manifest.yaml")
+        .read_text()
+    )
+    payload = yaml.safe_load(contents)
+    if mutation == "drop_flow_entity":
+        del payload["cases"]["flow"][0]["source"]["stocks"]["cl"]
+    elif mutation == "drop_extrema_entity":
+        payload["extrema_schema"]["ro"]["conservation_absolute_residual"].remove(
+            "water"
         )
-        for case in manifest["cases"]["flow"]
-    ] == _generated_examples(flow_candidates, 20260812)
-    assert [
-        (
-            case["feed_volume_l"],
-            case["recovery"],
-            case["rejection"]["na"],
-            case["rejection"]["cl"],
-        )
-        for case in manifest["cases"]["ro"]
-    ] == _generated_examples(ro_candidates, 20260813)
-    assert [tuple(case["volumes_l"]) for case in manifest["cases"]["blend"]] == (
-        _generated_examples(blend_candidates, 20260814)
-    )
+    elif mutation == "generator_name":
+        payload["generator"]["name"] = "corrupted"
+    else:
+        payload["generator"]["shrinking"] = True
+    source = tmp_path / "conservation_case_manifest.yaml"
+    source.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(ValueError, match=message):
+        load_conservation_case_manifest(source)
+
+
+def test_strategy_digest_covers_exact_candidate_payload() -> None:
+    manifest, _ = load_conservation_case_manifest()
+    canonical_cases = resources.files("almondlab.resources").joinpath(
+        "fixtures/conservation_case_manifest.candidates.json"
+    ).read_bytes()
+
+    assert manifest["generator"]["candidate_set_sha256"] == hashlib.sha256(
+        canonical_cases
+    ).hexdigest()

@@ -103,11 +103,9 @@ sar:
   expected_denominator_mmol_c_l: 1.7320508075688772
   expected_value: 5.773502692
 ec_rejection:
-  feed_volume_l: 1.0
-  feed_stock_mmol: {na: 1.0}
-  recovery: 0.5
-  rejection: {ECw: 0.5}
+  feed: {stream_id: ec-feed, volume_l: 1.0, water_mass_kg: 0.997, stocks: {na: 1.0}, evidence_label: physics_constrained}
+  parameters: {model_id: ec-invalid, version: 1.0.0, recovery: 0.5, rejection: {ECw: 0.5}, evidence_label: physics_constrained}
   expected_code: RO_EC_REJECTION_FORBIDDEN
   expected_field_path: rejection
-  expected_message: EC rejection cannot substitute for ion-specific rejection
+  expected_message: EC cannot substitute for ion-specific rejection
   expected_rejected: true

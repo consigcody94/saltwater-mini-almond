@@ -1,10 +1,15 @@
 schema_version: 2
 initial:
   tank:
+    kind: blend_tank
+    loop_id: main
     volume_l: 10.0
     water_mass_kg: 9.97
     empty_reference_density_kg_l: 0.997
     stocks: {na: 50.0}
+tracked_entities: [na]
+evidence_label: physics_constrained
+cursor: {run_id: ACCEPT04, chain_id: main, start_ordinal: 0}
 influx:
   event_id: feed
   boundary_id: measured-feed
@@ -24,5 +29,6 @@ purge: 2.0
 sample_hours: 5.0
 samples: 12
 max_substep_hours: 0.01
+verification_max_substep_hours: 0.0004
 relative_tolerance: 0.003
 terminal_absolute_tolerance: 0.001

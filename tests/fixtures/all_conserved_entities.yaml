@@ -1,119 +1,26 @@
+schema_version: 2
+fixture_role: acceptance_20_all_entity_anchor
 initial:
-  volumes_l: {source: 100.0, receiving: 0.0}
-  stocks_mmol:
-    source:
-      na: 200.0
-      cl: 300.0
-      ca: 40.0
-      mg: 30.0
-      k: 20.0
-      total_b: 1.0
-      n: 10.0
-      p: 5.0
-      s: 15.0
-      dissolved_inorganic_carbon: 25.0
-      alkalinity: 35.0
-    receiving:
-      na: 0.0
-      cl: 0.0
-      ca: 0.0
-      mg: 0.0
-      k: 0.0
-      total_b: 0.0
-      n: 0.0
-      p: 0.0
-      s: 0.0
-      dissolved_inorganic_carbon: 0.0
-      alkalinity: 0.0
-flow: {source: source, target: receiving, rate_l_per_hour: 10.0}
+  source: {kind: irrigation_tank, loop_id: main, volume_l: 100.0, water_mass_kg: 99.7, empty_reference_density_kg_l: 0.997, stocks: {na: 200.0, cl: 300.0, ca: 40.0, mg: 30.0, k: 20.0, total_b: 1.0, n: 10.0, p: 5.0, s: 15.0, dissolved_inorganic_carbon: 25.0, alkalinity: 35.0}}
+  target: {kind: root_zone, loop_id: main, volume_l: 0.0, water_mass_kg: 0.0, empty_reference_density_kg_l: 0.997, stocks: {na: 0.0, cl: 0.0, ca: 0.0, mg: 0.0, k: 0.0, total_b: 0.0, n: 0.0, p: 0.0, s: 0.0, dissolved_inorganic_carbon: 0.0, alkalinity: 0.0}}
+tracked_entities: [na, cl, ca, mg, k, total_b, n, p, s, dissolved_inorganic_carbon, alkalinity]
+evidence_label: physics_constrained
+flow: {event_id: transfer-all, source: source, target: target, rate_l_per_hour: 10.0, flow_kind: aqueous_transfer, phase: irrigation, evidence_label: physics_constrained}
+cursor: {run_id: ACCEPT20, chain_id: transfer, start_ordinal: 0}
 duration_hours: 2.0
+expected:
+  source: {volume_l: 80.0, water_mass_kg: 79.76, stocks: {na: 160.0, cl: 240.0, ca: 32.0, mg: 24.0, k: 16.0, total_b: 0.8, n: 8.0, p: 4.0, s: 12.0, dissolved_inorganic_carbon: 20.0, alkalinity: 28.0}}
+  target: {volume_l: 20.0, water_mass_kg: 19.94, stocks: {na: 40.0, cl: 60.0, ca: 8.0, mg: 6.0, k: 4.0, total_b: 0.2, n: 2.0, p: 1.0, s: 3.0, dissolved_inorganic_carbon: 5.0, alkalinity: 7.0}}
 expected_ledger:
-  transaction_count: 8
-  row_count: 192
-  first_substep: 1
-  flow_index: 0
-  source: source
-  target: receiving
-  per_transaction_transfer: {water: 2.5, na: 5.0, cl: 7.5, ca: 1.0, mg: 0.75, k: 0.5, total_b: 0.025, n: 0.25, p: 0.125, s: 0.375, dissolved_inorganic_carbon: 0.625, alkalinity: 0.875}
-expected_transfer:
-  volumes_l: {source: 80.0, receiving: 20.0}
-  stocks_mmol:
-    source:
-      na: 160.0
-      cl: 240.0
-      ca: 32.0
-      mg: 24.0
-      k: 16.0
-      total_b: 0.8
-      n: 8.0
-      p: 4.0
-      s: 12.0
-      dissolved_inorganic_carbon: 20.0
-      alkalinity: 28.0
-    receiving:
-      na: 40.0
-      cl: 60.0
-      ca: 8.0
-      mg: 6.0
-      k: 4.0
-      total_b: 0.2
-      n: 2.0
-      p: 1.0
-      s: 3.0
-      dissolved_inorganic_carbon: 5.0
-      alkalinity: 7.0
-  concentrations_mmol_l:
-    source:
-      na: 2.0
-      cl: 3.0
-      ca: 0.4
-      mg: 0.3
-      k: 0.2
-      total_b: 0.01
-      n: 0.1
-      p: 0.05
-      s: 0.15
-      dissolved_inorganic_carbon: 0.25
-      alkalinity: 0.35
-    receiving:
-      na: 2.0
-      cl: 3.0
-      ca: 0.4
-      mg: 0.3
-      k: 0.2
-      total_b: 0.01
-      n: 0.1
-      p: 0.05
-      s: 0.15
-      dissolved_inorganic_carbon: 0.25
-      alkalinity: 0.35
+  {run_id: ACCEPT20, chain_id: transfer, start_ordinal: 0, transaction_count: 8, row_count: 192, event_id: transfer-all, phase: irrigation, transfer_mode: advective_aqueous, flow_kind: aqueous_transfer, source: source, target: target, evidence_label: physics_constrained, carrier_volume_l: 2.5, transaction_duration_hours: 0.25, water_density_kg_l: 0.997, per_transaction_amounts: {water: 2.4925, na: 5.0, cl: 7.5, ca: 1.0, mg: 0.75, k: 0.5, total_b: 0.025, n: 0.25, p: 0.125, s: 0.375, dissolved_inorganic_carbon: 0.625, alkalinity: 0.875}}
 ro:
-  feed_volume_l: 100.0
-  recovery: 0.60
-  rejection: 0.90
-  expected_volumes_l: {feed: 100.0, permeate: 60.0, concentrate: 40.0}
-  expected_stocks_mmol:
-    permeate:
-      na: 12.0
-      cl: 18.0
-      ca: 2.4
-      mg: 1.8
-      k: 1.2
-      total_b: 0.06
-      n: 0.6
-      p: 0.3
-      s: 0.9
-      dissolved_inorganic_carbon: 1.5
-      alkalinity: 2.1
-    concentrate:
-      na: 188.0
-      cl: 282.0
-      ca: 37.6
-      mg: 28.2
-      k: 18.8
-      total_b: 0.94
-      n: 9.4
-      p: 4.7
-      s: 14.1
-      dissolved_inorganic_carbon: 23.5
-      alkalinity: 32.9
+  feed: {stream_id: manifest-feed, volume_l: 100.0, water_mass_kg: 99.7, stocks: {na: 200.0, cl: 300.0}, evidence_label: physics_constrained}
+  parameters: {model_id: core-ro-v1, version: 1.0.0, recovery: 0.60, rejection: {na: 0.90, cl: 0.80}, evidence_label: physics_constrained}
+  cursor: {run_id: ACCEPT20, chain_id: ro, start_ordinal: 0}
+  permeate_stream_id: permeate
+  concentrate_stream_id: concentrate
+  expected:
+    permeate: {volume_l: 60.0, water_mass_kg: 59.82, stocks: {na: 12.0, cl: 36.0}}
+    concentrate: {volume_l: 40.0, water_mass_kg: 39.88, stocks: {na: 188.0, cl: 264.0}}
+    selectively_rejected: {na: 108.0, cl: 144.0}
+    next_ordinal: 2

@@ -1,17 +1,29 @@
+schema_version: 2
 initial:
-  volumes_l: {reservoir: 1000.0, field: 0.0}
-  stocks_mmol: {reservoir: {}, field: {}}
-flow:
-  source: reservoir
-  target: field
-  rate_l_per_hour: 10.0
+  source: {kind: irrigation_tank, loop_id: main, volume_l: 1000.0, water_mass_kg: 997.0, empty_reference_density_kg_l: 0.997, stocks: {}}
+  target: {kind: root_zone, loop_id: main, volume_l: 0.0, water_mass_kg: 0.0, empty_reference_density_kg_l: 0.997, stocks: {}}
+tracked_entities: []
+evidence_label: physics_constrained
+flow: {event_id: irrigate, source: source, target: target, rate_l_per_hour: 10.0, flow_kind: aqueous_transfer, phase: irrigation, evidence_label: physics_constrained}
+cursor: {run_id: ACCEPT01, chain_id: main, start_ordinal: 0}
 duration_hours: 24.0
-expected_volumes_l: {reservoir: 760.0, field: 240.0}
+expected:
+  source: {volume_l: 760.0, water_mass_kg: 757.72, stocks: {}}
+  target: {volume_l: 240.0, water_mass_kg: 239.28, stocks: {}}
 expected_ledger:
+  run_id: ACCEPT01
+  chain_id: main
+  start_ordinal: 0
   transaction_count: 96
   row_count: 192
-  first_substep: 1
-  flow_index: 0
-  source: reservoir
-  target: field
-  per_transaction_transfer: {water: 2.5}
+  event_id: irrigate
+  phase: irrigation
+  transfer_mode: advective_aqueous
+  flow_kind: aqueous_transfer
+  source: source
+  target: target
+  evidence_label: physics_constrained
+  carrier_volume_l: 2.5
+  transaction_duration_hours: 0.25
+  water_density_kg_l: 0.997
+  per_transaction_amounts: {water: 2.4925}

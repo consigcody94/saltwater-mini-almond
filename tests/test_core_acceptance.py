@@ -1,663 +1,702 @@
+from __future__ import annotations
+
+import ast
 import hashlib
 import json
-from dataclasses import replace
-from importlib import resources
+import subprocess
+import sys
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from almondlab import verification
-from almondlab.contracts import EvidenceLabel
-from almondlab.contracts import ConservedEntity
-from almondlab.mass_balance import LedgerEntry, StepResult
-from almondlab.treatment import ROResult
+from almondlab.contracts import ConservedEntity, EvidenceLabel, StockUnit
 from almondlab.verification import (
     VerificationRecord,
+    capture_code_provenance,
+    code_version_from_provenance,
     evaluate_run_stops,
-    load_conservation_case_manifest,
-    load_threshold_policy,
-    load_verification_policy,
-    load_physical_stops,
     run_core_acceptance,
     write_verification_record,
 )
+from almondlab.verification_policy import (
+    CANONICAL_PHYSICAL_STOPS,
+    CANONICAL_VERIFICATION_TOLERANCES,
+    load_threshold_policy,
+    load_verification_policy,
+    validate_threshold_policy,
+    validate_verification_policy,
+)
 
 
-def test_core_acceptance_writes_only_owned_records_to_run_directory(tmp_path: Path) -> None:
-    fixture = resources.files("almondlab.resources").joinpath(
-        "fixtures/perfect_na_exclusion.yaml"
+_PROVENANCE_UNAVAILABLE = {
+    "package_version": None,
+    "git_sha": None,
+    "git_dirty": None,
+    "git_status_sha256": None,
+    "unavailable": (
+        "package_version",
+        "git_sha",
+        "git_dirty",
+        "git_status_sha256",
+    ),
+}
+
+
+def _record(**overrides: object) -> VerificationRecord:
+    values: dict[str, object] = {
+        "acceptance_test": 13,
+        "fixture_sha256": "a" * 64,
+        "observed_value": {"value": 0.5000001},
+        "oracle": {"value": 0.5},
+        "tolerance": {"value": 1e-6},
+        "comparison": {"value": "abs_le"},
+        "code_version": "unavailable:explicit-test-gate",
+        "code_provenance": _PROVENANCE_UNAVAILABLE,
+        "evidence_label": EvidenceLabel.PHYSICS_CONSTRAINED,
+    }
+    values.update(overrides)
+    return VerificationRecord(**values)  # type: ignore[arg-type]
+
+
+def test_verification_record_pass_state_is_read_only_and_caller_unsettable() -> None:
+    record = _record()
+
+    assert record.passed is True
+    assert "passed" not in record.__dataclass_fields__
+    with pytest.raises(TypeError):
+        _record(passed=True)
+    with pytest.raises((FrozenInstanceError, AttributeError, TypeError)):
+        record.passed = False  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("observed", ["0.5", True])
+def test_numeric_observation_wrong_type_fails_without_coercion(observed: object) -> None:
+    record = _record(observed_value={"value": observed})
+
+    assert record.passed is False
+
+
+@pytest.mark.parametrize("tolerance", [True, False])
+def test_boolean_tolerance_is_invalid_schema(tolerance: bool) -> None:
+    with pytest.raises(ValueError, match="tolerance"):
+        _record(tolerance={"value": tolerance})
+
+
+@pytest.mark.parametrize(
+    ("observed", "oracle"),
+    [(1, 1.0), (1, True), (False, 0)],
+)
+def test_equality_requires_exact_json_scalar_kind(
+    observed: object, oracle: object
+) -> None:
+    record = _record(
+        observed_value=observed,
+        oracle=oracle,
+        tolerance=0,
+        comparison="eq",
     )
 
+    assert record.passed is False
+
+
+def test_eq_rejects_boolean_tolerance_even_though_bool_equals_zero() -> None:
+    with pytest.raises(ValueError, match="eq tolerance"):
+        _record(
+            observed_value=1,
+            oracle=1,
+            tolerance=False,
+            comparison="eq",
+        )
+
+
+@pytest.mark.parametrize(
+    "bad_mapping",
+    [
+        {1: "numeric-key"},
+        {"1": "string-key", 1: "collides-after-stringification"},
+    ],
+)
+def test_record_rejects_non_string_and_colliding_mapping_keys(
+    bad_mapping: dict[object, object],
+) -> None:
+    with pytest.raises(ValueError, match="string keys"):
+        _record(observed_value=bad_mapping, oracle=bad_mapping)
+
+
+def test_record_deep_freezes_provenance_and_nested_unavailable() -> None:
+    nested = {
+        **_PROVENANCE_UNAVAILABLE,
+        "unavailable": [
+            "package_version",
+            "git_sha",
+            "git_dirty",
+            "git_status_sha256",
+        ],
+    }
+    record = _record(code_provenance=nested)
+
+    assert isinstance(record.code_provenance, MappingProxyType)
+    assert isinstance(record.code_provenance["unavailable"], tuple)
+    nested["unavailable"].append("invented")  # type: ignore[union-attr]
+    assert "invented" not in record.code_provenance["unavailable"]
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {
+            **_PROVENANCE_UNAVAILABLE,
+            "package_version": None,
+            "unavailable": ("git_sha", "git_dirty", "git_status_sha256"),
+        },
+        {
+            **_PROVENANCE_UNAVAILABLE,
+            "git_sha": "not-a-sha",
+            "unavailable": ("package_version", "git_dirty", "git_status_sha256"),
+        },
+        {
+            **_PROVENANCE_UNAVAILABLE,
+            "git_dirty": "false",
+            "unavailable": ("package_version", "git_sha", "git_status_sha256"),
+        },
+    ],
+)
+def test_provenance_requires_exact_types_and_exact_unavailable_set(
+    provenance: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="provenance|unavailable"):
+        _record(code_provenance=provenance).validate()
+
+
+def _git(tmp_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *arguments],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_code_provenance_detects_untracked_files_in_real_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "src" / "almondlab" / "verification.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("# tracked module\n")
+    _git(tmp_path, "init")
+    _git(tmp_path, "add", module.relative_to(tmp_path).as_posix())
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=AlmondLab Test",
+        "-c",
+        "user.email=almondlab@example.invalid",
+        "commit",
+        "-m",
+        "tracked module",
+    )
+    clean_status = _git(
+        tmp_path, "status", "--porcelain=v1", "--untracked-files=all"
+    ).stdout.encode()
+    monkeypatch.setattr(verification, "__file__", str(module))
+    clean = verification._code_provenance()
+    assert clean["git_dirty"] is False
+    assert clean["git_status_sha256"] == hashlib.sha256(clean_status).hexdigest()
+
+    (tmp_path / "untracked.txt").write_text("untracked\n")
+    dirty_status = _git(
+        tmp_path, "status", "--porcelain=v1", "--untracked-files=all"
+    ).stdout.encode()
+    dirty = verification._code_provenance()
+    assert dirty["git_dirty"] is True
+    assert dirty["git_status_sha256"] == hashlib.sha256(dirty_status).hexdigest()
+    assert dirty["git_status_sha256"] != clean["git_status_sha256"]
+
+
+def test_code_provenance_rejects_untracked_module_in_unrelated_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracked = tmp_path / "README.md"
+    tracked.write_text("unrelated repo\n")
+    _git(tmp_path, "init")
+    _git(tmp_path, "add", "README.md")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=AlmondLab Test",
+        "-c",
+        "user.email=almondlab@example.invalid",
+        "commit",
+        "-m",
+        "unrelated repository",
+    )
+    untracked_module = tmp_path / "site-packages" / "almondlab" / "verification.py"
+    untracked_module.parent.mkdir(parents=True)
+    untracked_module.write_text("# installed-style untracked module\n")
+    monkeypatch.setattr(verification, "__file__", str(untracked_module))
+
+    provenance = verification._code_provenance()
+
+    assert provenance["git_sha"] is None
+    assert provenance["git_dirty"] is None
+    assert provenance["git_status_sha256"] is None
+    assert provenance["unavailable"] == (
+        "git_sha",
+        "git_dirty",
+        "git_status_sha256",
+    )
+
+
+def test_public_provenance_api_is_generic_and_matches_private_compatibility_aliases(
+) -> None:
+    provenance = capture_code_provenance()
+    code_version = code_version_from_provenance(provenance)
+
+    assert provenance == verification._code_provenance()
+    assert code_version == verification._code_version(provenance)
+    record = VerificationRecord(
+        acceptance_test=6,
+        fixture_sha256="b" * 64,
+        observed_value={"value": 1.0},
+        oracle={"value": 1.0},
+        tolerance={"value": 0.0},
+        comparison={"value": "abs_le"},
+        code_version=code_version,
+        code_provenance=provenance,
+        evidence_label=EvidenceLabel.SYNTHETIC_ONLY,
+    )
+    record.validate()
+    assert record.passed is True
+
+
+def test_writer_validates_before_atomic_target_creation(tmp_path: Path) -> None:
+    target = tmp_path / "verification" / "record.json"
+    with pytest.raises(ValueError):
+        write_verification_record(
+            target,
+            _record(fixture_sha256="not-a-digest"),
+        )
+    assert not target.exists()
+    assert not target.parent.exists()
+
+
+def test_atomic_writer_preserves_previous_file_when_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "verification" / "record.json"
+    target.parent.mkdir()
+    target.write_bytes(b"previous\n")
+
+    def fail_replace(source: object, destination: object) -> None:
+        raise OSError("injected atomic replace failure")
+
+    monkeypatch.setattr(verification.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failure"):
+        write_verification_record(target, _record())
+
+    assert target.read_bytes() == b"previous\n"
+    assert not tuple(target.parent.glob(f".{target.name}.*.tmp"))
+
+
+def test_auxiliary_artifact_hashes_cover_exact_written_bytes(tmp_path: Path) -> None:
     records = run_core_acceptance(tmp_path)
 
-    assert [record.acceptance_test for record in records] == [1, 2, 3, 4, 5, 13, 19, 20]
+    for record in records:
+        for resource_id, digest in record.auxiliary_artifacts_sha256s.items():
+            target = tmp_path / "verification" / resource_id
+            assert target.is_file()
+            assert hashlib.sha256(target.read_bytes()).hexdigest() == digest
+
+
+def test_evaluate_stops_accepts_only_complete_authoritative_policy() -> None:
+    policy = load_threshold_policy()
+    good = evaluate_run_stops(
+        numerical_values={"state": 1.0},
+        stocks={"na": 0.0},
+        ledger_relative_residuals={"water": 0.0},
+        physical_values={"volume_l": 10.0},
+        threshold_policy=policy,
+        applicable_stop_ids=("volume_l",),
+    )
+    assert good.valid is True
+
+    mutated_stops = dict(policy.physical_stops)
+    mutated_stops["volume_l"] = replace(
+        mutated_stops["volume_l"], maximum=1001.0
+    )
+    weakened = replace(policy, physical_stops=mutated_stops)
+    with pytest.raises(ValueError, match="canonical|locked"):
+        evaluate_run_stops(
+            numerical_values={"state": 1.0},
+            stocks={"na": 0.0},
+            ledger_relative_residuals={"water": 0.0},
+            physical_values={"volume_l": 10.0},
+            threshold_policy=weakened,
+            applicable_stop_ids=("volume_l",),
+        )
+
+
+@pytest.mark.parametrize(
+    ("stop_id", "field_name"),
+    [
+        (stop_id, field_name)
+        for stop_id, (minimum, maximum, _) in CANONICAL_PHYSICAL_STOPS.items()
+        for field_name, value in (("minimum", minimum), ("maximum", maximum))
+        if value is not None
+    ],
+)
+def test_every_schema_1_physical_threshold_is_locked_exactly(
+    stop_id: str, field_name: str
+) -> None:
+    policy = load_threshold_policy()
+    stops = dict(policy.physical_stops)
+    original = getattr(stops[stop_id], field_name)
+    assert original is not None
+    stops[stop_id] = replace(
+        stops[stop_id], **{field_name: original + 0.125}
+    )
+
+    with pytest.raises(ValueError, match="canonical|locked"):
+        validate_threshold_policy(replace(policy, physical_stops=stops))
+
+
+@pytest.mark.parametrize("stop_id", tuple(CANONICAL_PHYSICAL_STOPS))
+def test_every_schema_1_physical_label_is_locked_exactly(stop_id: str) -> None:
+    policy = load_threshold_policy()
+    stops = dict(policy.physical_stops)
+    stops[stop_id] = replace(
+        stops[stop_id], evidence_label=EvidenceLabel.HYPOTHESIS_PRIOR
+    )
+
+    with pytest.raises(ValueError, match="canonical|locked"):
+        validate_threshold_policy(replace(policy, physical_stops=stops))
+
+
+@pytest.mark.parametrize(
+    ("test_number", "name"),
+    [
+        (test_number, name)
+        for test_number, values in CANONICAL_VERIFICATION_TOLERANCES.items()
+        for name in values
+    ],
+)
+def test_every_schema_1_verification_tolerance_is_locked_exactly(
+    test_number: int, name: str
+) -> None:
+    policy = load_verification_policy()
+    tolerances = {
+        test_id: dict(values) for test_id, values in policy.tolerances.items()
+    }
+    original = tolerances[test_number][name]
+    tolerances[test_number][name] = 1.0 if original == 0.0 else original * 0.5
+
+    with pytest.raises(ValueError, match="canonical|locked"):
+        validate_verification_policy(replace(policy, tolerances=tolerances))
+
+
+def test_verification_source_has_unique_top_level_acceptance_helpers() -> None:
+    source_path = Path(verification.__file__)
+    module = ast.parse(source_path.read_text())
+    names = [node.name for node in module.body if isinstance(node, ast.FunctionDef)]
+
+    assert names.count("_run_case_manifest") == 1
+    assert names.count("_acceptance_20_bundle") == 1
+    assert names.count("_acceptance_20") == 1
+    assert "minimized_counterexample" not in source_path.read_text()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("start_ordinal", "0"),
+        ("transaction_count", True),
+        ("row_count", 1.5),
+        ("transaction_duration_hours", "0.25"),
+        ("carrier_volume_l", float("inf")),
+        ("water_density_kg_l", 10**400),
+    ],
+)
+def test_schema_v2_ledger_fixture_rejects_coercion_and_nonfinite_numbers(
+    field_name: str, value: object
+) -> None:
+    fixture, _ = verification._fixture("water_one_day.yaml")
+    expected = dict(fixture["expected_ledger"])
+    expected[field_name] = value
+
+    with pytest.raises(ValueError, match="primitive|finite|integer|row count"):
+        verification._ledger_transaction_expectations(expected)
+
+
+def test_acceptance_19_uses_code_owned_six_case_oracle() -> None:
+    assert verification.EC_DIRECTIONAL_MISMATCH_ORACLE == (
+        ("ECw", "pore_water_EC"),
+        ("ECw", "ECe"),
+        ("pore_water_EC", "ECw"),
+        ("pore_water_EC", "ECe"),
+        ("ECe", "ECw"),
+        ("ECe", "pore_water_EC"),
+    )
+    record = verification._acceptance_19(
+        cases=verification.EC_DIRECTIONAL_MISMATCH_ORACLE[:-1]
+    )
+    assert record.passed is False
+
+
+def test_core_acceptance_runs_exact_registry_and_schema_v2_ledgers(tmp_path: Path) -> None:
+    records = run_core_acceptance(tmp_path)
+
+    assert tuple(record.acceptance_test for record in records) == (
+        1,
+        2,
+        3,
+        4,
+        5,
+        13,
+        19,
+        20,
+    )
+    assert all(record.passed for record in records)
     artifact_directory = tmp_path / "verification"
-    assert sorted(path.name for path in artifact_directory.glob("*.json")) == [
-        "test_01.json", "test_02.json", "test_03.json", "test_04.json",
-        "test_05.json", "test_13.json", "test_19.json", "test_20.json",
-    ]
-    payload = json.loads((artifact_directory / "test_13.json").read_text())
-    assert payload["fixture_sha256"] == hashlib.sha256(fixture.read_bytes()).hexdigest()
+    assert {path.name for path in artifact_directory.glob("test_*.json")} == {
+        "test_01.json",
+        "test_02.json",
+        "test_03.json",
+        "test_04.json",
+        "test_05.json",
+        "test_13.json",
+        "test_19.json",
+        "test_20.json",
+    }
+    t1 = json.loads((artifact_directory / "test_01.json").read_text())
+    ledger = t1["observed_value"]["ledger"]
+    assert ledger[0]["transaction_id"].startswith("tx:ACCEPT01:main:")
+    assert {row["unit"] for row in ledger if row["quantity"] == "water"} == {"kg"}
+    t2 = json.loads((artifact_directory / "test_02.json").read_text())
     assert {
-        key: payload["observed_value"][key]
-        for key in ("fresh_l_day", "saline_l_day", "ratio")
-    } == pytest.approx(
-        {"fresh_l_day": 0.888212, "saline_l_day": 0.455696, "ratio": 0.513049}
+        row["unit"]
+        for row in t2["observed_value"]["ledger"]
+        if row["quantity"] == "alkalinity"
+    } == {
+        "mmol_c"
+    }
+    assert "water_mass_kg" in t1["observed_value"]["post_state"]["source"]
+    assert "volume_l" in t1["observed_value"]["post_state"]["source"]
+
+    t13 = json.loads((artifact_directory / "test_13.json").read_text())
+    assert t13["observed_value"]["domain_policy"] == {
+        **t13["oracle"]["domain_policy"]
+    }
+    assert t13["observed_value"]["domain_policy"]["model_id"] == (
+        "core_v1.acceptance_13"
     )
-    assert {
-        key: payload["oracle"][key]
-        for key in ("fresh_l_day", "saline_l_day", "ratio")
-    } == pytest.approx(
-        {"fresh_l_day": 0.888212, "saline_l_day": 0.455696, "ratio": 0.513049}
-    )
-    assert payload["observed_value"]["domain_policy"] == payload["oracle"]["domain_policy"]
-    assert payload["observed_value"]["domain_policy"]["model_id"] == "core_v1.acceptance_13"
-    assert payload["observed_value"]["domain_policy"]["scope"] == (
+    assert t13["observed_value"]["domain_policy"]["scope"] == (
         "numerical_oracle_not_almond_applicability"
     )
-    assert len(payload["observed_value"]["domain_policy"]["sha256"]) == 64
-    assert payload["fixture_sha256s"]["perfect_na_exclusion.hydraulic_domain"] == (
-        payload["observed_value"]["domain_policy"]["sha256"]
-    )
-    assert {
-        key: payload["tolerance"][key]
-        for key in ("fresh_l_day", "saline_l_day", "ratio")
-    } == pytest.approx(
-        {"fresh_l_day": 1e-6, "saline_l_day": 1e-6, "ratio": 1e-6}
-    )
 
-    ec_payload = json.loads((artifact_directory / "test_19.json").read_text())
-    assert ec_payload["observed_value"]["records_reached_analysis"] == 0
-    assert [case["code"] for case in ec_payload["observed_value"]["cases"]] == [
-        "EC_TYPE_MISMATCH"
-    ] * 6
-
-    stop_payload = json.loads((artifact_directory / "test_03.json").read_text())
-    assert stop_payload["validity"] == "valid"
-    assert stop_payload["censored"] is True
-    assert stop_payload["reason_code"] == "PHYSICAL_STOP_CONCENTRATION_MMOL_L_MAXIMUM"
-    assert stop_payload["evidence_label"] == "synthetic_only"
-
-    conservation_payload = json.loads((artifact_directory / "test_20.json").read_text())
-    assert conservation_payload["observed_value"]["water_residual"] <= 1e-10
-    assert conservation_payload["observed_value"]["registered_entities"] == 12
-    assert set(conservation_payload["observed_value"]["entities"]) == {
-        "water", "na", "cl", "ca", "mg", "k", "total_b", "n", "p", "s",
-        "dissolved_inorganic_carbon", "alkalinity",
+    t20 = json.loads((artifact_directory / "test_20.json").read_text())
+    cases = t20["observed_value"]["case_manifest"]
+    assert cases["counterexample_semantics"] == {
+        "population": "frozen_manifest_cases",
+        "selection": "first_in_manifest_order",
+        "hypothesis_shrunk": False,
     }
-    assert set(conservation_payload["fixture_sha256s"]) >= {
-        "all_conserved_entities.yaml", "ions_conservative.yaml", "chemistry_handcheck.yaml",
-    }
-    assert conservation_payload["observed_value"]["transfer"]["volumes_l"] == {
-        "source": pytest.approx(80.0),
-        "receiving": pytest.approx(20.0),
-    }
-    assert conservation_payload["oracle"]["transfer"]["volumes_l"] == {
-        "source": 80.0,
-        "receiving": 20.0,
-    }
-    assert conservation_payload["observed_value"]["transfer"]["stocks_mmol"]["source"]["na"] == pytest.approx(160.0)
-    assert conservation_payload["observed_value"]["transfer"]["stocks_mmol"]["receiving"]["na"] == pytest.approx(40.0)
-    assert conservation_payload["observed_value"]["ro"]["volumes_l"] == {
-        "feed": 100.0,
-        "permeate": 60.0,
-        "concentrate": 40.0,
-    }
-    assert conservation_payload["observed_value"]["ro"]["inputs"]["recovery"] == 0.60
-    assert conservation_payload["observed_value"]["ro"]["inputs"]["rejection"]["na"] == 0.90
-    assert conservation_payload["observed_value"]["ro"]["stocks_mmol"]["feed"]["na"] == 200.0
-    assert conservation_payload["observed_value"]["ro"]["stocks_mmol"]["permeate"]["na"] == pytest.approx(12.0)
-    assert conservation_payload["observed_value"]["ro"]["stocks_mmol"]["concentrate"]["na"] == pytest.approx(188.0)
-    assert conservation_payload["observed_value"]["ions_anchor"]["post_quantities"]["source"]["water"] == pytest.approx(80.0)
-    assert conservation_payload["observed_value"]["ions_anchor"]["post_quantities"]["source"]["total_b"] == pytest.approx(0.8)
-    assert conservation_payload["observed_value"]["ions_anchor"]["ledger_audit"]["valid"] is True
-    assert conservation_payload["oracle"]["ions_anchor"]["post_quantities"]["receiving"]["alkalinity"] == 7.0
-    assert conservation_payload["comparison"]["minimum_state"] == "ge"
-    assert conservation_payload["oracle"]["minimum_state"] == -1e-12
-    assert conservation_payload["tolerance"]["minimum_state"] == 0.0
-    assert conservation_payload["passed"] is True
-    assert conservation_payload["observed_value"]["case_manifest"]["counts"] == {
-        "blend": 2,
-        "flow": 2,
-        "ro": 2,
-    }
-    assert conservation_payload["observed_value"]["case_manifest"]["minimized_counterexample"] is None
-    assert "conservation_case_manifest.yaml" in conservation_payload["fixture_sha256s"]
-    property_extrema = conservation_payload["observed_value"]["case_manifest"][
-        "per_quantity_extrema"
-    ]
-    assert set(property_extrema["flow"]["global_relative_residual"]) == {
+    assert cases["counterexample"] is None
+    assert "minimized_counterexample" not in cases
+    assert set(cases["per_quantity_extrema"]["flow"]["global_relative_residual"]) == {
         "water",
         "na",
         "cl",
     }
-    assert set(property_extrema["ro"]["conservation_absolute_residual"]) == {
+    assert set(cases["per_quantity_extrema"]["ro"]["conservation_absolute_residual"]) == {
         "water",
         "na",
         "cl",
     }
-    assert set(property_extrema["blend"]["literal_absolute_error"]) == {
-        "alkalinity_mmol_c_l",
-        "na_mmol_l",
-        "cl_mmol_l",
-        "ca_mmol_l",
-        "mg_mmol_l",
-        "k_mmol_l",
-        "total_b_mmol_l",
-        "sulfate_mmol_l",
-        "bicarbonate_mmol_l",
-        "nitrate_mmol_l",
-        "phosphate_mmol_l",
-    }
-
-    expected_auxiliary = {
-        "auxiliary/test_01_ledger.json",
-        "auxiliary/test_02_ledger.json",
-        "auxiliary/test_03_trajectory.json",
-        "auxiliary/test_04_trajectory.json",
-        "auxiliary/test_20_ledger.json",
-    }
-    observed_auxiliary = {
-        path.relative_to(artifact_directory).as_posix()
-        for path in (artifact_directory / "auxiliary").glob("*.json")
-    }
-    assert observed_auxiliary == expected_auxiliary
-    records_by_test = {record.acceptance_test: record for record in records}
-    for test_number, artifact_name in (
-        (1, "auxiliary/test_01_ledger.json"),
-        (2, "auxiliary/test_02_ledger.json"),
-        (3, "auxiliary/test_03_trajectory.json"),
-        (4, "auxiliary/test_04_trajectory.json"),
-        (20, "auxiliary/test_20_ledger.json"),
-    ):
-        artifact = artifact_directory / artifact_name
-        assert records_by_test[test_number].auxiliary_artifacts_sha256s[artifact_name] == hashlib.sha256(
-            artifact.read_bytes()
-        ).hexdigest()
-
-    t3_trajectory = json.loads(
-        (artifact_directory / "auxiliary/test_03_trajectory.json").read_text()
-    )
-    assert t3_trajectory[0] == {"concentration_mmol_l": 2.0, "time_hours": 0.0}
-    assert t3_trajectory[-1]["time_hours"] == 10.0
-    assert t3_trajectory[-1]["concentration_mmol_l"] == pytest.approx(4.0)
-    assert len(t3_trajectory) == 21
-    assert stop_payload["observed_value"]["stop_time_hours"] == 10.0
-    assert stop_payload["oracle"]["stop_time_hours"] == 10.0
-    assert stop_payload["comparison"]["stop_time_hours"] == "rel_le"
-    assert stop_payload["tolerance"]["stop_time_hours"] == 1e-6
-
-    t4_trajectory = json.loads(
-        (artifact_directory / "auxiliary/test_04_trajectory.json").read_text()
-    )
-    assert len(t4_trajectory) == 13
-    assert t4_trajectory[0]["time_hours"] == 0.0
-    assert t4_trajectory[-1]["time_hours"] == 60.0
-
-    t2_payload = json.loads((artifact_directory / "test_02.json").read_text())
-    assert set(t2_payload["observed_value"]["post_state"]["source"]) == {
-        entity.value for entity in ConservedEntity if entity is not ConservedEntity.WATER
-    }
-    assert t2_payload["observed_value"]["post_state"]["source"]["total_b"] == pytest.approx(0.8)
-    assert t2_payload["oracle"]["post_state"]["receiving"]["alkalinity"] == 7.0
-
-    for record in records:
-        provenance = record.code_provenance
-        assert set(provenance) == {"package_version", "git_sha", "git_dirty", "unavailable"}
-        assert provenance["package_version"] == "0.1.0"
-
-    chemistry_payload = json.loads((artifact_directory / "test_05.json").read_text())
-    assert chemistry_payload["observed_value"]["sar"]["value"] == pytest.approx(5.773502692)
-    assert chemistry_payload["oracle"]["sar"]["value"] == pytest.approx(5.773502692)
-    assert chemistry_payload["observed_value"]["sar"]["inputs_mmol_c_l"] == {
-        "na": 10.0,
-        "ca": 4.0,
-        "mg": 2.0,
-    }
-    assert chemistry_payload["observed_value"]["sar"][
-        "denominator_mmol_c_l"
-    ] == pytest.approx(3.0**0.5)
-    assert chemistry_payload["observed_value"]["sar"]["value"] == pytest.approx(
-        5.773502691896258
-    )
-    assert {
-        key: chemistry_payload["oracle"]["charge_balance"][key]
-        for key in (
-            "cations_mmol_c_l",
-            "anions_mmol_c_l",
-            "numerator_mmol_c_l",
-            "denominator_mmol_c_l",
-            "percent",
-        )
-    } == {
-        "cations_mmol_c_l": 17.0,
-        "anions_mmol_c_l": 15.0,
-        "numerator_mmol_c_l": 2.0,
-        "denominator_mmol_c_l": 32.0,
-        "percent": 6.25,
-    }
-    assert chemistry_payload["observed_value"]["blend"]["provenance"] == {
-        "data_origin": "model_derived",
-        "evidence_label": "synthetic_only",
-        "source_data_origins": ["synthetic", "synthetic"],
-        "source_evidence_labels": ["synthetic_only", "synthetic_only"],
-        "measurement_id": "acceptance-blend",
-        "measurement_data_origin": "synthetic",
-        "measurement_evidence_label": "synthetic_only",
-    }
-    assert conservation_payload["observed_value"]["blend"]["provenance"] == (
-        chemistry_payload["observed_value"]["blend"]["provenance"]
-    )
-    assert payload["passed"] is True
-    assert payload["evidence_label"] == "physics_constrained"
-    assert payload["code_version"]
 
 
-@pytest.mark.parametrize(
-    ("numerical_values", "stocks", "ledger_relative_residuals"),
-    [
-        ({"state": float("nan")}, {"na": 0.0}, {"water": 0.0}),
-        ({"state": 0.0}, {"na": float("inf")}, {"water": 0.0}),
-        ({"state": 0.0}, {"na": 0.0}, {"water": float("-inf")}),
-    ],
-)
-def test_numerical_invalidity_rejects_nonfinite_values_everywhere(
-    numerical_values: dict[str, float], stocks: dict[str, float], ledger_relative_residuals: dict[str, float]
-) -> None:
-    numerical = evaluate_run_stops(
-        numerical_values=numerical_values,
-        stocks=stocks,
-        ledger_relative_residuals=ledger_relative_residuals,
-        physical_values={},
-        physical_stops={},
-    )
-
-    assert numerical.valid is False
-    assert numerical.censored is False
-    assert numerical.reason_code.startswith("NONFINITE_")
-
-
-def test_configured_minimum_and_maximum_stops_are_loaded_and_censor_at_boundary(
-    tmp_path: Path,
-) -> None:
-    config = Path(__file__).parents[1] / "configs" / "thresholds.yaml"
-    stops = load_physical_stops(config)
-    policy = load_threshold_policy(config)
-    below_minimum = evaluate_run_stops(
-        numerical_values={"state": 1.0},
-        stocks={"na": 0.0},
-        ledger_relative_residuals={"water": 0.0},
-        physical_values={"volume_l": 0.09},
-        physical_stops=stops,
-        applicable_stop_ids=("volume_l",),
-        numerical_policy=policy.numerical_stops,
-    )
-    exact_maximum = evaluate_run_stops(
-        numerical_values={"state": 1.0},
-        stocks={"na": 0.0},
-        ledger_relative_residuals={"water": 0.0},
-        physical_values={"injury": 1.0},
-        physical_stops=stops,
-        applicable_stop_ids=("injury",),
-        numerical_policy=policy.numerical_stops,
-    )
-    within_bounds = evaluate_run_stops(
-        numerical_values={"state": 1.0},
-        stocks={"na": 0.0},
-        ledger_relative_residuals={"water": 0.0},
-        physical_values={"volume_l": 10.0, "injury": 0.99},
-        physical_stops=stops,
-        applicable_stop_ids=("volume_l", "injury"),
-        numerical_policy=policy.numerical_stops,
-    )
-    mutated = tmp_path / "thresholds.yaml"
-    mutated.write_text(config.read_text().replace("synthetic_only", "empirically_calibrated", 1))
-    with pytest.raises(ValueError, match="evidence_label"):
-        load_physical_stops(mutated)
-
-    assert below_minimum.reason_code == "PHYSICAL_STOP_VOLUME_L_MINIMUM"
-    assert below_minimum.evidence_label is EvidenceLabel.SYNTHETIC_ONLY
-    assert exact_maximum.reason_code == "PHYSICAL_STOP_INJURY_MAXIMUM"
-    assert exact_maximum.evidence_label is EvidenceLabel.SYNTHETIC_ONLY
-    assert within_bounds == type(within_bounds)(True, False, None, None)
-
-    missing_applicable = evaluate_run_stops(
-        numerical_values={"state": 1.0},
-        stocks={"na": 0.0},
-        ledger_relative_residuals={"water": 0.0},
-        physical_values={},
-        physical_stops=stops,
-        applicable_stop_ids=("volume_l",),
-        numerical_policy=policy.numerical_stops,
-    )
-    assert missing_applicable.valid is False
-    assert missing_applicable.reason_code == "MISSING_APPLICABLE_PHYSICAL_VALUE"
-
-
-def test_default_runtime_policies_are_strict_hashed_and_packaged(tmp_path: Path) -> None:
-    thresholds = load_threshold_policy()
-    verification_policy = load_verification_policy()
-
-    assert len(thresholds.sha256) == 64
-    assert thresholds.numerical_stops.require_finite_state is True
-    assert thresholds.numerical_stops.minimum_stock == -1e-12
-    assert thresholds.numerical_stops.maximum_relative_ledger_residual == 1e-10
-    assert len(verification_policy.sha256) == 64
-    assert verification_policy.core_acceptance_tests == (1, 2, 3, 4, 5, 13, 19, 20)
-    assert verification_policy.tolerances[1]["absolute"] == 1e-10
-    assert verification_policy.tolerances[3]["relative"] == 1e-6
-    assert verification_policy.tolerances[4] == {
-        "terminal_absolute": 1e-6,
-        "trajectory_relative": 1e-5,
-    }
-    assert verification_policy.tolerances[5] == {
-        "mass_blend_absolute": 1e-10,
-        "sar_absolute": 1e-9,
-    }
-    assert verification_policy.tolerances[13]["absolute"] == 1e-6
-    assert verification_policy.tolerances[20]["absolute"] == 1e-10
-
-    packaged = resources.files("almondlab.resources")
-    repo = Path(__file__).parents[1]
-    assert packaged.joinpath("configs/thresholds.yaml").read_bytes() == (
-        repo / "configs" / "thresholds.yaml"
-    ).read_bytes()
-    assert packaged.joinpath("configs/verification.yaml").read_bytes() == (
-        repo / "configs" / "verification.yaml"
-    ).read_bytes()
-
-    malformed = tmp_path / "thresholds.yaml"
-    malformed.write_text("schema_version: '1.0'\nphysical_stops: {}\n")
-    with pytest.raises(ValueError, match="numerical_stops"):
-        load_threshold_policy(malformed)
-
-    previous = Path.cwd()
-    try:
-        import os
-        os.chdir(tmp_path)
-        portable_records = run_core_acceptance(tmp_path / "portable-run")
-    finally:
-        os.chdir(previous)
-    assert all(record.passed for record in portable_records)
-
-
-@pytest.mark.parametrize(
-    ("original", "replacement"),
-    [
-        ("require_finite_state: true", "require_finite_state: false"),
-        ("minimum_stock: -1.0e-12", "minimum_stock: -2.0e-12"),
-        (
-            "maximum_relative_ledger_residual: 1.0e-10",
-            "maximum_relative_ledger_residual: 2.0e-10",
-        ),
-    ],
-)
-def test_schema_1_threshold_policy_cannot_weaken_locked_numerical_stops(
-    tmp_path: Path, original: str, replacement: str
-) -> None:
-    source = (Path(__file__).parents[1] / "configs" / "thresholds.yaml").read_text()
-    malformed = tmp_path / "thresholds.yaml"
-    malformed.write_text(source.replace(original, replacement))
-
-    with pytest.raises(ValueError, match="locked"):
-        load_threshold_policy(malformed)
-
-
-@pytest.mark.parametrize(
-    ("original", "replacement", "message"),
-    [
-        ("ro_seed_20260813_01", "ro_seed_20260812_01", "seed"),
-        ("ro_seed_20260813_02", "ro_seed_20260813_01", "unique"),
-        ("source_volume_l: 12.0", 'source_volume_l: "12.0"', "numeric"),
-        ("recovery: 0.25", "recovery: 0.0", "RO numeric domain"),
-        ("rate_l_per_hour: 2.0", "rate_l_per_hour: 12.0", "exceeds"),
-    ],
-)
-def test_conservation_manifest_loader_rejects_false_or_malformed_provenance(
-    tmp_path: Path, original: str, replacement: str, message: str
-) -> None:
-    contents = (
-        resources.files("almondlab.resources")
-        .joinpath("fixtures/conservation_case_manifest.yaml")
-        .read_text()
-    )
-    malformed = tmp_path / "conservation_case_manifest.yaml"
-    malformed.write_text(contents.replace(original, replacement))
-
-    with pytest.raises(ValueError, match=message):
-        load_conservation_case_manifest(malformed)
-
-
-def test_test20_rejects_a_noop_transfer_even_when_ledger_residual_is_zero() -> None:
-    def no_op_step(state: object, flows: object, external: object, duration: float) -> StepResult:
-        return StepResult(state=state, ledger=(), substeps=0)  # type: ignore[arg-type]
-
-    record = verification._acceptance_20(stepper=no_op_step)
-
-    assert record.passed is False
-    assert record.observed_value["transfer"]["volumes_l"] == {
-        "source": 100.0,
-        "receiving": 0.0,
-    }
-    assert record.oracle["transfer"]["volumes_l"] == {
-        "source": 80.0,
-        "receiving": 20.0,
-    }
-
-
-@pytest.mark.parametrize("permeate_volume", [50.0, -10.0])
-def test_test20_rejects_conserving_but_wrong_ro_branches(permeate_volume: float) -> None:
-    def wrong_ro(
-        feed_volume_l: float,
-        feed_stock_mmol: dict[str, float],
-        recovery: float,
-        rejection: dict[str, float],
-    ) -> ROResult:
-        fraction = permeate_volume / feed_volume_l
-        permeate = {entity: stock * fraction for entity, stock in feed_stock_mmol.items()}
-        concentrate = {
-            entity: stock - permeate[entity]
-            for entity, stock in feed_stock_mmol.items()
-        }
-        return ROResult(
-            feed_volume_l=feed_volume_l,
-            permeate_volume_l=permeate_volume,
-            concentrate_volume_l=feed_volume_l - permeate_volume,
-            feed_stock_mmol=dict(feed_stock_mmol),
-            permeate_stock_mmol=permeate,
-            concentrate_stock_mmol=concentrate,
-            rejection=dict(rejection),
-        )
-
-    record = verification._acceptance_20(ro_model=wrong_ro)
-
-    assert record.passed is False
-    assert record.observed_value["ro"]["water_conserved"] is True
-    if permeate_volume < 0.0:
-        assert record.observed_value["ro"]["branches_within_bounds"] is False
-
-
-def _empty_ledger(rows: tuple[LedgerEntry, ...]) -> tuple[LedgerEntry, ...]:
+def _empty(rows: tuple[object, ...]) -> tuple[object, ...]:
     return ()
 
 
-def _delete_ledger_row(rows: tuple[LedgerEntry, ...]) -> tuple[LedgerEntry, ...]:
+def _delete(rows: tuple[object, ...]) -> tuple[object, ...]:
     return rows[:-1]
 
 
-def _duplicate_ledger(rows: tuple[LedgerEntry, ...]) -> tuple[LedgerEntry, ...]:
+def _duplicate(rows: tuple[object, ...]) -> tuple[object, ...]:
     return rows + rows
 
 
-def _consistently_corrupt_ledger(rows: tuple[LedgerEntry, ...]) -> tuple[LedgerEntry, ...]:
+def _halve(rows: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(replace(row, amount=row.amount * 0.5) for row in rows)
 
 
-def _split_every_transaction(rows: tuple[LedgerEntry, ...]) -> tuple[LedgerEntry, ...]:
+def _wrong_label(rows: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(
-        replace(
-            row,
-            transaction_id=f"{row.transaction_id}:split-{split_id}",
-            amount=row.amount * 0.5,
-        )
-        for row in rows
-        for split_id in ("a", "b")
+        replace(row, evidence_label=EvidenceLabel.SYNTHETIC_ONLY) for row in rows
     )
 
 
-def _redistribute_between_transactions(
-    rows: tuple[LedgerEntry, ...],
-) -> tuple[LedgerEntry, ...]:
+def _wrong_quantity(rows: tuple[object, ...]) -> tuple[object, ...]:
+    row = rows[-1]
+    return (*rows[:-1], replace(row, amount=row.amount + 0.125))
+
+
+def _wrong_carrier(rows: tuple[object, ...]) -> tuple[object, ...]:
+    changed = False
+    result = []
+    for row in rows:
+        if not changed and row.carrier_volume_l is not None:
+            result.append(replace(row, water_density_kg_l=row.water_density_kg_l * 1.001))
+            changed = True
+        else:
+            result.append(row)
+    return tuple(result)
+
+
+def _split(rows: tuple[object, ...]) -> tuple[object, ...]:
+    return tuple(
+        replace(
+            row,
+            transaction_id=row.transaction_id[:-12]
+            + f"{(int(row.transaction_id[-12:]) + split_id + 100_000):012d}",
+            amount=row.amount * 0.5,
+            carrier_volume_l=(
+                None
+                if row.carrier_volume_l is None
+                else row.carrier_volume_l * 0.5
+            ),
+        )
+        for row in rows
+        for split_id in (0, 1)
+    )
+
+
+def _redistribute(rows: tuple[object, ...]) -> tuple[object, ...]:
     transaction_ids = tuple(dict.fromkeys(row.transaction_id for row in rows))
     first, second = transaction_ids[:2]
     return tuple(
         replace(
             row,
             amount=row.amount
-            * (0.5 if row.transaction_id == first else 1.5 if row.transaction_id == second else 1.0),
+            * (
+                0.5
+                if row.transaction_id == first
+                else 1.5
+                if row.transaction_id == second
+                else 1.0
+            ),
+            carrier_volume_l=(
+                row.carrier_volume_l
+                if row.carrier_volume_l is None
+                or row.transaction_id not in {first, second}
+                else row.carrier_volume_l
+                * (0.5 if row.transaction_id == first else 1.5)
+            ),
         )
         for row in rows
     )
 
 
+def _wrong_entity_same_count(rows: tuple[object, ...]) -> tuple[object, ...]:
+    for index, row in enumerate(rows):
+        if row.entity is ConservedEntity.NA:
+            replacement = replace(
+                row,
+                entity=ConservedEntity.K,
+                unit=StockUnit.MMOL,
+            )
+            return (*rows[:index], replacement, *rows[index + 1 :])
+    return rows[:-1]
+
+
+def _duplicate_transaction_ids(rows: tuple[object, ...]) -> tuple[object, ...]:
+    transaction_ids = tuple(dict.fromkeys(row.transaction_id for row in rows))
+    first, second = transaction_ids[:2]
+    return tuple(
+        replace(row, transaction_id=first)
+        if row.transaction_id == second
+        else row
+        for row in rows
+    )
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        _empty,
+        _delete,
+        _duplicate,
+        _halve,
+        _wrong_label,
+        _wrong_quantity,
+        _wrong_carrier,
+        _split,
+        _redistribute,
+        _wrong_entity_same_count,
+        _duplicate_transaction_ids,
+    ],
+)
 @pytest.mark.parametrize(
     "acceptance",
     [verification._acceptance_01, verification._acceptance_02, verification._acceptance_20],
-    ids=["test-01", "test-02", "test-20"],
 )
-@pytest.mark.parametrize(
-    "ledger_transform",
-    [
-        _empty_ledger,
-        _delete_ledger_row,
-        _duplicate_ledger,
-        _consistently_corrupt_ledger,
-        _split_every_transaction,
-        _redistribute_between_transactions,
-    ],
-    ids=[
-        "empty",
-        "deleted-row",
-        "duplicated",
-        "consistent-corruption",
-        "split-transactions",
-        "redistributed-transactions",
-    ],
-)
-def test_acceptance_rejects_correct_snapshot_without_complete_paired_ledger(
+def test_ledger_acceptances_reject_structural_and_metadata_adversaries(
     acceptance: object,
-    ledger_transform: object,
+    transform: object,
 ) -> None:
-    record = acceptance(ledger_transform=ledger_transform)  # type: ignore[operator]
-
+    record = acceptance(ledger_transform=transform)  # type: ignore[operator]
     assert record.passed is False
-    ledger_branch = (
-        record.observed_value["ledger_audit"]
-        if "ledger_audit" in record.observed_value
-        else record.observed_value["transfer_ledger"]
+
+
+def test_wrong_unit_is_rejected_before_a_ledger_can_self_authorize() -> None:
+    fixture, _ = verification._fixture("ions_conservative.yaml")
+    result = verification.step_state(
+        verification._state(fixture),
+        dt_hours=fixture["duration_hours"],
+        cursor=verification._cursor(fixture),
+        water_flows=(verification._water_flow(fixture),),
     )
-    assert ledger_branch["valid"] is False
-
-
-def test_verification_record_derives_passed_and_rejects_inconsistent_claim() -> None:
-    derived = VerificationRecord(
-        acceptance_test=13,
-        fixture_sha256="a" * 64,
-        observed_value={"value": 0.5000001, "minimum": 0.0},
-        oracle={"value": 0.5, "minimum": -1e-12},
-        tolerance={"value": 1e-6, "minimum": 0.0},
-        comparison={"value": "abs_le", "minimum": "ge"},
-        code_version="unavailable:explicit-test-gate",
-        code_provenance={
-            "package_version": None,
-            "git_sha": None,
-            "git_dirty": None,
-            "unavailable": ["package_version", "git_sha", "git_dirty"],
-        },
-        evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
+    solute_row = next(
+        row for row in result.ledger if row.entity is ConservedEntity.NA
     )
-    assert derived.passed is True
+    with pytest.raises(Exception, match="unit"):
+        # The typed shared contract prevents construction of an invalid-unit row.
+        replace(solute_row, unit=StockUnit.KG)
 
-    with pytest.raises(ValueError, match="inconsistent"):
-        VerificationRecord(
-            acceptance_test=13,
-            fixture_sha256="a" * 64,
-            observed_value=1.0,
-            oracle=0.0,
-            tolerance=0.0,
-            comparison="abs_le",
-            passed=True,
-            code_version="unavailable:explicit-test-gate",
-            code_provenance={
-                "package_version": None,
-                "git_sha": None,
-                "git_dirty": None,
-                "unavailable": ["package_version", "git_sha", "git_dirty"],
-            },
-            evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
-        )
 
-    type_wrong = VerificationRecord(
-        acceptance_test=13,
-        fixture_sha256="a" * 64,
-        observed_value=1,
-        oracle=True,
-        tolerance=0.0,
-        comparison="eq",
-        code_version="unavailable:explicit-test-gate",
-        code_provenance={
-            "package_version": None,
-            "git_sha": None,
-            "git_dirty": None,
-            "unavailable": ["package_version", "git_sha", "git_dirty"],
-        },
-        evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
+def test_ledger_oracle_never_uses_observed_compartment_branches() -> None:
+    fixture, _ = verification._fixture("water_one_day.yaml")
+    oracle = verification._ledger_oracle(
+        fixture["expected_ledger"],
+        required_quantities=(ConservedEntity.WATER,),
+        expected_compartments=("source", "target"),
     )
-    assert type_wrong.passed is False
-
-
-def test_writer_validates_before_creating_target_and_record_is_immutable(tmp_path: Path) -> None:
-    target = tmp_path / "verification" / "record.json"
-    invalid = VerificationRecord(
-        acceptance_test=13,
-        fixture_sha256="not-a-digest",
-        observed_value=0.5,
-        oracle=0.5,
-        tolerance=1e-6,
-        code_version="unavailable:explicit-test-gate",
-        code_provenance={"package_version": None, "git_sha": None, "git_dirty": None, "unavailable": ["package_version", "git_sha", "git_dirty"]},
-        evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
+    corrupted = dict(oracle["audit"])
+    residuals = dict(corrupted["compartment_relative_residuals"])
+    del residuals["target"]
+    corrupted["compartment_relative_residuals"] = residuals
+    record = _record(
+        observed_value=corrupted,
+        oracle=oracle["audit"],
+        tolerance=verification._tolerance_tree(oracle["audit"], 1e-10),
+        comparison=verification._comparison_tree(oracle["audit"]),
     )
+    assert record.passed is False
 
-    with pytest.raises(ValueError):
-        write_verification_record(target, invalid)
-    assert not target.exists()
 
-    valid = VerificationRecord(
-        acceptance_test=13,
-        fixture_sha256="a" * 64,
-        observed_value=0.5,
-        oracle=0.5,
-        tolerance=1e-6,
-        code_version="unavailable:explicit-test-gate",
-        code_provenance={"package_version": None, "git_sha": None, "git_dirty": None, "unavailable": ["package_version", "git_sha", "git_dirty"]},
-        evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
-    )
-    with pytest.raises((AttributeError, TypeError)):
-        valid.passed = False  # type: ignore[misc]
-    write_verification_record(target, valid)
-    assert json.loads(target.read_text())["acceptance_test"] == 13
+def test_manifest_runner_reports_first_frozen_failure_without_shrinking() -> None:
+    def faulty_flow(case: object) -> object:
+        return {"volumes_l": {"source": -1.0, "target": -1.0}, "stocks": {}}
 
-    invalid_run = VerificationRecord(
-        acceptance_test=13,
-        fixture_sha256="b" * 64,
-        observed_value=0.5,
-        oracle=0.5,
-        tolerance=1e-6,
-        code_version="unavailable:explicit-test-gate",
-        code_provenance={"package_version": None, "git_sha": None, "git_dirty": None, "unavailable": ["package_version", "git_sha", "git_dirty"]},
-        evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
-        validity="invalid",
-        reason_code="NONFINITE_STATE",
-    )
-    assert invalid_run.passed is False
+    record = verification._acceptance_20(flow_case_model=faulty_flow)
+    result = record.observed_value["case_manifest"]
+    assert record.passed is False
+    assert result["counterexample_semantics"]["hypothesis_shrunk"] is False
+    assert result["counterexample"]["property_id"] == "flow"
+    assert result["counterexample"]["case_id"] == "flow_seed_20260812_01"
+    assert result["counterexample"]["input"]
+    assert result["counterexample"]["failing_metrics"]

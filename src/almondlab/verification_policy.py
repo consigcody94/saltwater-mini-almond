@@ -25,24 +25,62 @@ PHYSICAL_STOP_IDS = (
     "injury",
     "containment_discharge_l",
 )
-_FROZEN_CASE_SETTINGS = {
-    "blend": {"seed": 20260814, "max_examples": 2},
-    "flow": {"seed": 20260812, "max_examples": 2},
-    "ro": {"seed": 20260813, "max_examples": 2},
-}
-_BLEND_EXPECTED_FIELDS = {
-    "alkalinity_mmol_c_l",
-    "na_mmol_l",
-    "cl_mmol_l",
-    "ca_mmol_l",
-    "mg_mmol_l",
-    "k_mmol_l",
-    "total_b_mmol_l",
-    "sulfate_mmol_l",
-    "bicarbonate_mmol_l",
-    "nitrate_mmol_l",
-    "phosphate_mmol_l",
-}
+CANONICAL_PHYSICAL_STOPS = MappingProxyType(
+    {
+        "concentration_mmol_l": (None, 4.0, EvidenceLabel.SYNTHETIC_ONLY),
+        "ecw_ds_m": (None, 10.0, EvidenceLabel.SYNTHETIC_ONLY),
+        "osmolality_osmol_kg": (None, 0.40, EvidenceLabel.SYNTHETIC_ONLY),
+        "volume_l": (0.1, 1000.0, EvidenceLabel.SYNTHETIC_ONLY),
+        "injury": (None, 1.0, EvidenceLabel.SYNTHETIC_ONLY),
+        "containment_discharge_l": (
+            None,
+            0.0,
+            EvidenceLabel.SYNTHETIC_ONLY,
+        ),
+    }
+)
+CANONICAL_NUMERICAL_STOPS = (True, -1.0e-12, 1.0e-10)
+CANONICAL_VERIFICATION_TOLERANCES = MappingProxyType(
+    {
+        1: MappingProxyType({"absolute": 1.0e-10}),
+        2: MappingProxyType({"absolute": 1.0e-10}),
+        3: MappingProxyType({"relative": 1.0e-6}),
+        4: MappingProxyType(
+            {"trajectory_relative": 1.0e-5, "terminal_absolute": 1.0e-6}
+        ),
+        5: MappingProxyType(
+            {"mass_blend_absolute": 1.0e-10, "sar_absolute": 1.0e-9}
+        ),
+        13: MappingProxyType({"absolute": 1.0e-6}),
+        19: MappingProxyType({"absolute": 0.0}),
+        20: MappingProxyType({"absolute": 1.0e-10}),
+    }
+)
+CONSERVATION_CANDIDATE_SET_SHA256 = (
+    "6dadb7aaa883e113b28c6833ac544389a79c31c21b8b452097ddca3b17ef621e"
+)
+FROZEN_CASE_SETTINGS = MappingProxyType(
+    {
+        "blend": MappingProxyType({"seed": 20260814, "max_examples": 2}),
+        "flow": MappingProxyType({"seed": 20260812, "max_examples": 2}),
+        "ro": MappingProxyType({"seed": 20260813, "max_examples": 2}),
+    }
+)
+_BLEND_EXPECTED_FIELDS = frozenset(
+    {
+        "alkalinity_mmol_c_l",
+        "na_mmol_l",
+        "cl_mmol_l",
+        "ca_mmol_l",
+        "mg_mmol_l",
+        "k_mmol_l",
+        "total_b_mmol_l",
+        "sulfate_mmol_l",
+        "bicarbonate_mmol_l",
+        "nitrate_mmol_l",
+        "phosphate_mmol_l",
+    }
+)
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -79,7 +117,9 @@ def _load_yaml(contents: bytes, resource_id: str) -> dict[str, object]:
 def _exact_keys(
     payload: Mapping[object, object], expected: set[str], field_path: str
 ) -> None:
-    observed = {str(key) for key in payload}
+    if any(not isinstance(key, str) for key in payload):
+        raise ValueError(f"{field_path} keys must be strings")
+    observed = set(payload)
     if observed != expected:
         missing = sorted(expected - observed)
         extra = sorted(observed - expected)
@@ -160,168 +200,6 @@ def load_fixture(
     return _load_yaml(contents, name), digest
 
 
-def load_conservation_case_manifest(
-    source: Path | None = None,
-) -> tuple[Mapping[str, object], str]:
-    """Load the pinned property cases only after strict provenance/domain checks."""
-    if source is None:
-        contents = resources.files(RESOURCE_PACKAGE).joinpath(
-            "fixtures/conservation_case_manifest.yaml"
-        ).read_bytes()
-    else:
-        contents = Path(source).read_bytes()
-    payload = _load_yaml(contents, "conservation_case_manifest.yaml")
-    _exact_keys(payload, {"schema_version", "generator", "cases"}, "manifest")
-    if payload["schema_version"] != "1.0":
-        raise ValueError("manifest.schema_version must be '1.0'")
-    generator = payload["generator"]
-    if not isinstance(generator, dict):
-        raise ValueError("manifest.generator must be a mapping")
-    _exact_keys(generator, {"name", "version", "properties"}, "manifest.generator")
-    if generator["name"] != "hypothesis" or generator["version"] != "6.165.5":
-        raise ValueError("manifest generator must pin hypothesis 6.165.5")
-    properties = generator["properties"]
-    if not isinstance(properties, dict):
-        raise ValueError("manifest.generator.properties must be a mapping")
-    _exact_keys(properties, set(_FROZEN_CASE_SETTINGS), "manifest.generator.properties")
-    for property_id, locked in _FROZEN_CASE_SETTINGS.items():
-        settings = properties[property_id]
-        if not isinstance(settings, dict):
-            raise ValueError(f"manifest.generator.properties.{property_id} must be a mapping")
-        _exact_keys(
-            settings,
-            {"seed", "max_examples", "database", "deadline"},
-            f"manifest.generator.properties.{property_id}",
-        )
-        seed = _strict_positive_integer(settings["seed"], f"{property_id}.seed")
-        maximum = _strict_positive_integer(
-            settings["max_examples"], f"{property_id}.max_examples"
-        )
-        if seed != locked["seed"] or maximum != locked["max_examples"]:
-            raise ValueError(f"manifest {property_id} seed/settings are not pinned")
-        if settings["database"] is not None or settings["deadline"] is not None:
-            raise ValueError(f"manifest {property_id} database/deadline must be null")
-
-    cases = payload["cases"]
-    if not isinstance(cases, dict):
-        raise ValueError("manifest.cases must be a mapping")
-    _exact_keys(cases, set(_FROZEN_CASE_SETTINGS), "manifest.cases")
-    observed_ids: set[str] = set()
-    for property_id, locked in _FROZEN_CASE_SETTINGS.items():
-        property_cases = cases[property_id]
-        if not isinstance(property_cases, list) or len(property_cases) != locked["max_examples"]:
-            raise ValueError(f"manifest.cases.{property_id} count must equal max_examples")
-        for index, case in enumerate(property_cases, start=1):
-            path = f"manifest.cases.{property_id}.{index - 1}"
-            if not isinstance(case, dict):
-                raise ValueError(f"{path} must be a mapping")
-            expected_id = f"{property_id}_seed_{locked['seed']}_{index:02d}"
-            case_id = case.get("id")
-            if not isinstance(case_id, str) or not case_id:
-                raise ValueError(f"{path}.id must be a nonempty string")
-            if case_id in observed_ids:
-                raise ValueError("manifest case IDs must be unique")
-            observed_ids.add(case_id)
-            if case_id != expected_id:
-                raise ValueError(f"{path}.id must match its property seed")
-            if property_id == "flow":
-                _validate_flow_case(case, path)
-            elif property_id == "ro":
-                _validate_ro_case(case, path)
-            else:
-                _validate_blend_case(case, path)
-    frozen = _freeze_resource(payload)
-    assert isinstance(frozen, Mapping)
-    return frozen, hashlib.sha256(contents).hexdigest()
-
-
-def _validate_flow_case(case: dict[str, object], path: str) -> None:
-    _exact_keys(
-        case,
-        {
-            "id",
-            "source_volume_l",
-            "target_volume_l",
-            "source_stocks_mmol",
-            "target_stocks_mmol",
-            "rate_l_per_hour",
-            "duration_hours",
-            "expected",
-        },
-        path,
-    )
-    source_volume = _strict_number(case["source_volume_l"], f"{path}.source_volume_l")
-    target_volume = _strict_number(case["target_volume_l"], f"{path}.target_volume_l")
-    rate = _strict_number(case["rate_l_per_hour"], f"{path}.rate_l_per_hour")
-    duration = _strict_number(case["duration_hours"], f"{path}.duration_hours")
-    if source_volume <= 0.0 or target_volume < 0.0 or rate <= 0.0 or duration <= 0.0:
-        raise ValueError(f"{path} flow numeric domain is invalid")
-    if rate * duration >= source_volume:
-        raise ValueError(f"{path} flow exceeds its source volume")
-    source_stocks = _strict_numeric_mapping(case["source_stocks_mmol"], f"{path}.source_stocks_mmol")
-    entity_keys = set(source_stocks)
-    _strict_numeric_mapping(
-        case["target_stocks_mmol"],
-        f"{path}.target_stocks_mmol",
-        expected_keys=entity_keys,
-    )
-    expected = case["expected"]
-    if not isinstance(expected, dict):
-        raise ValueError(f"{path}.expected must be a mapping")
-    _exact_keys(expected, {"volumes_l", "stocks_mmol"}, f"{path}.expected")
-    _strict_numeric_mapping(
-        expected["volumes_l"],
-        f"{path}.expected.volumes_l",
-        expected_keys={"source", "target"},
-    )
-    expected_stocks = expected["stocks_mmol"]
-    if not isinstance(expected_stocks, dict):
-        raise ValueError(f"{path}.expected.stocks_mmol must be a mapping")
-    _exact_keys(expected_stocks, {"source", "target"}, f"{path}.expected.stocks_mmol")
-    for compartment in ("source", "target"):
-        _strict_numeric_mapping(
-            expected_stocks[compartment],
-            f"{path}.expected.stocks_mmol.{compartment}",
-            expected_keys=entity_keys,
-        )
-
-
-def _validate_ro_case(case: dict[str, object], path: str) -> None:
-    _exact_keys(
-        case,
-        {"id", "feed_volume_l", "feed_stocks_mmol", "recovery", "rejection", "expected"},
-        path,
-    )
-    feed_volume = _strict_number(case["feed_volume_l"], f"{path}.feed_volume_l")
-    recovery = _strict_number(case["recovery"], f"{path}.recovery")
-    if feed_volume <= 0.0 or not 0.0 < recovery < 1.0:
-        raise ValueError(f"{path} RO numeric domain is invalid")
-    feed = _strict_numeric_mapping(case["feed_stocks_mmol"], f"{path}.feed_stocks_mmol")
-    entities = set(feed)
-    rejection = _strict_numeric_mapping(
-        case["rejection"], f"{path}.rejection", expected_keys=entities
-    )
-    if any(value > 1.0 for value in rejection.values()):
-        raise ValueError(f"{path}.rejection must be within [0, 1]")
-    expected = case["expected"]
-    if not isinstance(expected, dict):
-        raise ValueError(f"{path}.expected must be a mapping")
-    _exact_keys(
-        expected,
-        {"volumes_l", "permeate_stocks_mmol", "concentrate_stocks_mmol"},
-        f"{path}.expected",
-    )
-    _strict_numeric_mapping(
-        expected["volumes_l"],
-        f"{path}.expected.volumes_l",
-        expected_keys={"feed", "permeate", "concentrate"},
-    )
-    for branch in ("permeate_stocks_mmol", "concentrate_stocks_mmol"):
-        _strict_numeric_mapping(
-            expected[branch], f"{path}.expected.{branch}", expected_keys=entities
-        )
-
-
 def _validate_blend_case(case: dict[str, object], path: str) -> None:
     _exact_keys(case, {"id", "volumes_l", "expected"}, path)
     volumes = case["volumes_l"]
@@ -338,6 +216,251 @@ def _validate_blend_case(case: dict[str, object], path: str) -> None:
         f"{path}.expected",
         expected_keys=_BLEND_EXPECTED_FIELDS,
     )
+
+
+_MANIFEST_ENTITY_IDS = ("water", "na", "cl")
+_MANIFEST_EXTREMA_SCHEMA = MappingProxyType(
+    {
+        "flow": MappingProxyType(
+            {
+                "global_relative_residual": _MANIFEST_ENTITY_IDS,
+                "compartment_relative_residual": _MANIFEST_ENTITY_IDS,
+                "literal_absolute_error": _MANIFEST_ENTITY_IDS,
+            }
+        ),
+        "ro": MappingProxyType(
+            {
+                "conservation_absolute_residual": _MANIFEST_ENTITY_IDS,
+                "literal_absolute_error": _MANIFEST_ENTITY_IDS,
+            }
+        ),
+        "blend": MappingProxyType(
+            {
+                "literal_absolute_error": (
+                    "alkalinity_mmol_c_l",
+                    "na_mmol_l",
+                    "cl_mmol_l",
+                    "ca_mmol_l",
+                    "mg_mmol_l",
+                    "k_mmol_l",
+                    "total_b_mmol_l",
+                    "sulfate_mmol_l",
+                    "bicarbonate_mmol_l",
+                    "nitrate_mmol_l",
+                    "phosphate_mmol_l",
+                )
+            }
+        ),
+    }
+)
+
+
+def _schema2_stock_record(
+    value: object,
+    field_path: str,
+    *,
+    density: float,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_path} must be a mapping")
+    _exact_keys(value, {"volume_l", "water_mass_kg", "stocks"}, field_path)
+    volume = _strict_number(value["volume_l"], f"{field_path}.volume_l")
+    water = _strict_number(value["water_mass_kg"], f"{field_path}.water_mass_kg")
+    if volume < 0.0 or water < 0.0 or abs(water - volume * density) > 1e-12:
+        raise ValueError(f"{field_path} water mass/density identity is invalid")
+    stocks = _strict_numeric_mapping(
+        value["stocks"],
+        f"{field_path}.stocks",
+        expected_keys={"na", "cl"},
+    )
+    return {"volume_l": volume, "water_mass_kg": water, "stocks": stocks}
+
+
+def _validate_schema2_flow_case(case: object, path: str) -> None:
+    if not isinstance(case, dict):
+        raise ValueError(f"{path} must be a mapping")
+    _exact_keys(
+        case,
+        {
+            "id",
+            "density_kg_l",
+            "source",
+            "target",
+            "rate_l_per_hour",
+            "duration_hours",
+            "expected",
+        },
+        path,
+    )
+    density = _strict_number(case["density_kg_l"], f"{path}.density_kg_l")
+    if density <= 0.0:
+        raise ValueError(f"{path}.density_kg_l must be positive")
+    source = _schema2_stock_record(case["source"], f"{path}.source", density=density)
+    _schema2_stock_record(case["target"], f"{path}.target", density=density)
+    rate = _strict_number(case["rate_l_per_hour"], f"{path}.rate_l_per_hour")
+    duration = _strict_number(case["duration_hours"], f"{path}.duration_hours")
+    if rate <= 0.0 or duration <= 0.0 or rate * duration >= source["volume_l"]:
+        raise ValueError(f"{path} flow domain is invalid or exceeds its source")
+    expected = case["expected"]
+    if not isinstance(expected, dict):
+        raise ValueError(f"{path}.expected must be a mapping")
+    _exact_keys(expected, {"source", "target"}, f"{path}.expected")
+    for branch in ("source", "target"):
+        _schema2_stock_record(
+            expected[branch], f"{path}.expected.{branch}", density=density
+        )
+
+
+def _validate_schema2_ro_case(case: object, path: str) -> None:
+    if not isinstance(case, dict):
+        raise ValueError(f"{path} must be a mapping")
+    _exact_keys(
+        case,
+        {"id", "density_kg_l", "feed", "parameters", "expected"},
+        path,
+    )
+    density = _strict_number(case["density_kg_l"], f"{path}.density_kg_l")
+    if density <= 0.0:
+        raise ValueError(f"{path}.density_kg_l must be positive")
+    _schema2_stock_record(case["feed"], f"{path}.feed", density=density)
+    parameters = case["parameters"]
+    if not isinstance(parameters, dict):
+        raise ValueError(f"{path}.parameters must be a mapping")
+    _exact_keys(parameters, {"recovery", "rejection"}, f"{path}.parameters")
+    recovery = _strict_number(parameters["recovery"], f"{path}.parameters.recovery")
+    if not 0.0 < recovery < 1.0:
+        raise ValueError(f"{path}.parameters.recovery is outside the RO domain")
+    rejection = _strict_numeric_mapping(
+        parameters["rejection"],
+        f"{path}.parameters.rejection",
+        expected_keys={"na", "cl"},
+    )
+    if any(value > 1.0 for value in rejection.values()):
+        raise ValueError(f"{path}.parameters.rejection must be within [0, 1]")
+    expected = case["expected"]
+    if not isinstance(expected, dict):
+        raise ValueError(f"{path}.expected must be a mapping")
+    _exact_keys(expected, {"permeate", "concentrate"}, f"{path}.expected")
+    for branch in ("permeate", "concentrate"):
+        _schema2_stock_record(
+            expected[branch], f"{path}.expected.{branch}", density=density
+        )
+
+
+def load_conservation_case_manifest(
+    source: Path | None = None,
+) -> tuple[Mapping[str, object], str]:
+    """Load the exact frozen schema-1 property manifest and candidate digest."""
+
+    contents = (
+        resources.files(RESOURCE_PACKAGE)
+        .joinpath("fixtures/conservation_case_manifest.yaml")
+        .read_bytes()
+        if source is None
+        else Path(source).read_bytes()
+    )
+    payload = _load_yaml(contents, "conservation_case_manifest.yaml")
+    _exact_keys(
+        payload,
+        {"schema_version", "generator", "extrema_schema", "cases"},
+        "manifest",
+    )
+    if payload["schema_version"] != "1.0":
+        raise ValueError("manifest.schema_version must be '1.0'")
+    generator = payload["generator"]
+    if not isinstance(generator, dict):
+        raise ValueError("manifest.generator must be a mapping")
+    _exact_keys(
+        generator,
+        {
+            "name",
+            "version",
+            "phase",
+            "strategy",
+            "candidate_set_sha256",
+            "shrinking",
+            "properties",
+        },
+        "manifest.generator",
+    )
+    candidate_bytes = (
+        resources.files(RESOURCE_PACKAGE)
+        .joinpath("fixtures/conservation_case_manifest.candidates.json")
+        .read_bytes()
+    )
+    candidate_digest = hashlib.sha256(candidate_bytes).hexdigest()
+    if candidate_digest != CONSERVATION_CANDIDATE_SET_SHA256:
+        raise ValueError("manifest frozen candidate-set bytes are not canonical")
+    if (
+        generator["name"] != "hypothesis"
+        or generator["version"] != "6.165.5"
+        or generator["phase"] != "generate_only"
+        or generator["strategy"] != "sampled_from_frozen_candidate_set"
+        or generator["candidate_set_sha256"]
+        != CONSERVATION_CANDIDATE_SET_SHA256
+        or generator["shrinking"] is not False
+    ):
+        raise ValueError(
+            "manifest generator phase, strategy, candidate digest, and shrinking are locked"
+        )
+    properties = generator["properties"]
+    if not isinstance(properties, dict):
+        raise ValueError("manifest.generator.properties must be a mapping")
+    _exact_keys(properties, set(FROZEN_CASE_SETTINGS), "manifest.generator.properties")
+    for property_id, expected in FROZEN_CASE_SETTINGS.items():
+        value = properties[property_id]
+        if not isinstance(value, dict):
+            raise ValueError(f"manifest generator {property_id} must be a mapping")
+        _exact_keys(value, {"seed", "max_examples"}, f"generator.{property_id}")
+        if value != expected:
+            raise ValueError(f"manifest generator {property_id} settings are locked")
+
+    extrema = payload["extrema_schema"]
+    if not isinstance(extrema, dict):
+        raise ValueError("manifest.extrema_schema must be a mapping")
+    _exact_keys(extrema, set(_MANIFEST_EXTREMA_SCHEMA), "manifest.extrema_schema")
+    for property_id, branches in _MANIFEST_EXTREMA_SCHEMA.items():
+        received = extrema[property_id]
+        if not isinstance(received, dict):
+            raise ValueError(f"manifest extrema {property_id} must be a mapping")
+        _exact_keys(received, set(branches), f"extrema_schema.{property_id}")
+        for branch, expected_names in branches.items():
+            values = received[branch]
+            if (
+                not isinstance(values, list)
+                or tuple(values) != tuple(expected_names)
+            ):
+                raise ValueError(
+                    f"manifest extrema {property_id}.{branch} must cover the exact canonical set"
+                )
+
+    cases = payload["cases"]
+    if not isinstance(cases, dict):
+        raise ValueError("manifest.cases must be a mapping")
+    _exact_keys(cases, {"flow", "ro", "blend"}, "manifest.cases")
+    observed_ids: set[str] = set()
+    for property_id in ("flow", "ro", "blend"):
+        values = cases[property_id]
+        expected_settings = FROZEN_CASE_SETTINGS[property_id]
+        if not isinstance(values, list) or len(values) != expected_settings["max_examples"]:
+            raise ValueError(f"manifest.cases.{property_id} count is locked")
+        for index, case in enumerate(values, start=1):
+            path = f"manifest.cases.{property_id}.{index - 1}"
+            if not isinstance(case, dict):
+                raise ValueError(f"{path} must be a mapping")
+            expected_id = f"{property_id}_seed_{expected_settings['seed']}_{index:02d}"
+            if case.get("id") != expected_id or expected_id in observed_ids:
+                raise ValueError(f"{path}.id must be the exact unique seeded ID")
+            observed_ids.add(expected_id)
+            if property_id == "flow":
+                _validate_schema2_flow_case(case, path)
+            elif property_id == "ro":
+                _validate_schema2_ro_case(case, path)
+            else:
+                _validate_blend_case(case, path)
+    frozen = _freeze_resource(payload)
+    assert isinstance(frozen, Mapping)
+    return frozen, hashlib.sha256(contents).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -370,6 +493,62 @@ class VerificationPolicy:
     evidence_label: EvidenceLabel
     tolerances: Mapping[int, Mapping[str, float]]
     sha256: str
+
+
+def validate_threshold_policy(policy: ThresholdPolicy) -> None:
+    """Revalidate a complete schema-1 object against code-owned authority."""
+
+    if not isinstance(policy, ThresholdPolicy) or policy.schema_version != "1.0":
+        raise ValueError("threshold policy must be the canonical schema 1.0 record")
+    if tuple(policy.physical_stops) != PHYSICAL_STOP_IDS:
+        raise ValueError("threshold physical-stop registry is not canonical")
+    for stop_id, expected in CANONICAL_PHYSICAL_STOPS.items():
+        stop = policy.physical_stops.get(stop_id)
+        if not isinstance(stop, PhysicalStopPolicy) or (
+            stop.minimum,
+            stop.maximum,
+            stop.evidence_label,
+        ) != expected:
+            raise ValueError(f"physical stop {stop_id} is not locked to schema 1.0")
+    numerical = policy.numerical_stops
+    if not isinstance(numerical, NumericalStops) or (
+        numerical.require_finite_state,
+        numerical.minimum_stock,
+        numerical.maximum_relative_ledger_residual,
+    ) != CANONICAL_NUMERICAL_STOPS:
+        raise ValueError("schema 1.0 numerical stops are not locked")
+    if (
+        not isinstance(policy.sha256, str)
+        or len(policy.sha256) != 64
+        or any(character not in "0123456789abcdef" for character in policy.sha256)
+    ):
+        raise ValueError("threshold policy hash must be a lowercase SHA-256 digest")
+
+
+def validate_verification_policy(policy: VerificationPolicy) -> None:
+    """Revalidate every normalized schema-1 verification field exactly."""
+
+    if not isinstance(policy, VerificationPolicy) or policy.schema_version != "1.0":
+        raise ValueError("verification policy must be canonical schema 1.0")
+    if policy.artifact_path_template != "verification/test_<NN>.json":
+        raise ValueError("verification artifact template is not canonical")
+    if policy.core_acceptance_tests != CORE_ACCEPTANCE_TESTS:
+        raise ValueError("verification registry is not canonical")
+    if policy.evidence_label is not EvidenceLabel.PHYSICS_CONSTRAINED:
+        raise ValueError("verification evidence label is not canonical")
+    if tuple(policy.tolerances) != CORE_ACCEPTANCE_TESTS:
+        raise ValueError("verification tolerance registry is not canonical")
+    for test_number, expected in CANONICAL_VERIFICATION_TOLERANCES.items():
+        if dict(policy.tolerances.get(test_number, {})) != dict(expected):
+            raise ValueError(
+                f"verification tolerance {test_number} is not locked to schema 1.0"
+            )
+    if (
+        not isinstance(policy.sha256, str)
+        or len(policy.sha256) != 64
+        or any(character not in "0123456789abcdef" for character in policy.sha256)
+    ):
+        raise ValueError("verification policy hash must be a lowercase SHA-256 digest")
 
 
 def load_threshold_policy(source: Path | None = None) -> ThresholdPolicy:
@@ -448,7 +627,7 @@ def load_threshold_policy(source: Path | None = None) -> ThresholdPolicy:
             "schema 1.0 numerical stops are locked to finite state, -1e-12 stock, "
             "and 1e-10 relative ledger residual"
         )
-    return ThresholdPolicy(
+    policy = ThresholdPolicy(
         schema_version="1.0",
         physical_stops=MappingProxyType(parsed_physical),
         numerical_stops=NumericalStops(
@@ -456,6 +635,8 @@ def load_threshold_policy(source: Path | None = None) -> ThresholdPolicy:
         ),
         sha256=hashlib.sha256(contents).hexdigest(),
     )
+    validate_threshold_policy(policy)
+    return policy
 
 
 _TOLERANCE_KEYS = {
@@ -524,7 +705,7 @@ def load_verification_policy(source: Path | None = None) -> VerificationPolicy:
         if any(value < 0.0 for value in parsed.values()):
             raise ValueError(f"tolerances.{test_number} must be nonnegative")
         tolerances[test_number] = MappingProxyType(parsed)
-    return VerificationPolicy(
+    policy = VerificationPolicy(
         schema_version="1.0",
         artifact_path_template="verification/test_<NN>.json",
         core_acceptance_tests=CORE_ACCEPTANCE_TESTS,
@@ -532,3 +713,5 @@ def load_verification_policy(source: Path | None = None) -> VerificationPolicy:
         tolerances=MappingProxyType(tolerances),
         sha256=hashlib.sha256(contents).hexdigest(),
     )
+    validate_verification_policy(policy)
+    return policy

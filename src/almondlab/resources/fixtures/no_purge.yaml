@@ -1,10 +1,15 @@
 schema_version: 2
 initial:
   tank:
+    kind: blend_tank
+    loop_id: main
     volume_l: 10.0
     water_mass_kg: 9.97
     empty_reference_density_kg_l: 0.997
     stocks: {na: 20.0}
+tracked_entities: [na]
+evidence_label: physics_constrained
+cursor: {run_id: ACCEPT03, chain_id: main, start_ordinal: 0}
 source_flux:
   event_id: dissolved-source
   boundary_id: measured-dissolved-source
