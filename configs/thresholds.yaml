@@ -1,0 +1,12 @@
+schema_version: "1.0"
+physical_stops:
+  concentration_mmol_l: {maximum: 4.0, evidence_label: synthetic_only}
+  ecw_ds_m: {maximum: 10.0, evidence_label: synthetic_only}
+  osmolality_osmol_kg: {maximum: 0.40, evidence_label: synthetic_only}
+  volume_l: {minimum: 0.1, maximum: 1000.0, evidence_label: synthetic_only}
+  injury: {maximum: 1.0, evidence_label: synthetic_only}
+  containment_discharge_l: {maximum: 0.0, evidence_label: synthetic_only}
+numerical_stops:
+  require_finite_state: true
+  minimum_stock: -1.0e-12
+  maximum_relative_ledger_residual: 1.0e-10

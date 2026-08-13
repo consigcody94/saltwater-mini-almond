@@ -7,4 +7,5 @@ Task 2: fix round 1/5 (4 addressed, 0 open — canonical constraints and full co
 Task 2: complete (commits ce2a5ac..43e2dcb excluding independent visual commit ef8f42c, review clean)
 Task 3: fix round 1/5 (1 addressed, 0 open — explicit weak-label extrapolation only; commits 97efc12..416b71b)
 Task 3: complete (commits 43e2dcb..416b71b excluding visual-policy commit e54d7fa, review clean)
-Task 4: fix round 2/5 (3 addressed pending scoped re-review, 0 open claimed; evidence labels remain resolved — per-compartment/quantity reconciliation, unknown-endpoint rejection, and water-anchored zero-stock direction; commits 06c4b1d..f7f7d5c)
+Task 4: complete (finite-volume engine, paired transaction audit, per-compartment reconciliation, provenance, analytic fixtures; commits through 1628981, scoped re-review clean)
+Task 5: complete (physics-constrained osmotic/hydraulic gate, immutable atomic verification records, distinct numerical invalidation/physical censoring, and core acceptance artifacts 1–5, 13, 19–20; see task-5-report.md)

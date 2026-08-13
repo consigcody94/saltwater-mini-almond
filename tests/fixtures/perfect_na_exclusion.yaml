@@ -1,0 +1,10 @@
+temperature_k: 298.15
+water_density_kg_l: 0.997
+matric_mpa: -0.10
+leaf_critical_mpa: -2.00
+adjustment_mpa: 0.0
+root_conductance_l_day_mpa: 0.50
+potential_transpiration_l_day: 1.00
+specific_ion_factor: 1.00
+fresh_osmolality_osmol_kg: 0.05
+saline_osmolality_osmol_kg: 0.40

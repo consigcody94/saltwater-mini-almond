@@ -1,0 +1,4 @@
+schema_version: "1.0"
+artifact_path_template: "verification/test_<NN>.json"
+core_acceptance_tests: [1, 2, 3, 4, 5, 13, 19, 20]
+evidence_label: physics_constrained
