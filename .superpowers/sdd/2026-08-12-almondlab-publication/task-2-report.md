@@ -1,6 +1,6 @@
 # Task 2 publication report: evidence registries and protected joins
 
-Status: Round 2/5 implementation and proportional verification are complete; fresh independent exact review is required.
+Status: Round 3/5 snapshot-provenance correction is implemented and proportionally verified; fresh independent exact review is required.
 
 ## Delivered scope
 
@@ -100,6 +100,40 @@ Smoke tests: 22 passed, 0 failed
 The three full-suite skips are the documented POSIX descriptor-relative cleanup cases on Windows (`tests/test_provenance.py` lines 3647, 3692, and 3738). Public verification additionally passed all 13 local snapshot hashes, parsed 23 manifest datasets with 23 unique IDs, confirmed LF plus terminal newline and `text eol=lf` for all three canonical CSVs, and found none of seven forbidden stale-claim patterns across the nine implicated registry/public/program-design surfaces.
 
 For TDD provenance, an earlier interim integration run reached 176 passes and 5 failures, all five in concurrent intentionally RED Paper 1 YAML hardening tests owned by the biology task; no registry or safe-data test failed. That interim result was superseded after biology commit `38da80d` by the 181-test integration and 1,057-test full-suite passes above.
+
+### Round 3/5 snapshot-provenance correction
+
+Fresh exact review found that `data/public/README.md` incorrectly described each local hash sidecar as wholly frozen at one historical commit even though reviewed documentation/data entries had since been refreshed. A new deterministic regression failed first on the missing mixed-snapshot disclosure. Independent `git diff --quiet` checks then established the narrower history that the prose may claim: all five unchanged top-level acquisition entries remain byte-identical to `0c61054`, and the three unchanged Phase 2 module/entry-point/offline-test entries remain byte-identical to `f739404`; the reviewed README entries are newer.
+
+The corrected README now describes both sidecars as mixed repository snapshots. It states that each line encodes only the current bytes of its named file, not a whole-tree or single-commit identity, and distinguishes the current reviewed documentation/data surfaces from unchanged acquisition implementation entries with independently verified earlier history. Both sidecar comments make the same per-file boundary explicit, and the refreshed top-level README entry is exact.
+
+Round 3 verification observed:
+
+```text
+.venv\Scripts\python.exe -m pytest tests/test_registries.py::test_public_snapshot_sidecars_hash_current_files_and_describe_mixed_history -q -p no:cacheprovider
+1 passed in 0.89s
+
+.venv\Scripts\python.exe -m pytest tests/test_registries.py -q -p no:cacheprovider
+71 passed in 2.24s
+
+.venv\Scripts\python.exe -m pytest tests/test_safe_data.py tests/test_registries.py tests/test_contracts.py tests/test_schemas.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider
+273 passed in 8.14s
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\public_data\phase2\Test-Phase2PublicData.ps1
+Smoke tests: 22 passed, 0 failed
+
+deterministic SHA-256 sidecar verification
+13/13 entries exact
+```
+
+Round 3 core commit: `2e3a82a` (`docs: correct mixed snapshot provenance`). Its owned-file SHA-256 values are:
+
+```text
+8ff4165665dff1cb39818ca4e40ac7b4b41651779ef74016e065080d150a0543  data/public/README.md
+e0310cb704fbdac90389d130dcc2e85f50ac750df2cb833de31c219d150cf4fd  data/public/local_snapshot.sha256
+1c8b1feb679f0634f1e6ea90ec8abf6d38169aca626597031457c7e856068592  scripts/public_data/phase2/local_snapshot.sha256
+0a4b7b41f6bcbc1f4adbeea443d295c4d8c2a567f42fcfc3e94f82814ccf2c88  tests/test_registries.py
+```
 
 ## Repair commits
 
