@@ -7,7 +7,7 @@ from enum import Enum, StrEnum
 from math import fsum, isclose, isfinite, log
 from pathlib import Path
 from types import MappingProxyType
-from typing import Annotated, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 import yaml
 from pydantic import (
@@ -31,12 +31,16 @@ from almondlab.biology_surrogate import (
 )
 from almondlab.chemistry import charge_balance_error
 from almondlab.contracts import CompartmentKind, ConservedEntity, EvidenceLabel
+from almondlab.domains import DomainRequest, DomainValidationResult, validate_domain
 from almondlab.errors import AlmondLabError, fail, finite_float
 from almondlab.evidence_policy import compose_evidence_labels
 from almondlab.hydraulics import HydraulicDomain
 from almondlab.mass_balance import CompartmentState, NetworkState
 from almondlab.provenance import canonical_json_bytes
 from almondlab.schemas import ModelDomain, WaterChemistry
+
+if TYPE_CHECKING:
+    from almondlab.design import PositionMap, RandomizationManifest
 
 
 _MAPPING_PROXY_TYPE = type(MappingProxyType({}))
@@ -2198,7 +2202,7 @@ class SharedSourceBatchCapacityAudit(StrictPaper1Model):
 
 
 def _canonical_task4_stop_policy(policy: object) -> Task4StopPolicy:
-    if not isinstance(policy, Task4StopPolicy):
+    if type(policy) is not Task4StopPolicy:
         fail(
             "TASK4_STOP_POLICY_INVALID",
             "stop policy must be a validated Task4StopPolicy",
@@ -2216,52 +2220,376 @@ def _canonical_task4_stop_policy(policy: object) -> Task4StopPolicy:
         )
 
 
+_TASK4_WATER_LOOP_AUTHORITY = (
+    ("reservoir_initial_volume_l", 120.0, "L"),
+    ("water_batch_volume_l", 5000.0, "L"),
+    ("irrigation_volume_l_per_plant_day", 0.60, "L plant^-1 day^-1"),
+    ("drainage_return_fraction", 0.70, "dimensionless"),
+    ("purge_volume_l_day", 1.20, "L day^-1"),
+    ("sampling_volume_l_per_sample", 0.05, "L sample^-1"),
+    ("reservoir_min_volume_l", 80.0, "L"),
+    ("reservoir_max_volume_l", 160.0, "L"),
+)
+_TASK4_DURATION_DAYS = 84
+_TASK4_RESTORED_NONTERMINAL_SAMPLES = 6
+_TASK4_DISCOVERY_GROUP_IDS = frozenset(
+    {
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "empty_vector",
+        "sham_transformation",
+        "unmodified_parent",
+    }
+)
+_TASK4_CONFIRMATION_CANDIDATE_IDS = frozenset(
+    {"C1", "C2", "C3", "C4", "C5", "C6"}
+)
+
+
+def _canonical_task4_water_loop(water_loop: object) -> WaterLoopGeneratorConfig:
+    if type(water_loop) is not WaterLoopGeneratorConfig:
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "shared source preflight requires an exact WaterLoopGeneratorConfig",
+            "water_loop",
+            {"received_type": type(water_loop).__name__},
+        )
+    try:
+        checked = WaterLoopGeneratorConfig.model_validate(
+            _registered_json_value(water_loop)
+        )
+    except Exception as error:
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "water-loop authority failed complete reconstruction",
+            "water_loop",
+            {"cause_type": type(error).__name__},
+        )
+    observed = tuple(
+        (
+            name,
+            getattr(checked, name).value,
+            getattr(checked, name).unit,
+            getattr(checked, name).evidence_label,
+        )
+        for name, _, _ in _TASK4_WATER_LOOP_AUTHORITY
+    )
+    expected = tuple(
+        (name, value, unit, EvidenceLabel.HYPOTHESIS_PRIOR)
+        for name, value, unit in _TASK4_WATER_LOOP_AUTHORITY
+    )
+    observed_events = tuple(
+        (item.value, item.unit, item.evidence_label)
+        for item in checked.operator_event_times_days
+    )
+    expected_events = tuple(
+        (float(index) + 0.25, "day", EvidenceLabel.HYPOTHESIS_PRIOR)
+        for index in range(_TASK4_DURATION_DAYS)
+    )
+    if observed != expected or observed_events != expected_events:
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "water-loop values differ from the registered Task 4 authority",
+            "water_loop",
+        )
+    return checked
+
+
+def _task3_position_payload(slot: object) -> dict[str, object]:
+    return {
+        "position_id": slot.position_id,
+        "run_id": slot.run_id,
+        "run_sequence_ordinal": slot.run_sequence_ordinal,
+        "water_id": slot.water_id,
+        "reservoir_id": slot.reservoir_id,
+        "water_batch_id": slot.water_batch_id,
+        "greenhouse_compartment_id": slot.greenhouse_compartment_id,
+        "bench_id": slot.bench_id,
+        "row": slot.row,
+        "column": slot.column,
+        "spatial_gradient_profile_id": slot.spatial_gradient_profile_id,
+        "permitted_movement_schedule_ids": list(
+            slot.permitted_movement_schedule_ids
+        ),
+        "cohort_id": slot.cohort_id,
+    }
+
+
+def _canonical_task3_capacity_authorities(
+    position_map: object,
+    manifest: object,
+) -> tuple["PositionMap", "RandomizationManifest"]:
+    # design imports this module, so these runtime-only imports must remain local.
+    from almondlab.design import (
+        revalidate_position_map,
+        revalidate_randomization_manifest,
+    )
+
+    checked_map = revalidate_position_map(position_map)
+    checked_manifest = revalidate_randomization_manifest(manifest)
+    position_payload = [
+        _task3_position_payload(slot)
+        for slot in sorted(checked_map.slots, key=lambda item: item.position_id)
+    ]
+    position_sha256 = hashlib.sha256(
+        canonical_json_bytes(position_payload)
+    ).hexdigest()
+    if (
+        checked_manifest.input_sha256s.get("position_map_canonical")
+        != position_sha256
+    ):
+        fail(
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "manifest does not name the supplied canonical position map",
+            "manifest.input_sha256s.position_map_canonical",
+        )
+    slots_by_position = {slot.position_id: slot for slot in checked_map.slots}
+    records_by_position = {
+        record.position_id: record for record in checked_manifest.records
+    }
+    if (
+        len(slots_by_position) != len(checked_map.slots)
+        or len(records_by_position) != len(checked_manifest.records)
+        or len(checked_map.slots) != len(checked_manifest.records)
+        or set(slots_by_position) != set(records_by_position)
+    ):
+        fail(
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "position map and manifest must have identical exhaustive membership",
+            "position_map.slots",
+            {
+                "position_count": len(checked_map.slots),
+                "manifest_count": len(checked_manifest.records),
+            },
+        )
+    for field_name in ("allocation_id", "plant_id", "blinded_treatment_code"):
+        values = tuple(
+            getattr(record, field_name) for record in checked_manifest.records
+        )
+        if len(set(values)) != len(values):
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "manifest must allocate each Task 3 physical identity exactly once",
+                f"manifest.records.{field_name}",
+            )
+    for position_id in sorted(slots_by_position):
+        slot = slots_by_position[position_id]
+        record = records_by_position[position_id]
+        if (
+            record.population is not AnalysisPopulation.COMPOSITE_ROOT
+            or record.evidence_label is not EvidenceLabel.SYNTHETIC_ONLY
+        ):
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "Task 3 capacity authority must remain composite-root synthetic allocation",
+                "manifest.records",
+                {"position_id": position_id},
+            )
+        observed = (
+            record.run_id,
+            record.run_sequence_ordinal,
+            record.water_id,
+            record.reservoir_id,
+            record.water_batch_id,
+            record.greenhouse_compartment_id,
+            record.bench_id,
+            record.row,
+            record.column,
+            record.spatial_gradient_profile_id,
+            record.cohort_id,
+        )
+        expected = (
+            slot.run_id,
+            slot.run_sequence_ordinal,
+            slot.water_id,
+            slot.reservoir_id,
+            slot.water_batch_id,
+            slot.greenhouse_compartment_id,
+            slot.bench_id,
+            slot.row,
+            slot.column,
+            slot.spatial_gradient_profile_id,
+            slot.cohort_id,
+        )
+        if (
+            observed != expected
+            or record.movement_schedule_id
+            not in slot.permitted_movement_schedule_ids
+        ):
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "manifest relabels a registered physical Task 3 position",
+                "manifest.records",
+                {"position_id": position_id},
+            )
+    return checked_map, checked_manifest
+
+
+def _task4_expected_loop_debit(
+    water_loop: WaterLoopGeneratorConfig,
+    plant_count: int,
+) -> float:
+    try:
+        daily_net_makeup = fsum(
+            (
+                water_loop.irrigation_volume_l_per_plant_day.value
+                * float(plant_count)
+                * (1.0 - water_loop.drainage_return_fraction.value),
+                water_loop.purge_volume_l_day.value,
+            )
+        )
+        expected_debit = fsum(
+            (
+                water_loop.reservoir_initial_volume_l.value,
+                float(_TASK4_DURATION_DAYS) * daily_net_makeup,
+                float(_TASK4_RESTORED_NONTERMINAL_SAMPLES)
+                * water_loop.sampling_volume_l_per_sample.value,
+            )
+        )
+    except (OverflowError, ValueError):
+        expected_debit = float("inf")
+    if not isfinite(expected_debit):
+        fail(
+            "WATER_BATCH_DEBIT_INVALID",
+            "derived source debit is not finite",
+            "manifest.records",
+            {"plant_count": plant_count},
+        )
+    return float(expected_debit)
+
+
 def preflight_shared_source_batch_capacity(
     policy: Task4StopPolicy,
-    loop_demands: Sequence[SharedSourceLoopDemand],
+    *,
+    position_map: "PositionMap",
+    manifest: "RandomizationManifest",
+    recipe_registry: Paper1WaterRecipeRegistry,
+    water_loop: WaterLoopGeneratorConfig,
 ) -> tuple[SharedSourceBatchCapacityAudit, ...]:
-    """Aggregate exact cohort/batch debits before RNG, output, or execution."""
+    """Derive exact Task 3 shared-batch debits before RNG, output, or execution."""
 
     canonical_policy = _canonical_task4_stop_policy(policy)
-    if type(loop_demands) not in (tuple, list) or not loop_demands:
+    _, canonical_manifest = _canonical_task3_capacity_authorities(
+        position_map,
+        manifest,
+    )
+    canonical_registry = _canonical_water_recipe_registry(recipe_registry)
+    canonical_loop = _canonical_task4_water_loop(water_loop)
+    cohort_ids = {record.cohort_id for record in canonical_manifest.records}
+    if len(cohort_ids) != 1 or not cohort_ids <= {"discovery", "confirmation"}:
         fail(
-            "WATER_BATCH_DEBIT_INVALID",
-            "shared source preflight requires a nonempty ordinary sequence",
-            "loop_demands",
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "one preflight must contain exactly one registered Task 3 cohort",
+            "manifest.records.cohort_id",
         )
-    canonical_demands: list[SharedSourceLoopDemand] = []
-    for index, item in enumerate(loop_demands):
-        if not isinstance(item, SharedSourceLoopDemand):
-            fail(
-                "WATER_BATCH_DEBIT_INVALID",
-                "loop demand must be a validated SharedSourceLoopDemand",
-                f"loop_demands.{index}",
-                {"received_type": type(item).__name__},
-            )
-        try:
-            canonical_demands.append(
-                SharedSourceLoopDemand.model_validate(_registered_json_value(item))
-            )
-        except Exception as error:
-            fail(
-                "WATER_BATCH_DEBIT_INVALID",
-                "loop demand failed complete revalidation",
-                f"loop_demands.{index}",
-                {"cause_type": type(error).__name__},
-            )
-    loop_keys = [
-        (item.cohort_id, item.run_id, item.water_id, item.reservoir_id)
-        for item in canonical_demands
-    ]
-    if len(set(loop_keys)) != len(loop_keys):
+    cohort_id = next(iter(cohort_ids))
+    loop_records: dict[tuple[str, str, str, str], list[object]] = {}
+    for record in canonical_manifest.records:
+        loop_key = (
+            record.cohort_id,
+            record.run_id,
+            record.water_id,
+            record.reservoir_id,
+        )
+        loop_records.setdefault(loop_key, []).append(record)
+    expected_loop_count = 16 if cohort_id == "discovery" else 12
+    expected_batch_count = 4 if cohort_id == "discovery" else 2
+    expected_loops_per_batch = 4 if cohort_id == "discovery" else 6
+    if len(loop_records) != expected_loop_count:
         fail(
-            "WATER_BATCH_DEBIT_INVALID",
-            "a physical loop appears more than once in shared source preflight",
-            "loop_demands",
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "manifest omits or adds a registered physical Task 3 loop",
+            "manifest.records",
+            {
+                "cohort_id": cohort_id,
+                "expected_loop_count": expected_loop_count,
+                "received_loop_count": len(loop_records),
+            },
         )
-    grouped: dict[tuple[str, str], list[SharedSourceLoopDemand]] = {}
-    for item in canonical_demands:
-        grouped.setdefault((item.cohort_id, item.water_batch_id), []).append(item)
+    batch_loops: dict[
+        tuple[str, str],
+        list[tuple[tuple[str, str, str, str], int, str]],
+    ] = {}
+    cohort_group_ids: frozenset[str] | None = None
+    cohort_cell_size: int | None = None
+    for loop_key in sorted(loop_records):
+        records = loop_records[loop_key]
+        batch_ids = {record.water_batch_id for record in records}
+        if len(batch_ids) != 1:
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "one physical loop has more than one water-batch identity",
+                "manifest.records.water_batch_id",
+                {"loop_key": loop_key},
+            )
+        group_counts: dict[str, int] = {}
+        for record in records:
+            group_counts[record.group_id] = group_counts.get(record.group_id, 0) + 1
+        group_ids = frozenset(group_counts)
+        cell_sizes = set(group_counts.values())
+        if cohort_id == "discovery":
+            valid_group_shape = (
+                group_ids == _TASK4_DISCOVERY_GROUP_IDS and cell_sizes == {5}
+            )
+        else:
+            candidate_ids = group_ids - {"empty_vector"}
+            valid_group_shape = (
+                "empty_vector" in group_ids
+                and 1 <= len(candidate_ids) <= 4
+                and candidate_ids <= _TASK4_CONFIRMATION_CANDIDATE_IDS
+                and cell_sizes <= {5, 6}
+                and len(cell_sizes) == 1
+            )
+        if not valid_group_shape:
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "physical loop groups or cell size differ from the registered Task 3 design",
+                "manifest.records",
+                {
+                    "loop_key": loop_key,
+                    "group_ids": sorted(group_ids),
+                    "cell_sizes": sorted(cell_sizes),
+                },
+            )
+        cell_size = next(iter(cell_sizes))
+        if cohort_group_ids is None:
+            cohort_group_ids = group_ids
+            cohort_cell_size = cell_size
+        elif group_ids != cohort_group_ids or cell_size != cohort_cell_size:
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "all Task 3 loops in one cohort must use the same groups and cell size",
+                "manifest.records",
+                {"loop_key": loop_key},
+            )
+        plant_count = len(records)
+        water_id = loop_key[2]
+        if water_id not in REGISTERED_WATER_IDS:
+            fail(
+                "WATER_BATCH_IDENTITY_MISMATCH",
+                "physical loop names an unregistered water identity",
+                "manifest.records.water_id",
+                {"water_id": water_id},
+            )
+        water_batch_id = next(iter(batch_ids))
+        batch_loops.setdefault((cohort_id, water_batch_id), []).append(
+            (loop_key, plant_count, water_id)
+        )
+    if len(batch_loops) != expected_batch_count:
+        fail(
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "Task 3 shared water-batch identities were split, added, or omitted",
+            "manifest.records.water_batch_id",
+            {
+                "cohort_id": cohort_id,
+                "expected_batch_count": expected_batch_count,
+                "received_batch_count": len(batch_loops),
+            },
+        )
     capacity_rule = next(
         item
         for item in canonical_policy.other_rules
@@ -2270,42 +2598,50 @@ def preflight_shared_source_batch_capacity(
     if capacity_rule.maximum is None:
         raise AssertionError("registered capacity rule requires maximum")
     capacity = capacity_rule.maximum.value
-    audits: list[SharedSourceBatchCapacityAudit] = []
-    for group_key in sorted(grouped):
-        rows = sorted(
-            grouped[group_key],
-            key=lambda item: (
-                item.cohort_id,
-                item.run_id,
-                item.water_id,
-                item.reservoir_id,
-            ),
+    if canonical_loop.water_batch_volume_l.value != capacity:
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "water-loop and stop-policy source capacities differ",
+            "water_loop.water_batch_volume_l",
         )
-        identities = {
-            (
-                item.water_id,
-                item.recipe_id,
-                item.recipe_revision,
-                item.chemistry_sha256,
-            )
-            for item in rows
-        }
-        if len(identities) != 1:
+    recipes = {
+        recipe.water_id: recipe for recipe in canonical_registry.active_recipes
+    }
+    audits: list[SharedSourceBatchCapacityAudit] = []
+    for group_key in sorted(batch_loops):
+        loops = sorted(batch_loops[group_key], key=lambda item: item[0])
+        water_ids = {item[2] for item in loops}
+        plant_counts = {item[1] for item in loops}
+        run_ids = {item[0][1] for item in loops}
+        if (
+            len(loops) != expected_loops_per_batch
+            or len(water_ids) != 1
+            or len(plant_counts) != 1
+            or (cohort_id == "discovery" and len(run_ids) != 1)
+        ):
             fail(
                 "WATER_BATCH_IDENTITY_MISMATCH",
-                "one shared water batch was assigned conflicting water or chemistry identities",
-                "loop_demands",
+                "one shared water batch has conflicting or incomplete Task 3 loops",
+                "manifest.records.water_batch_id",
                 {"cohort_id": group_key[0], "water_batch_id": group_key[1]},
             )
+        water_id = next(iter(water_ids))
+        recipe = recipes[water_id]
+        chemistry_sha256 = hashlib.sha256(
+            canonical_json_bytes(_chemistry_json(recipe.chemistry))
+        ).hexdigest()
         try:
-            aggregate = fsum(item.expected_debit_l for item in rows)
+            aggregate = fsum(
+                _task4_expected_loop_debit(canonical_loop, plant_count)
+                for _, plant_count, _ in loops
+            )
         except OverflowError:
             aggregate = float("inf")
         if not isfinite(aggregate) or aggregate > capacity:
             fail(
                 "WATER_BATCH_CAPACITY_EXCEEDED",
                 "aggregate expected debit exceeds the shared 5,000-L source inventory",
-                "loop_demands",
+                "manifest.records",
                 {
                     "cohort_id": group_key[0],
                     "water_batch_id": group_key[1],
@@ -2313,16 +2649,15 @@ def preflight_shared_source_batch_capacity(
                     "capacity_l": capacity,
                 },
             )
-        water_id, recipe_id, recipe_revision, chemistry_sha256 = next(iter(identities))
         audits.append(
             SharedSourceBatchCapacityAudit(
                 cohort_id=group_key[0],
                 water_batch_id=group_key[1],
                 water_id=water_id,
-                recipe_id=recipe_id,
-                recipe_revision=recipe_revision,
+                recipe_id=recipe.recipe_id,
+                recipe_revision=recipe.revision,
                 chemistry_sha256=chemistry_sha256,
-                loop_count=len(rows),
+                loop_count=len(loops),
                 aggregate_expected_debit_l=float(aggregate),
                 capacity_l=float(capacity),
                 remaining_capacity_l=float(capacity - aggregate),
@@ -3777,7 +4112,7 @@ def load_paper1_design(path: str | Path) -> Paper1DesignConfig:
 def _canonical_water_recipe_registry(
     registry: object,
 ) -> Paper1WaterRecipeRegistry:
-    if not isinstance(registry, Paper1WaterRecipeRegistry):
+    if type(registry) is not Paper1WaterRecipeRegistry:
         fail(
             "PAPER1_WATER_RECIPE_INVALID",
             "recipe registry must be a validated Paper1WaterRecipeRegistry",
@@ -3815,10 +4150,10 @@ def _canonical_paper1_design(design: object) -> Paper1DesignConfig:
 
 
 def _canonical_recipe_domain(domain: object) -> ModelDomain:
-    if not isinstance(domain, ModelDomain):
+    if type(domain) is not ModelDomain:
         fail(
             "PAPER1_WATER_RECIPE_DOMAIN_INVALID",
-            "recipe validation requires a ModelDomain",
+            "recipe validation requires an exact ModelDomain",
             "domain",
             {"received_type": type(domain).__name__},
         )
@@ -3890,6 +4225,48 @@ def _canonical_recipe_domain(domain: object) -> ModelDomain:
             "domain",
         )
     return checked
+
+
+def validate_task4_domain_request(
+    domain: ModelDomain,
+    request: DomainRequest,
+) -> DomainValidationResult:
+    """Apply the registered Task 4 chassis ceiling before public domain use."""
+
+    checked_domain = _canonical_recipe_domain(domain)
+    if type(request) is not DomainRequest:
+        fail(
+            "TASK4_DOMAIN_REQUEST_INVALID",
+            "Task 4 domain validation requires an exact DomainRequest",
+            "request",
+            {"received_type": type(request).__name__},
+        )
+    try:
+        checked_request = DomainRequest.model_validate(
+            _registered_json_value(request)
+        )
+    except Exception as error:
+        fail(
+            "TASK4_DOMAIN_REQUEST_INVALID",
+            "Task 4 domain request failed complete reconstruction",
+            "request",
+            {"cause_type": type(error).__name__},
+        )
+    if (
+        checked_request.chassis == "SYNTHETIC_VAIRO_B"
+        and checked_request.requested_label is not EvidenceLabel.SYNTHETIC_ONLY
+    ):
+        fail(
+            "TASK4_CHASSIS_EVIDENCE_INVALID",
+            "the secondary synthetic chassis cannot support a stronger evidence tier",
+            "request.requested_label",
+            {
+                "chassis": checked_request.chassis,
+                "maximum_evidence_label": EvidenceLabel.SYNTHETIC_ONLY.value,
+                "received": checked_request.requested_label.value,
+            },
+        )
+    return validate_domain(checked_domain, checked_request)
 
 
 def load_paper1_water_recipes(path: str | Path) -> Paper1WaterRecipeRegistry:
