@@ -80,3 +80,19 @@ Text (verbatim): "CONTAINED MINI-ALMOND SALINITY RESEARCH"; "CONTROL"; "C1"; "C2
 Constraints: raw seawater must never connect to plant pots; brine line must never connect to drain return; drainage must be visibly captured; no roots in open ground; no claim of successful seawater growth; show physically plausible plumbing, service access, repeated experimental units, and sensor instrumentation. All trees should be almonds, compact but botanically plausible, with a mixture of leaves, blossoms, and a few developing hulls.
 Avoid: fantasy giant fruit, submerged plants, seawater poured on roots, open salty soil, broken pipes, unlabeled mixed streams, single-tree showcase, gene-editing laboratory imagery, DNA helices, people in hazmat suits, misleading yield claims, logos, watermarks.
 ```
+
+## 06 — Instrumented experimental aisle, version 4
+
+```text
+Use case: scientific-educational
+Asset type: publication concept rendering / greenhouse research demo
+Primary request: Create a companion view of the same contained mini-almond salinity research facility, viewed from inside the greenhouse at human eye level looking down one experimental aisle.
+Scene/backdrop: sealed greenhouse interior in coastal California, containment curb and impermeable sloped floor, central trench drain, bright clean daylight.
+Subject: two orderly rows of compact 1.2–1.8 meter almond trees, each pot in its own secondary-containment tray. Show independent reservoir and irrigation loops, root-zone EC/pH/moisture probes, sap-flow and leaf sensors, overhead climate sensors, drip emitters, covered green drain-return pipes, and a glazed partition to a service bay containing pretreatment, reverse osmosis, remineralization, treated-water storage, and sealed brine-concentrate storage. Include a small pollination enclosure at the far end.
+Composition/framing: wide landscape architectural visualization, aisle-level cutaway perspective, foreground sensor package in crisp detail, replicated rows and service bay in the background.
+Style/medium: highly realistic architectural and scientific visualization, publication quality, physically plausible, clean but not futuristic fantasy.
+Color palette: cyan treated-water pipes, green drain-return pipes, dark navy seawater feed confined to the service bay, amber brine-only piping, magenta sensor tags.
+Text: use only these short labels if rendered accurately: "CONTROL", "C1", "C2", "C3", "C4", "C5", "C6", "TREATED WATER", "DRAIN RETURN", "BRINE", "SENSORS", "CONCEPT — PERFORMANCE UNPROVEN".
+Constraints: seawater must never visibly irrigate a plant; every irrigation line to plants must originate from treated/remineralized water; all drains must be captured; no open soil; no discharge outdoors; keep controls and candidate groups separated; no claim of successful GMO performance or commercial production.
+Avoid: raw seawater poured on roots, field planting, soil salinization, uncontrolled runoff, giant mature orchard trees, mutant or fantasy plants, exaggerated fruit, hazardous lab imagery, logos, watermarks, illegible paragraphs.
+```

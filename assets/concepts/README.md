@@ -43,6 +43,15 @@ and remineralized irrigation, drainage return, and concentrate remain separate.
 The candidate labels are experimental group names only; they do not imply that
 any construct is safe, effective, or superior.
 
+## 06 — Instrumented experimental aisle, version 4
+
+Moves inside the greenhouse to show one research aisle at working scale. Each
+compact tree sits in its own secondary-containment tray with root-zone,
+sap-flow, and leaf sensors. Cyan treated-water delivery and green covered
+drain-return plumbing remain separate, while reverse osmosis and the isolated
+amber brine system sit behind a glazed service partition. The image is a
+facility concept only; plant performance remains unproven.
+
 Built-in OpenAI image generation was used. The exact production prompts are in
 [PROMPTS.md](PROMPTS.md).
 
