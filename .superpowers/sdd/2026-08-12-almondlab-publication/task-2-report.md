@@ -1,6 +1,6 @@
 # Task 2 publication report: evidence registries and protected joins
 
-Status: Round 3/5 snapshot-provenance correction is implemented and proportionally verified; fresh independent exact review is required.
+Status: COMPLETE through `b39dba6` after three repair rounds. Final scoped exact rereview approved both specification and task quality.
 
 ## Delivered scope
 
@@ -142,6 +142,9 @@ e0310cb704fbdac90389d130dcc2e85f50ac750df2cb833de31c219d150cf4fd  data/public/lo
 - `61f5c37`: correct public evidence audit, manifest, seed, README, and sanitized acquisition receipt.
 - `507f89a`: seal registry semantics and redesign protected joins.
 - `9a90dfb`: close the four Round 2/5 registry, protected-join, identity, and sample-semantics findings.
+- `d5e02a8`: record Round 2/5 verification evidence.
+- `2e3a82a`: correct mixed per-file snapshot provenance.
+- `b39dba6`: record Round 3/5 verification evidence.
 
 ## SHA-256 manifest
 
@@ -156,3 +159,9 @@ ab33891bd64ff0a3f54bc00219da133affe94b5a1fa9fa544865d3228feb60e7  tests/test_saf
 ```
 
 These hashes describe exact core commit `9a90dfb`. Any later change to an owned file requires a refreshed manifest and affected verification results before publication handoff.
+
+## Final review verdict
+
+The final scoped exact rereview approved both specification and task quality through `b39dba6`. This closes Task 2 without changing its scientific boundaries: repository identity is not construct readiness; C2 targeting and construct/event mapping remain unresolved and build-blocked; the KaNa paper-versus-repository completeness conflict and direct transport/construct mapping remain unresolved; recovered 12/11/9 T1 lines are inventory rather than endpoint sample size; and non-germination endpoint independent-line counts remain `not_reported`. No efficacy, winner, or construct-ready claim is made.
+
+Stable final task-local evidence comprises 120 passing registry/safe tests after the Round 2 core repair, 71 passing registry tests after the Round 3 commit, 273 passing relevant integration tests, 22 passing Phase 2 smoke checks with no failures, and 13/13 exact sidecar hashes. The earlier committed-baseline full suite recorded 1,057 passes and the three documented Windows skips for native POSIX-only cases; no later documentation-only result is presented as a replacement full-suite run.
