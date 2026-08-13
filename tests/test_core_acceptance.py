@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from almondlab import verification
 from almondlab.contracts import EvidenceLabel
+from almondlab.mass_balance import StepResult
+from almondlab.treatment import ROResult
 from almondlab.verification import (
     VerificationRecord,
     evaluate_run_stops,
@@ -45,6 +48,7 @@ def test_core_acceptance_writes_only_owned_records_to_run_directory(tmp_path: Pa
     assert stop_payload["validity"] == "valid"
     assert stop_payload["censored"] is True
     assert stop_payload["reason_code"] == "PHYSICAL_STOP_CONCENTRATION_MMOL_L_MAXIMUM"
+    assert stop_payload["evidence_label"] == "synthetic_only"
 
     conservation_payload = json.loads((artifact_directory / "test_20.json").read_text())
     assert conservation_payload["observed_value"]["water_residual"] <= 1e-10
@@ -56,6 +60,29 @@ def test_core_acceptance_writes_only_owned_records_to_run_directory(tmp_path: Pa
     assert set(conservation_payload["fixture_sha256s"]) >= {
         "all_conserved_entities.yaml", "ions_conservative.yaml", "chemistry_handcheck.yaml",
     }
+    assert conservation_payload["observed_value"]["transfer"]["volumes_l"] == {
+        "source": pytest.approx(80.0),
+        "receiving": pytest.approx(20.0),
+    }
+    assert conservation_payload["oracle"]["transfer"]["volumes_l"] == {
+        "source": 80.0,
+        "receiving": 20.0,
+    }
+    assert conservation_payload["observed_value"]["transfer"]["stocks_mmol"]["source"]["na"] == pytest.approx(160.0)
+    assert conservation_payload["observed_value"]["transfer"]["stocks_mmol"]["receiving"]["na"] == pytest.approx(40.0)
+    assert conservation_payload["observed_value"]["ro"]["volumes_l"] == {
+        "feed": 100.0,
+        "permeate": 60.0,
+        "concentrate": 40.0,
+    }
+    assert conservation_payload["observed_value"]["ro"]["inputs"]["recovery"] == 0.60
+    assert conservation_payload["observed_value"]["ro"]["inputs"]["rejection"]["na"] == 0.90
+    assert conservation_payload["observed_value"]["ro"]["stocks_mmol"]["feed"]["na"] == 200.0
+    assert conservation_payload["observed_value"]["ro"]["stocks_mmol"]["permeate"]["na"] == pytest.approx(12.0)
+    assert conservation_payload["observed_value"]["ro"]["stocks_mmol"]["concentrate"]["na"] == pytest.approx(188.0)
+    assert conservation_payload["comparison"]["minimum_state"] == "ge"
+    assert conservation_payload["oracle"]["minimum_state"] == -1e-12
+    assert conservation_payload["tolerance"]["minimum_state"] == 0.0
 
     chemistry_payload = json.loads((artifact_directory / "test_05.json").read_text())
     assert chemistry_payload["observed_value"]["sar"] == pytest.approx(5.773502692)
@@ -121,8 +148,59 @@ def test_configured_minimum_and_maximum_stops_are_loaded_and_censor_at_boundary(
         load_physical_stops(mutated)
 
     assert below_minimum.reason_code == "PHYSICAL_STOP_VOLUME_L_MINIMUM"
+    assert below_minimum.evidence_label is EvidenceLabel.SYNTHETIC_ONLY
     assert exact_maximum.reason_code == "PHYSICAL_STOP_INJURY_MAXIMUM"
-    assert within_bounds == type(within_bounds)(True, False, None)
+    assert exact_maximum.evidence_label is EvidenceLabel.SYNTHETIC_ONLY
+    assert within_bounds == type(within_bounds)(True, False, None, None)
+
+
+def test_test20_rejects_a_noop_transfer_even_when_ledger_residual_is_zero() -> None:
+    def no_op_step(state: object, flows: object, external: object, duration: float) -> StepResult:
+        return StepResult(state=state, ledger=(), substeps=0)  # type: ignore[arg-type]
+
+    record = verification._acceptance_20(stepper=no_op_step)
+
+    assert record.passed is False
+    assert record.observed_value["transfer"]["volumes_l"] == {
+        "source": 100.0,
+        "receiving": 0.0,
+    }
+    assert record.oracle["transfer"]["volumes_l"] == {
+        "source": 80.0,
+        "receiving": 20.0,
+    }
+
+
+@pytest.mark.parametrize("permeate_volume", [50.0, -10.0])
+def test_test20_rejects_conserving_but_wrong_ro_branches(permeate_volume: float) -> None:
+    def wrong_ro(
+        feed_volume_l: float,
+        feed_stock_mmol: dict[str, float],
+        recovery: float,
+        rejection: dict[str, float],
+    ) -> ROResult:
+        fraction = permeate_volume / feed_volume_l
+        permeate = {entity: stock * fraction for entity, stock in feed_stock_mmol.items()}
+        concentrate = {
+            entity: stock - permeate[entity]
+            for entity, stock in feed_stock_mmol.items()
+        }
+        return ROResult(
+            feed_volume_l=feed_volume_l,
+            permeate_volume_l=permeate_volume,
+            concentrate_volume_l=feed_volume_l - permeate_volume,
+            feed_stock_mmol=dict(feed_stock_mmol),
+            permeate_stock_mmol=permeate,
+            concentrate_stock_mmol=concentrate,
+            rejection=dict(rejection),
+        )
+
+    record = verification._acceptance_20(ro_model=wrong_ro)
+
+    assert record.passed is False
+    assert record.observed_value["ro"]["water_conserved"] is True
+    if permeate_volume < 0.0:
+        assert record.observed_value["ro"]["branches_within_bounds"] is False
 
 
 def test_writer_validates_before_creating_target_and_record_is_immutable(tmp_path: Path) -> None:

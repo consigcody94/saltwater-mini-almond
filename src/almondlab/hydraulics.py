@@ -12,8 +12,16 @@ from almondlab.contracts import EvidenceLabel
 GAS_CONSTANT_MPA_L_MOL_K = 0.008314462618
 
 
-def _finite(value: float, field_path: str) -> float:
-    converted = float(value)
+def _finite(value: object, field_path: str) -> float:
+    try:
+        converted = float(value)
+    except (TypeError, ValueError, OverflowError):
+        fail(
+            "HYDRAULIC_INVALID_NUMBER",
+            "value must be numeric",
+            field_path,
+            {"received_type": type(value).__name__},
+        )
     if not isfinite(converted):
         fail("HYDRAULIC_NONFINITE", "value must be finite", field_path)
     return converted
@@ -74,7 +82,13 @@ class HydraulicUptake:
     actual_l_day: float
 
 
-def _validate_domain(params: HydraulicInputs, domain: HydraulicDomain | None) -> None:
+def _validate_domain(
+    params: HydraulicInputs,
+    domain: HydraulicDomain | None,
+    *,
+    osmolality: float,
+    temperature_k: float,
+) -> None:
     if not isinstance(params.evidence_label, EvidenceLabel):
         fail("HYDRAULIC_INVALID_EVIDENCE_LABEL", "evidence_label must be an EvidenceLabel", "evidence_label")
     if domain is None:
@@ -82,8 +96,8 @@ def _validate_domain(params: HydraulicInputs, domain: HydraulicDomain | None) ->
     if not isinstance(domain.permitted_label, EvidenceLabel):
         fail("HYDRAULIC_INVALID_DOMAIN", "domain evidence label must be valid", "domain.permitted_label")
     bounds = (
-        ("osmolality", domain.osmolality_min, domain.osmolality_max, params.osmolality_osmol_kg),
-        ("temperature_k", domain.temperature_k_min, domain.temperature_k_max, params.temperature_k),
+        ("osmolality", domain.osmolality_min, domain.osmolality_max, osmolality),
+        ("temperature_k", domain.temperature_k_min, domain.temperature_k_max, temperature_k),
     )
     for name, lower, upper, value in bounds:
         lower = _finite(lower, f"domain.{name}_min")
@@ -100,10 +114,12 @@ def hydraulic_uptake(
     params: HydraulicInputs, *, domain: HydraulicDomain | None = None
 ) -> HydraulicUptake:
     """Cap potential transpiration by the total-osmolality hydraulic limit."""
-    _validate_domain(params, domain)
     values = {
         name: _finite(getattr(params, name), name)
         for name in (
+            "osmolality_osmol_kg",
+            "temperature_k",
+            "water_density_kg_l",
             "matric_mpa",
             "leaf_critical_mpa",
             "adjustment_mpa",
@@ -112,17 +128,22 @@ def hydraulic_uptake(
             "specific_ion_factor",
         )
     }
+    _validate_domain(
+        params,
+        domain,
+        osmolality=values["osmolality_osmol_kg"],
+        temperature_k=values["temperature_k"],
+    )
     if values["root_conductance_l_day_mpa"] < 0.0:
         fail("HYDRAULIC_INVALID_CONDUCTANCE", "root conductance must be nonnegative", "root_conductance_l_day_mpa")
     if values["potential_transpiration_l_day"] < 0.0:
         fail("HYDRAULIC_INVALID_TRANSPIRATION", "potential transpiration must be nonnegative", "potential_transpiration_l_day")
     if not 0.0 <= values["specific_ion_factor"] <= 1.0:
         fail("HYDRAULIC_INVALID_ION_FACTOR", "specific ion factor must be in [0, 1]", "specific_ion_factor")
-    if not -0.50 <= values["adjustment_mpa"] <= 0.50:
-        fail("HYDRAULIC_INVALID_ADJUSTMENT", "adjustment must be in [-0.50, 0.50] MPa", "adjustment_mpa")
-
     osmotic = osmotic_potential_mpa(
-        params.osmolality_osmol_kg, params.temperature_k, params.water_density_kg_l
+        values["osmolality_osmol_kg"],
+        values["temperature_k"],
+        values["water_density_kg_l"],
     )
     soil = values["matric_mpa"] + osmotic
     leaf_limit = values["leaf_critical_mpa"] - values["adjustment_mpa"]

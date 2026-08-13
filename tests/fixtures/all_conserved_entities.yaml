@@ -27,7 +27,85 @@ initial:
       alkalinity: 0.0
 flow: {source: source, target: receiving, rate_l_per_hour: 10.0}
 duration_hours: 2.0
+expected_transfer:
+  volumes_l: {source: 80.0, receiving: 20.0}
+  stocks_mmol:
+    source:
+      na: 160.0
+      cl: 240.0
+      ca: 32.0
+      mg: 24.0
+      k: 16.0
+      total_b: 0.8
+      n: 8.0
+      p: 4.0
+      s: 12.0
+      dissolved_inorganic_carbon: 20.0
+      alkalinity: 28.0
+    receiving:
+      na: 40.0
+      cl: 60.0
+      ca: 8.0
+      mg: 6.0
+      k: 4.0
+      total_b: 0.2
+      n: 2.0
+      p: 1.0
+      s: 3.0
+      dissolved_inorganic_carbon: 5.0
+      alkalinity: 7.0
+  concentrations_mmol_l:
+    source:
+      na: 2.0
+      cl: 3.0
+      ca: 0.4
+      mg: 0.3
+      k: 0.2
+      total_b: 0.01
+      n: 0.1
+      p: 0.05
+      s: 0.15
+      dissolved_inorganic_carbon: 0.25
+      alkalinity: 0.35
+    receiving:
+      na: 2.0
+      cl: 3.0
+      ca: 0.4
+      mg: 0.3
+      k: 0.2
+      total_b: 0.01
+      n: 0.1
+      p: 0.05
+      s: 0.15
+      dissolved_inorganic_carbon: 0.25
+      alkalinity: 0.35
 ro:
   feed_volume_l: 100.0
   recovery: 0.60
   rejection: 0.90
+  expected_volumes_l: {feed: 100.0, permeate: 60.0, concentrate: 40.0}
+  expected_stocks_mmol:
+    permeate:
+      na: 12.0
+      cl: 18.0
+      ca: 2.4
+      mg: 1.8
+      k: 1.2
+      total_b: 0.06
+      n: 0.6
+      p: 0.3
+      s: 0.9
+      dissolved_inorganic_carbon: 1.5
+      alkalinity: 2.1
+    concentrate:
+      na: 188.0
+      cl: 282.0
+      ca: 37.6
+      mg: 28.2
+      k: 18.8
+      total_b: 0.94
+      n: 9.4
+      p: 4.7
+      s: 14.1
+      dissolved_inorganic_carbon: 23.5
+      alkalinity: 32.9

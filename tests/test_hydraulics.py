@@ -49,16 +49,28 @@ def _inputs(**updates: object) -> HydraulicInputs:
         ("temperature_k", float("inf"), "HYDRAULIC_NONFINITE"),
         ("water_density_kg_l", float("-inf"), "HYDRAULIC_NONFINITE"),
         ("specific_ion_factor", 1.01, "HYDRAULIC_INVALID_ION_FACTOR"),
-        ("adjustment_mpa", 0.51, "HYDRAULIC_INVALID_ADJUSTMENT"),
+        ("osmolality_osmol_kg", "not-a-number", "HYDRAULIC_INVALID_NUMBER"),
+        pytest.param(
+            "osmolality_osmol_kg",
+            10**10000,
+            "HYDRAULIC_INVALID_NUMBER",
+            id="overflowing-integer",
+        ),
     ],
 )
 def test_hydraulic_gate_rejects_malformed_or_out_of_range_inputs(
-    field: str, value: float, code: str
+    field: str, value: object, code: str
 ) -> None:
     with pytest.raises(AlmondLabError) as exc_info:
         hydraulic_uptake(_inputs(**{field: value}))
 
     assert exc_info.value.code == code
+
+
+def test_adjustment_has_no_unregistered_global_bound() -> None:
+    result = hydraulic_uptake(_inputs(adjustment_mpa=0.51))
+
+    assert result.leaf_limit_mpa == pytest.approx(-2.51)
 
 
 def test_hydraulic_gate_rejects_invalid_evidence_label_and_domain_violation() -> None:
@@ -75,3 +87,10 @@ def test_hydraulic_gate_rejects_invalid_evidence_label_and_domain_violation() ->
     with pytest.raises(AlmondLabError) as domain_error:
         hydraulic_uptake(_inputs(osmolality_osmol_kg=0.11), domain=domain)
     assert domain_error.value.code == "HYDRAULIC_DOMAIN_VIOLATION"
+
+    with pytest.raises(AlmondLabError) as malformed_domain_error:
+        hydraulic_uptake(
+            _inputs(osmolality_osmol_kg="not-a-number"),
+            domain=domain,
+        )
+    assert malformed_domain_error.value.code == "HYDRAULIC_INVALID_NUMBER"

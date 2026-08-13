@@ -65,6 +65,7 @@ class VerificationRecord:
     passed: bool
     code_version: str
     evidence_label: EvidenceLabel
+    comparison: object = "abs_le"
     fixture_sha256s: Mapping[str, str] | None = None
     validity: Literal["valid", "invalid"] = "valid"
     censored: bool = False
@@ -78,6 +79,7 @@ class VerificationRecord:
         object.__setattr__(self, "observed_value", _freeze_json(self.observed_value))
         object.__setattr__(self, "oracle", _freeze_json(self.oracle))
         object.__setattr__(self, "tolerance", _freeze_json(self.tolerance))
+        object.__setattr__(self, "comparison", _freeze_json(self.comparison))
         hashes = {"primary": self.fixture_sha256} if self.fixture_sha256s is None else dict(self.fixture_sha256s)
         object.__setattr__(self, "fixture_sha256s", MappingProxyType(hashes))
 
@@ -104,6 +106,7 @@ class VerificationRecord:
         _json_value(self.observed_value, "observed_value")
         _json_value(self.oracle, "oracle")
         _json_value(self.tolerance, "tolerance")
+        _json_value(self.comparison, "comparison")
 
     def to_dict(self) -> dict[str, object]:
         self.validate()
@@ -114,6 +117,7 @@ class VerificationRecord:
             "observed_value": _json_value(self.observed_value, "observed_value"),
             "oracle": _json_value(self.oracle, "oracle"),
             "tolerance": _json_value(self.tolerance, "tolerance"),
+            "comparison": _json_value(self.comparison, "comparison"),
             "passed": self.passed,
             "code_version": self.code_version,
             "evidence_label": self.evidence_label.value,
@@ -130,6 +134,7 @@ class RunStopStatus:
     valid: bool
     censored: bool
     reason_code: str | None
+    evidence_label: EvidenceLabel | None = None
 
 
 @dataclass(frozen=True)
@@ -213,9 +218,19 @@ def evaluate_run_stops(
         if not isfinite(float(value)):
             return RunStopStatus(False, False, "NONFINITE_STATE")
         if stop.minimum is not None and float(value) <= stop.minimum:
-            return RunStopStatus(True, True, f"PHYSICAL_STOP_{name.upper()}_MINIMUM")
+            return RunStopStatus(
+                True,
+                True,
+                f"PHYSICAL_STOP_{name.upper()}_MINIMUM",
+                stop.evidence_label,
+            )
         if stop.maximum is not None and float(value) >= stop.maximum:
-            return RunStopStatus(True, True, f"PHYSICAL_STOP_{name.upper()}_MAXIMUM")
+            return RunStopStatus(
+                True,
+                True,
+                f"PHYSICAL_STOP_{name.upper()}_MAXIMUM",
+                stop.evidence_label,
+            )
     return RunStopStatus(True, False, None)
 
 
@@ -273,6 +288,8 @@ def _record(
     acceptance_test: int, fixture_sha256: str, observed: object, oracle: object,
     tolerance: object, passed: bool, *, reason_code: str | None = None,
     censored: bool = False, fixture_sha256s: Mapping[str, str] | None = None,
+    evidence_label: EvidenceLabel = EvidenceLabel.PHYSICS_CONSTRAINED,
+    comparison: object = "abs_le",
 ) -> VerificationRecord:
     return VerificationRecord(
         acceptance_test=acceptance_test,
@@ -282,7 +299,8 @@ def _record(
         tolerance=tolerance,
         passed=passed,
         code_version=_code_version(),
-        evidence_label=EvidenceLabel.PHYSICS_CONSTRAINED,
+        evidence_label=evidence_label,
+        comparison=comparison,
         fixture_sha256s=fixture_sha256s,
         reason_code=reason_code,
         censored=censored,
@@ -335,6 +353,8 @@ def _acceptance_03() -> VerificationRecord:
         physical_values={"concentration_mmol_l": observed_concentration},
         physical_stops=load_physical_stops(_repo_root() / "configs" / "thresholds.yaml"),
     )
+    if stop.evidence_label is None:
+        raise RuntimeError("Test 3 physical stop must retain its configured evidence label")
     return _record(
         3,
         digest,
@@ -344,6 +364,7 @@ def _acceptance_03() -> VerificationRecord:
         observed <= 1e-6 and stop.valid and stop.censored,
         censored=stop.censored,
         reason_code=stop.reason_code,
+        evidence_label=stop.evidence_label,
     )
 
 
@@ -463,12 +484,39 @@ def _acceptance_19() -> VerificationRecord:
     return _record(19, digest, observed, oracle, 0.0, passed)
 
 
-def _acceptance_20() -> VerificationRecord:
+def _tree_constant(template: object, value: object) -> object:
+    if isinstance(template, Mapping):
+        return {key: _tree_constant(item, value) for key, item in template.items()}
+    return value
+
+
+def _maximum_numeric_difference(observed: object, oracle: object) -> float:
+    if isinstance(observed, Mapping) and isinstance(oracle, Mapping):
+        if set(observed) != set(oracle):
+            return float("inf")
+        return max(
+            (
+                _maximum_numeric_difference(observed[key], oracle[key])
+                for key in oracle
+            ),
+            default=0.0,
+        )
+    try:
+        return abs(float(observed) - float(oracle))
+    except (TypeError, ValueError):
+        return 0.0 if observed == oracle else float("inf")
+
+
+def _acceptance_20(
+    *,
+    stepper: object = step_state,
+    ro_model: object = ro_split,
+) -> VerificationRecord:
     _, fixture, digest = _fixture("all_conserved_entities.yaml")
     _, ions_fixture, ions_digest = _fixture("ions_conservative.yaml")
     _, chemistry_fixture, chemistry_digest = _fixture("chemistry_handcheck.yaml")
     before = _state(fixture["initial"])  # type: ignore[arg-type]
-    result = step_state(
+    result = stepper(  # type: ignore[operator]
         before,
         [Flow(**fixture["flow"])],  # type: ignore[arg-type]
         [],
@@ -476,11 +524,17 @@ def _acceptance_20() -> VerificationRecord:
     )
     audit = audit_ledger(before, result.state, result.ledger)
     entities = dict(before.stocks_mmol["source"])
-    ro = ro_split(
-        float(fixture["ro"]["feed_volume_l"]),  # type: ignore[index]
+    ro_feed_volume = float(fixture["ro"]["feed_volume_l"])  # type: ignore[index]
+    ro_recovery = float(fixture["ro"]["recovery"])  # type: ignore[index]
+    ro_rejection = {
+        entity: float(fixture["ro"]["rejection"])  # type: ignore[index]
+        for entity in entities
+    }
+    ro = ro_model(  # type: ignore[operator]
+        ro_feed_volume,
         entities,
-        float(fixture["ro"]["recovery"]),  # type: ignore[index]
-        {entity: float(fixture["ro"]["rejection"]) for entity in entities},  # type: ignore[index]
+        ro_recovery,
+        ro_rejection,
     )
     ions_before = _state(ions_fixture["initial"])  # type: ignore[arg-type]
     ions_result = step_state(
@@ -493,9 +547,100 @@ def _acceptance_20() -> VerificationRecord:
     sources, measurement = _chemistry_sources(chemistry_fixture)
     blend_data = chemistry_fixture["blend"]  # type: ignore[index]
     blend = blend_by_volume(sources, blend_data["volumes_l"], measurement=measurement)
+    transfer_observed = {
+        "volumes_l": dict(result.state.volumes_l),
+        "stocks_mmol": {
+            compartment: dict(stocks)
+            for compartment, stocks in result.state.stocks_mmol.items()
+        },
+        "concentrations_mmol_l": {
+            compartment: {
+                entity: result.state.concentration(compartment, entity)
+                for entity in entities
+            }
+            for compartment in result.state.volumes_l
+        },
+    }
+    transfer_oracle = fixture["expected_transfer"]
+
+    ro_observed = {
+        "inputs": {
+            "feed_volume_l": ro.feed_volume_l,
+            "recovery": ro_recovery,
+            "rejection": dict(ro.rejection),
+        },
+        "volumes_l": {
+            "feed": ro.feed_volume_l,
+            "permeate": ro.permeate_volume_l,
+            "concentrate": ro.concentrate_volume_l,
+        },
+        "stocks_mmol": {
+            "feed": dict(ro.feed_stock_mmol),
+            "permeate": dict(ro.permeate_stock_mmol),
+            "concentrate": dict(ro.concentrate_stock_mmol),
+        },
+    }
+    ro_oracle = {
+        "inputs": {
+            "feed_volume_l": ro_feed_volume,
+            "recovery": ro_recovery,
+            "rejection": ro_rejection,
+        },
+        "volumes_l": fixture["ro"]["expected_volumes_l"],  # type: ignore[index]
+        "stocks_mmol": {
+            "feed": entities,
+            **fixture["ro"]["expected_stocks_mmol"],  # type: ignore[index]
+        },
+    }
+    ro_water_conserved = abs(
+        ro.permeate_volume_l + ro.concentrate_volume_l - ro.feed_volume_l
+    ) <= LEDGER_RESIDUAL_TOLERANCE
+    ro_entities_conserved = {
+        entity: abs(
+            ro.permeate_stock_mmol[entity]
+            + ro.concentrate_stock_mmol[entity]
+            - stock
+        ) <= LEDGER_RESIDUAL_TOLERANCE
+        for entity, stock in entities.items()
+    }
+    ro_branches_within_bounds = (
+        0.0 <= ro.permeate_volume_l <= ro.feed_volume_l
+        and 0.0 <= ro.concentrate_volume_l <= ro.feed_volume_l
+        and all(
+            0.0 <= branch[entity] <= entities[entity]
+            for branch in (ro.permeate_stock_mmol, ro.concentrate_stock_mmol)
+            for entity in entities
+        )
+    )
+    ro_observed.update(
+        {
+            "water_conserved": ro_water_conserved,
+            "entities_conserved": ro_entities_conserved,
+            "branches_within_bounds": ro_branches_within_bounds,
+        }
+    )
+    ro_oracle.update(
+        {
+            "water_conserved": True,
+            "entities_conserved": {entity: True for entity in entities},
+            "branches_within_bounds": True,
+        }
+    )
+
+    blend_observed = {
+        "total_volume_l": blend.total_volume_l,
+        "concentrations_mmol_l": {
+            field: getattr(blend.chemistry, field)
+            for field in blend_data["expected"]
+        },
+    }
+    blend_oracle = {
+        "total_volume_l": 8.0,
+        "concentrations_mmol_l": dict(blend_data["expected"]),
+    }
     blend_bounds = {
-        field: abs(getattr(blend.chemistry, field) - value)
-        for field, value in blend_data["expected"].items()
+        field: abs(blend_observed["concentrations_mmol_l"][field] - value)
+        for field, value in blend_oracle["concentrations_mmol_l"].items()
     }
     state_values = list(result.state.all_values())
     stop = evaluate_run_stops(
@@ -540,16 +685,78 @@ def _acceptance_20() -> VerificationRecord:
     }
     observed = {
         "minimum_state": min(state_values),
+        "transfer": transfer_observed,
+        "ro": ro_observed,
+        "blend": blend_observed,
         "entities": entity_observed,
         "water_residual": entity_observed["water"]["ro_feed_permeate_concentrate_residual"],
         "ions_fixture_transfer_residual": max(ions_audit.relative_residuals.values()),
         "blend_bounds": blend_bounds,
         "registered_entities": len(entity_observed),
     }
+    oracle = {
+        "minimum_state": -1e-12,
+        "transfer": transfer_oracle,
+        "ro": ro_oracle,
+        "blend": blend_oracle,
+        "entities": entity_oracle,
+        "water_residual": 0.0,
+        "ions_fixture_transfer_residual": 0.0,
+        "blend_bounds": {field: 0.0 for field in blend_bounds},
+        "registered_entities": len(ConservedEntity),
+    }
+    comparison = {
+        "minimum_state": "ge",
+        "transfer": _tree_constant(transfer_oracle, "abs_le"),
+        "ro": {
+            "inputs": _tree_constant(ro_oracle["inputs"], "abs_le"),
+            "volumes_l": _tree_constant(ro_oracle["volumes_l"], "abs_le"),
+            "stocks_mmol": _tree_constant(ro_oracle["stocks_mmol"], "abs_le"),
+            "water_conserved": "eq",
+            "entities_conserved": _tree_constant(
+                ro_oracle["entities_conserved"], "eq"
+            ),
+            "branches_within_bounds": "eq",
+        },
+        "blend": _tree_constant(blend_oracle, "abs_le"),
+        "entities": _tree_constant(entity_oracle, "abs_le"),
+        "water_residual": "abs_le",
+        "ions_fixture_transfer_residual": "abs_le",
+        "blend_bounds": _tree_constant(blend_bounds, "abs_le"),
+        "registered_entities": "eq",
+    }
+    tolerance = {
+        "minimum_state": 0.0,
+        "transfer": _tree_constant(transfer_oracle, 1e-10),
+        "ro": _tree_constant(ro_oracle, 1e-10),
+        "blend": _tree_constant(blend_oracle, 1e-10),
+        "entities": entity_tolerance,
+        "water_residual": 1e-10,
+        "ions_fixture_transfer_residual": 1e-10,
+        "blend_bounds": {field: 1e-10 for field in blend_bounds},
+        "registered_entities": 0.0,
+    }
     passed = (
         stop.valid
         and not stop.censored
         and observed["minimum_state"] >= -1e-12
+        and _maximum_numeric_difference(transfer_observed, transfer_oracle) <= 1e-10
+        and _maximum_numeric_difference(
+            {
+                "inputs": ro_observed["inputs"],
+                "volumes_l": ro_observed["volumes_l"],
+                "stocks_mmol": ro_observed["stocks_mmol"],
+            },
+            {
+                "inputs": ro_oracle["inputs"],
+                "volumes_l": ro_oracle["volumes_l"],
+                "stocks_mmol": ro_oracle["stocks_mmol"],
+            },
+        ) <= 1e-10
+        and ro_water_conserved
+        and all(ro_entities_conserved.values())
+        and ro_branches_within_bounds
+        and _maximum_numeric_difference(blend_observed, blend_oracle) <= 1e-10
         and all(
             value <= 1e-10
             for measurements in entity_observed.values()
@@ -563,9 +770,10 @@ def _acceptance_20() -> VerificationRecord:
         20,
         digest,
         observed,
-        {"minimum_state": -1e-12, "entities": entity_oracle, "blend_bounds": {field: 0.0 for field in blend_bounds}},
-        {"minimum_state": -1e-12, "entities": entity_tolerance, "blend_bounds": {field: 1e-10 for field in blend_bounds}},
+        oracle,
+        tolerance,
         passed,
+        comparison=comparison,
         fixture_sha256s={
             "all_conserved_entities.yaml": digest,
             "ions_conservative.yaml": ions_digest,

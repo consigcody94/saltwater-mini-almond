@@ -67,3 +67,35 @@ Required core suite result: `108 passed`.
 Full suite result: `142 passed`.
 
 The placeholder-pattern scan (`TODO|TBD|FIXME|placeholder|not implemented`) returned no matches in `src`, `tests`, or `configs` outside this report/checklist context. `git diff --check` was clean.
+
+## Fix round 2
+
+Added review-driven tests before implementation. The first focused RED run collected 17 tests and failed 8 as expected: nonnumeric hydraulic inputs leaked native exceptions, the unsupported global adjustment bound remained, domain comparisons occurred before normalization, Test 3 lost its configured evidence label, run-stop status omitted that label, and Test 20 lacked injectable transfer and RO paths for mutation testing. A subsequent RED assertion failed on the missing recorded RO inputs. The final audit added an overflowing-integer regression and observed the expected native `OverflowError` before extending structured numeric conversion to cover it.
+
+The implementation now preserves the exact configured stop evidence label through `RunStopStatus` and Test 3 (`synthetic_only` for the current threshold), converts malformed numeric inputs to structured hydraulic errors, and removes the unproven global adjustment limit. Test 20 exercises the real transfer, RO, and blend functions against independent literal branch expectations. Its artifact records exact inputs, water volumes, every registered entity's stocks and concentrations, comparisons, tolerances, and all fixture hashes. Mutation tests prove both a no-op transfer and conserving-but-wrong RO splits fail. The minimum-state gate is encoded directionally as `observed ge -1e-12` with zero tolerance.
+
+Focused command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'; & 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_hydraulics.py tests/test_core_acceptance.py -v -p no:cacheprovider
+```
+
+Result: `18 passed`.
+
+Required core command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'; & 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest tests/test_contracts.py tests/test_schemas.py tests/test_chemistry.py tests/test_treatment.py tests/test_domains.py tests/test_mass_balance.py tests/test_hydraulics.py tests/test_core_acceptance.py -v -p no:cacheprovider
+```
+
+Result: `113 passed`.
+
+Full-suite command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'; & 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest -v -p no:cacheprovider
+```
+
+Result: `147 passed`.
+
+The final placeholder-pattern scan returned no matches in `src`, `tests`, or `configs`; `git diff --check` was clean.
