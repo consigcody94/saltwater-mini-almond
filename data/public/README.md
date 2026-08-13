@@ -26,22 +26,52 @@ The repository wrapper defaults to a no-write reference dry-run:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/acquire_public_data.ps1
 ```
 
-Only `-Profile references -Execute` can perform downloads. It delegates to the
-four-accession allowlisted workflow in `scripts/public_data/`, streams each NCBI
-package to a `.partial` file, validates its format, and locally calculates
-SHA-256 before promotion. Existing files are skipped only after rehashing.
-The downloader pins the current NCBI Datasets v2 accession routes and supported
-`PROT_FASTA` enum, performs serial requests, and uses bounded retry/backoff for
-HTTP 429/5xx responses.
+The wrapper exposes three profiles:
 
-The `rootstock-rnaseq` profile is informational and deliberately has no
-downloader. Even with `-Execute`, it fails closed because the verified
-PRJNA732909 run-to-treatment key is absent. No SRA/ENA FASTQ data are acquired
-by repository code.
+- `references` delegates to the four-accession NCBI reference workflow. With
+  `-Execute`, it streams each package to `.partial`, validates the ZIP, and
+  calculates SHA-256 before promotion. Existing files are skipped only after
+  rehashing. The downloader pins the current NCBI Datasets v2 accession routes
+  and supported `PROT_FASTA` enum and performs serial bounded retries.
+- `phase2-small` delegates to Phase 2 `All` and defaults to
+  `data/raw/phase2_small`. It admits only the official GSE254853 processed
+  supplementary directory plus these exact EFetch accession versions:
+  `AJ972674.1`, `CAI99405.1`, `EU879059.1`, `ACJ63441.1`,
+  `XM_020565174.1`, `XP_020420763.1`, `XM_020564808.1`,
+  `XP_020420397.1`, `XM_020568644.1`, `XP_020424233.1`,
+  `XM_007201987.2`, and `XP_007202049.1`. GEO files must pass a positive
+  processed-format allowlist; EFetch nucleotide/protein database mappings,
+  redirect destinations, query semantics, response types, accession headers,
+  byte counts, and local hashes are checked.
+- `rootstock-rnaseq` remains informational and blocked. Even with `-Execute`,
+  it fails closed because the verified PRJNA732909 run-to-treatment key is
+  absent.
+
+Phase 2 dry-run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/acquire_public_data.ps1 -Profile phase2-small
+```
+
+Phase 2 explicit acquisition command:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/acquire_public_data.ps1 -Profile phase2-small -Execute
+```
+
+No network acquisition was run while integrating this workflow. `-Execute` is
+the only switch that permits requests or output creation.
+
+No PyAPX sequence is included because no exact public accession-version was
+verified. No Ectocarpus identifier crosswalk or sequence claim is made. Phase 2
+does not request SRA, ENA, FASTQ, FQ, BAM, CRAM, or any other raw-read payload;
+the repository still has no RNA-seq downloader.
 
 `local_snapshot.sha256` contains locally calculated hashes for the audited
 manifest, audit, evidence seed, and acquisition code. These are repository
 snapshot hashes, not publisher, NCBI, ENA, or other remote checksums.
+The independent `scripts/public_data/phase2/local_snapshot.sha256` freezes the
+Phase 2 acquisition module, entry point, offline tests, and documentation.
 
 ## Completed reference snapshot
 

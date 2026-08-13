@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('references', 'rootstock-rnaseq')]
+    [ValidateSet('references', 'phase2-small', 'rootstock-rnaseq')]
     [string]$Profile = 'references',
     [switch]$Execute,
     [string]$OutputRoot,
@@ -13,11 +13,10 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
-    $OutputRoot = if ($Profile -eq 'references') {
-        Join-Path $projectRoot 'data\raw\ncbi_references'
-    }
-    else {
-        Join-Path $projectRoot 'data\raw\PRJNA732909'
+    $OutputRoot = switch ($Profile) {
+        'references' { Join-Path $projectRoot 'data\raw\ncbi_references' }
+        'phase2-small' { Join-Path $projectRoot 'data\raw\phase2_small' }
+        'rootstock-rnaseq' { Join-Path $projectRoot 'data\raw\PRJNA732909' }
     }
 }
 
@@ -34,6 +33,18 @@ if ($Profile -eq 'rootstock-rnaseq') {
     }
 
     Write-Warning 'DRY RUN ONLY: no RNA-seq downloader is implemented and no files or directories were created.'
+    return
+}
+
+if ($Profile -eq 'phase2-small') {
+    $phase2Script = Join-Path $PSScriptRoot 'public_data\phase2\Acquire-Phase2PublicData.ps1'
+    $phase2Arguments = @{
+        Profile = 'All'
+        OutputRoot = $OutputRoot
+        TimeoutSeconds = $TimeoutSeconds
+    }
+    if ($Execute) { $phase2Arguments.Execute = $true }
+    & $phase2Script @phase2Arguments
     return
 }
 

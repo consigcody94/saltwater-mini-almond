@@ -1,0 +1,5 @@
+# Locally calculated review snapshot; no remote checksums are represented here.
+a77574a173147136f100e935d3f390d63af5d076e7dde0533b3b0073c21414d3  Acquire-Phase2PublicData.ps1
+ec15bbc3576ff508a3e8a18f82f8eea50304363b88cda9daf1c21774babe1dd6  Phase2PublicData.psm1
+9491e6c8ccbc291457ee4d15fbc4777185c3b9bb416ece71f3552985f7da2e39  Test-Phase2PublicData.ps1
+1fd1c4595c597da260142296457e7e7154d9e4aacac8613bee31c91af141e646  README.md
