@@ -46,10 +46,24 @@ FILESYSTEM_CONFINEMENT_LIMITATION = (
 # represented exactly by common IEEE-754 based JSON consumers.
 JSON_INTEGER_MIN = -(2**53 - 1)
 JSON_INTEGER_MAX = 2**53 - 1
+SEED_SEQUENCE_POOL_SIZE = 4
+PORTABLE_COMPONENT_MAX_BYTES = 255
+PORTABLE_PATH_MAX_BYTES = 1024
 
 
 class _FilesystemLinkRefused(OSError):
     pass
+
+
+class _RetainedCleanupIdentityError(OSError):
+    """An identity-safe cleanup could not remove its private source/quarantine."""
+
+    def __init__(self, retained_name: str | None) -> None:
+        self.retained_name = retained_name
+        super().__init__(
+            "identity-safe cleanup retained "
+            + ("its source" if retained_name is None else retained_name)
+        )
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -82,8 +96,7 @@ def _strict_json_value(value: object, field_path: str = "$") -> object:
         _require_interoperable_integer(value, field_path)
         return value
     if type(value) is float:
-        if not math.isfinite(value):
-            raise ValueError(f"{field_path} must contain only finite numbers")
+        _require_interoperable_float(value, field_path)
         return value
     if value is None or type(value) in (str, bool):
         return value
@@ -94,6 +107,16 @@ def _require_interoperable_integer(value: int, field_path: str) -> int:
     if not JSON_INTEGER_MIN <= value <= JSON_INTEGER_MAX:
         raise ValueError(
             f"{field_path} integer is outside the interoperable JSON range"
+        )
+    return value
+
+
+def _require_interoperable_float(value: float, field_path: str) -> float:
+    if not math.isfinite(value):
+        raise ValueError(f"{field_path} must contain only finite numbers")
+    if not JSON_INTEGER_MIN <= value <= JSON_INTEGER_MAX:
+        raise ValueError(
+            f"{field_path} number is outside the interoperable JSON range"
         )
     return value
 
@@ -155,6 +178,7 @@ def validate_json_schema_subset(schema: object, instance: object) -> None:
     check_json_schema_subset(schema)
     if not isinstance(schema, Mapping):  # narrowed by check_json_schema_subset
         raise AssertionError("unreachable")
+    _validate_interoperable_json_document(instance, "$")
     _validate_json_schema_node(schema, instance, schema, "$")
 
 
@@ -519,11 +543,52 @@ def _validate_json_schema_node(
             _raise_schema_validation(field_path, "is above maximum")
 
 
+def _validate_interoperable_json_document(value: object, field_path: str) -> None:
+    """Reject values outside the program's strict interoperable JSON domain."""
+
+    if isinstance(value, Mapping):
+        if any(type(name) is not str for name in value):
+            _raise_schema_validation(field_path, "object keys must be strings")
+        for name, child in value.items():
+            _validate_interoperable_json_document(child, f"{field_path}.{name}")
+        return
+    if type(value) is list:
+        for index, child in enumerate(value):
+            _validate_interoperable_json_document(child, f"{field_path}[{index}]")
+        return
+    if type(value) is int:
+        try:
+            _require_interoperable_integer(value, field_path)
+        except ValueError as error:
+            raise ValueError(
+                f"schema validation failed at {field_path}: "
+                "integer is outside the interoperable JSON range"
+            ) from error
+        return
+    if type(value) is float:
+        try:
+            _require_interoperable_float(value, field_path)
+        except ValueError as error:
+            raise ValueError(
+                f"schema validation failed at {field_path}: "
+                "number is outside the finite interoperable JSON range"
+            ) from error
+        return
+    if value is None or type(value) in (str, bool):
+        return
+    _raise_schema_validation(field_path, "is not a strict JSON value")
+
+
 def _json_schema_type_matches(json_type: object, instance: object) -> bool:
     return {
         "array": type(instance) is list,
         "boolean": type(instance) is bool,
-        "integer": type(instance) is int,
+        "integer": type(instance) is int
+        or (
+            type(instance) is float
+            and math.isfinite(instance)
+            and instance.is_integer()
+        ),
         "null": instance is None,
         "number": type(instance) in (int, float)
         and not (isinstance(instance, float) and not math.isfinite(instance)),
@@ -570,7 +635,14 @@ def _assert_json_document_value(value: object, field_path: str) -> None:
         return
     if value is None or type(value) in (str, bool):
         return
-    if type(value) is float and math.isfinite(value):
+    if type(value) is float:
+        try:
+            _require_interoperable_float(value, field_path)
+        except ValueError as error:
+            raise ValueError(
+                f"schema definition at {field_path} has a "
+                "non-interoperable number"
+            ) from error
         return
     raise ValueError(f"schema definition at {field_path} is not strict JSON")
 
@@ -622,6 +694,11 @@ def _validate_seed_node_document(
 ) -> None:
     if node["name"] != expected_name:
         raise ValueError(f"manifest {field_path}.name must match its child key")
+    if node["pool_size"] != SEED_SEQUENCE_POOL_SIZE:
+        raise ValueError(
+            f"manifest {field_path}.pool_size must be the registered value "
+            f"{SEED_SEQUENCE_POOL_SIZE}"
+        )
     if node["entropy"] != expected_entropy:
         raise ValueError(f"manifest {field_path}.entropy must match root_seed")
     if tuple(node["spawn_key"]) != expected_spawn_key:  # type: ignore[arg-type]
@@ -636,10 +713,10 @@ def _validate_seed_node_document(
             f"manifest {field_path}.n_children_spawned must equal declared children"
         )
     sequence = np.random.SeedSequence(
-        entropy=node["entropy"],
-        spawn_key=tuple(node["spawn_key"]),  # type: ignore[arg-type]
-        pool_size=node["pool_size"],
-        n_children_spawned=node["n_children_spawned"],
+        entropy=int(node["entropy"]),  # Draft integers may be integral floats.
+        spawn_key=tuple(int(item) for item in node["spawn_key"]),  # type: ignore[union-attr]
+        pool_size=SEED_SEQUENCE_POOL_SIZE,
+        n_children_spawned=int(node["n_children_spawned"]),
     )
     expected_state = sequence.generate_state(4, dtype=np.uint32).tolist()
     if node["state"] != expected_state:
@@ -1311,6 +1388,56 @@ def _load_run_manifest_schema() -> Mapping[str, object]:
     return schema
 
 
+def _snapshot_artifact_paths(
+    artifact_paths: Mapping[str, str | Path] | None,
+) -> Mapping[str, str]:
+    """Read a caller mapping once and freeze canonical portable path strings."""
+
+    if artifact_paths is None:
+        return MappingProxyType({})
+    if not isinstance(artifact_paths, Mapping):
+        raise TypeError("artifact_paths must be a mapping")
+
+    # ``items`` is the only observation of the caller-owned mapping.  A custom
+    # Mapping can expose a stateful view, so materialize that one view before
+    # validation and never consult the source object again.
+    try:
+        exposed_items = tuple(artifact_paths.items())
+    except TypeError as error:
+        raise TypeError("artifact_paths.items() must expose key/path pairs") from error
+
+    snapshot: dict[str, str] = {}
+    portable_identities: dict[str, str] = {}
+    for item in exposed_items:
+        try:
+            name, relative_path = item
+        except (TypeError, ValueError) as error:
+            raise TypeError(
+                "artifact_paths.items() must expose key/path pairs"
+            ) from error
+        if type(name) is not str:
+            raise TypeError("artifact_paths mappings require string keys")
+        if not isinstance(relative_path, (str, Path)):
+            raise TypeError("artifact_paths values must be strings or Paths")
+        normalized_path = _normalize_artifact_path(relative_path)
+        if name != normalized_path:
+            raise ValueError(
+                "artifact_paths key must equal its portable relative path"
+            )
+        if name in snapshot:
+            raise ValueError(f"duplicate artifact_paths collision: {name}")
+        portable_identity = normalized_path.casefold()
+        prior = portable_identities.get(portable_identity)
+        if prior is not None:
+            raise ValueError(
+                "artifact_paths contain a case-insensitive portable collision: "
+                f"{prior} and {name}"
+            )
+        snapshot[name] = normalized_path
+        portable_identities[portable_identity] = name
+    return MappingProxyType(dict(sorted(snapshot.items())))
+
+
 def finalize_manifest(
     manifest: RunManifest,
     run_directory: RunDirectory,
@@ -1324,6 +1451,7 @@ def finalize_manifest(
         raise TypeError("manifest must be a RunManifest")
     if not isinstance(run_directory, RunDirectory):
         raise TypeError("run_directory must be a RunDirectory")
+    declared = _snapshot_artifact_paths(artifact_paths)
     if manifest.run_id != run_directory.run_id:
         raise ValueError("manifest run_id must match RunDirectory run_id")
     if manifest.deterministic_demo_id is not run_directory.deterministic_demo_id:
@@ -1336,11 +1464,6 @@ def finalize_manifest(
         raise ValueError(
             "manifest creation_config_sha256 must match the claimed run directory"
         )
-    declared = {} if artifact_paths is None else artifact_paths
-    if not isinstance(declared, Mapping):
-        raise TypeError("artifact_paths must be a mapping")
-    if any(not isinstance(name, str) for name in declared):
-        raise TypeError("artifact_paths mappings require string keys")
     missing_paths = set(manifest.artifact_hashes) - set(declared)
     if missing_paths:
         raise ValueError(
@@ -1351,11 +1474,6 @@ def finalize_manifest(
     artifact_hashes = dict(manifest.artifact_hashes)
     captured_artifacts: dict[str, FileProvenance] = {}
     for name, relative_path in sorted(declared.items()):
-        if not name:
-            raise ValueError("artifact_paths keys must be nonempty")
-        normalized_path = _normalize_artifact_path(relative_path)
-        if name != normalized_path:
-            raise ValueError("artifact_paths key must equal its portable relative path")
         candidate = run_directory.artifact_path(relative_path)
         manifest_path = run_directory.artifact_path("run_manifest.json")
         if candidate == manifest_path:
@@ -1478,6 +1596,14 @@ def _normalize_artifact_path(relative_path: str | Path) -> str:
         or re.match(r"^[A-Za-z]:", raw) is not None
     ):
         raise ValueError("artifact path must be a nonempty relative path without traversal")
+    try:
+        encoded_path = raw.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError("artifact path must be valid portable UTF-8") from error
+    if len(encoded_path) > PORTABLE_PATH_MAX_BYTES:
+        raise ValueError(
+            f"artifact path must not exceed {PORTABLE_PATH_MAX_BYTES} UTF-8 bytes"
+        )
     parts = raw.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError("artifact path must be a nonempty relative path without traversal")
@@ -1501,10 +1627,14 @@ _PORTABLE_COMPONENT_PATTERN = re.compile(
 
 
 def _is_portable_component(component: str) -> bool:
-    if (
-        type(component) is not str
-        or _PORTABLE_COMPONENT_PATTERN.fullmatch(component) is None
-    ):
+    if type(component) is not str:
+        return False
+    try:
+        if len(component.encode("utf-8")) > PORTABLE_COMPONENT_MAX_BYTES:
+            return False
+    except UnicodeEncodeError:
+        return False
+    if _PORTABLE_COMPONENT_PATTERN.fullmatch(component) is None:
         return False
     stem = component.split(".", 1)[0].upper()
     return stem not in _WINDOWS_RESERVED_NAMES
@@ -1589,19 +1719,13 @@ def _rmdir_name_if_identity(
     parent_descriptor: int,
     name: str,
     expected_identity: tuple[int, int],
-) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    try:
-        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
-    except (FileNotFoundError, OSError):
-        return
-    try:
-        actual = _descriptor_identity(descriptor)
-    finally:
-        os.close(descriptor)
-    if actual == expected_identity:
-        os.rmdir(name, dir_fd=parent_descriptor)
+) -> bool:
+    return _remove_name_via_private_quarantine(
+        parent_descriptor,
+        name,
+        expected_identity,
+        is_directory=True,
+    )
 
 
 def _rmdir_path_if_identity(
@@ -1617,7 +1741,13 @@ def _rmdir_path_if_identity(
     except (FileNotFoundError, OSError, ValueError):
         return
     try:
-        _rmdir_name_if_identity(parent_descriptor, path.name, expected_identity)
+        try:
+            _rmdir_name_if_identity(parent_descriptor, path.name, expected_identity)
+        except _RetainedCleanupIdentityError as error:
+            retained = (
+                path if error.retained_name is None else path.parent / error.retained_name
+            )
+            raise AtomicCommitUncertainError(path, retained_path=retained) from error
     finally:
         os.close(parent_descriptor)
 
@@ -1625,7 +1755,7 @@ def _rmdir_path_if_identity(
 def _rename_directory_noreplace(
     parent_descriptor: int, source_name: str, target_name: str
 ) -> None:
-    """Publish a private POSIX directory with an atomic no-replace rename."""
+    """Rename one POSIX filesystem object atomically without replacement."""
 
     import ctypes
 
@@ -1686,6 +1816,14 @@ def _rename_directory_noreplace(
     if error_number == errno.EEXIST:
         raise FileExistsError(error_number, os.strerror(error_number), target_name)
     raise OSError(error_number, os.strerror(error_number), target_name)
+
+
+def _rename_name_noreplace(
+    parent_descriptor: int, source_name: str, target_name: str
+) -> None:
+    """Generic same-directory no-replace rename used by private cleanup."""
+
+    _rename_directory_noreplace(parent_descriptor, source_name, target_name)
 
 
 def _path_is_link(path: Path) -> bool:
@@ -1764,8 +1902,7 @@ def _deep_freeze_json(value: object, field_path: str) -> object:
         _require_interoperable_integer(value, field_path)
         return value
     if type(value) is float:
-        if not math.isfinite(value):
-            raise ValueError(f"{field_path} must contain only finite numbers")
+        _require_interoperable_float(value, field_path)
         return value
     if value is None or type(value) in (str, bool):
         return value
@@ -2452,8 +2589,13 @@ class SeedNode:
                 "seed entropy must be an interoperable nonnegative integer without coercion"
             )
         spawn_key = _freeze_seed_integers(self.spawn_key, "seed spawn_key")
-        if type(self.pool_size) is not int or self.pool_size < 4:
-            raise TypeError("seed pool_size must be an integer of at least four")
+        if type(self.pool_size) is not int:
+            raise TypeError("seed pool_size must be an integer without coercion")
+        if self.pool_size != SEED_SEQUENCE_POOL_SIZE:
+            raise ValueError(
+                f"seed pool_size must be the registered value "
+                f"{SEED_SEQUENCE_POOL_SIZE}"
+            )
         if type(self.n_children_spawned) is not int or self.n_children_spawned < 0:
             raise TypeError(
                 "seed n_children_spawned must be a nonnegative integer without coercion"
@@ -2858,8 +3000,37 @@ def _unlink_name_if_identity(
     name: str,
     expected_identity: tuple[int, int],
 ) -> bool:
+    return _remove_name_via_private_quarantine(
+        parent_descriptor,
+        name,
+        expected_identity,
+        is_directory=False,
+    )
+
+
+def _remove_name_via_private_quarantine(
+    parent_descriptor: int,
+    name: str,
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+) -> bool:
+    """Remove only a held POSIX identity via an unguessable quarantine name.
+
+    A pathname can be replaced after ``open``/``fstat`` and before a subsequent
+    ``unlink`` or ``rmdir``.  Move the current name atomically, without
+    replacement, to a private random name while the expected handle remains
+    open.  The quarantined name is opened and matched to that handle before it
+    is removed.  Any mismatch or unavailable native no-replace primitive leaves
+    the source/quarantine in place rather than deleting an unverified object.
+    """
+
+    if os.name == "nt":
+        raise NotImplementedError("POSIX quarantine cleanup is POSIX-only")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    if is_directory:
+        flags |= getattr(os, "O_DIRECTORY", 0)
     try:
         descriptor = os.open(name, flags, dir_fd=parent_descriptor)
     except FileNotFoundError:
@@ -2867,17 +3038,59 @@ def _unlink_name_if_identity(
     except OSError:
         return False
     try:
-        actual = _descriptor_identity(descriptor)
+        held_metadata = os.fstat(descriptor)
+        held_identity = (held_metadata.st_dev, held_metadata.st_ino)
+        expected_kind = (
+            stat.S_ISDIR(held_metadata.st_mode)
+            if is_directory
+            else stat.S_ISREG(held_metadata.st_mode)
+        )
+        if held_identity != expected_identity or not expected_kind:
+            return False
+
+        quarantine_name = f".almondlab-quarantine-{secrets.token_hex(16)}"
+        try:
+            _rename_name_noreplace(parent_descriptor, name, quarantine_name)
+        except (FileExistsError, FileNotFoundError):
+            return False
+        except (OSError, RuntimeError) as error:
+            raise _RetainedCleanupIdentityError(None) from error
+
+        try:
+            quarantine_descriptor = os.open(
+                quarantine_name, flags, dir_fd=parent_descriptor
+            )
+        except OSError as error:
+            raise _RetainedCleanupIdentityError(quarantine_name) from error
+        try:
+            quarantine_metadata = os.fstat(quarantine_descriptor)
+            quarantine_identity = (
+                quarantine_metadata.st_dev,
+                quarantine_metadata.st_ino,
+            )
+            quarantine_kind = (
+                stat.S_ISDIR(quarantine_metadata.st_mode)
+                if is_directory
+                else stat.S_ISREG(quarantine_metadata.st_mode)
+            )
+            if (
+                _descriptor_identity(descriptor) != expected_identity
+                or quarantine_identity != expected_identity
+                or not quarantine_kind
+            ):
+                raise _RetainedCleanupIdentityError(quarantine_name)
+            try:
+                if is_directory:
+                    os.rmdir(quarantine_name, dir_fd=parent_descriptor)
+                else:
+                    os.unlink(quarantine_name, dir_fd=parent_descriptor)
+            except OSError as error:
+                raise _RetainedCleanupIdentityError(quarantine_name) from error
+            return True
+        finally:
+            os.close(quarantine_descriptor)
     finally:
         os.close(descriptor)
-    if actual == expected_identity:
-        try:
-            os.unlink(name, dir_fd=parent_descriptor)
-        except OSError:
-            return False
-        else:
-            return True
-    return False
 
 
 def _unlink_path_if_identity(
@@ -2894,9 +3107,15 @@ def _unlink_path_if_identity(
     except OSError:
         return False
     try:
-        return _unlink_name_if_identity(
-            parent_descriptor, path.name, expected_identity
-        )
+        try:
+            return _unlink_name_if_identity(
+                parent_descriptor, path.name, expected_identity
+            )
+        except _RetainedCleanupIdentityError as error:
+            retained = (
+                path if error.retained_name is None else path.parent / error.retained_name
+            )
+            raise AtomicCommitUncertainError(path, retained_path=retained) from error
     finally:
         os.close(parent_descriptor)
 

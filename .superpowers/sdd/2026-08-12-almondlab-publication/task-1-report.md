@@ -37,6 +37,12 @@ linked file-parent escape, caller-invented/self-referential artifacts, direct
 ambiguity, artifact mutation during finalization, manifest overwrite races,
 post-commit durability ambiguity, and nonportable file-identity paths.
 
+The final exact-base rereview reproduced five further cases before repair: a
+stateful artifact mapping whose repeated `items()` observations omitted later
+checks, POSIX cleanup pathname replacement between identity checking and
+deletion, Draft 2020-12 integral-float type semantics, an unbounded NumPy seed
+pool allocation, and filesystem components exceeding portable UTF-8 limits.
+
 The final focused suite contains 137 tests. Boundary tests reject boolean or
 string numeric coercion, nonfinite numbers, non-string keys, path traversal,
 links/reparse points, collisions, inconsistent seed trees, unavailable-state
@@ -87,13 +93,31 @@ inventions, hash corruption, and unsafe finalization.
   held artifact after commit. A detected post-commit mismatch removes only the
   exact committed manifest identity; if safe removal cannot be established it
   raises `AtomicCommitUncertainError` with the retained path.
+- `artifact_paths` is observed exactly once at the public boundary. Its one
+  `items()` result is materialized into a sorted immutable plain-string
+  mapping; malformed pairs, non-string keys, non-string/`Path` values,
+  duplicate items, and case-insensitive portable collisions fail before any
+  hashing. Every later capture, held-handle check, and publication step uses
+  only that snapshot, so caller mutation cannot remove a check.
 - Windows file/directory cleanup uses delete-by-handle after identity matching;
-  POSIX cleanup is descriptor-relative. Cleanup never checks one pathname
-  object and then unlinks an attacker replacement. If identity-safe cleanup is
-  unavailable, the temporary/quarantine path is retained and reported.
-- Canonical JSON and every manifest integer use the I-JSON interoperable range
-  `[-(2^53-1), 2^53-1]`, so accepted values are total before hashing. Direct
-  seed construction validates the exact NumPy `SeedSequence` state.
+  POSIX cleanup atomically renames the current descriptor-relative name, with
+  no replacement, to an unguessable same-parent quarantine while the original
+  handle remains open; it then opens and matches the quarantine handle before
+  deletion. A mismatch never deletes the replacement. If no native no-replace
+  primitive exists or quarantine deletion cannot be established, the source
+  or quarantine is retained and the retained path is reported as uncertain.
+- Canonical JSON and every manifest number use the finite interoperable
+  magnitude `[-(2^53-1), 2^53-1]`; integers and floats outside it are rejected
+  before hashing. The dependency-free validator matches Draft 2020-12's
+  mathematical integer semantics (`1.0` is an integer; `1.5` is not), while
+  the model's exact Python integer fields remain type-locked.
+- This program registers NumPy `SeedSequence.pool_size` exactly as `4` in the
+  model and schema and rejects any other value before invoking NumPy. Direct
+  seed construction still validates the exact generated state.
+- Every portable component is limited to 255 UTF-8 bytes and a complete
+  portable artifact path to 1024 UTF-8 bytes. The dependency-free validator
+  enforces the exact byte limits in addition to the schema's ASCII character
+  bounds.
 - The checked-in JSON Schema v1.1 declares Draft 2020-12, uses conditional
   available/unavailable state branches, exact uint32 bounds, timestamp format,
   ECMAScript-compatible end assertions, reserved-device/trailing-dot/empty
@@ -113,7 +137,7 @@ canonical_science_hash a996babe2890e75893eb1d51cc5499acd3d7cd4eaad4e214a10688bf7
 manifest_hash          b235d72389fa7ef81433b11de1657ead4803907aba44f674caca0df2db121a78
 ```
 
-## Final verification
+## Final verification after exact-base repair
 
 Focused Task 1 suite after the final cleanup hardening:
 
@@ -122,41 +146,27 @@ Focused Task 1 suite after the final cleanup hardening:
 ```
 
 ```text
-137 passed, 1 warning in 9.91s
+150 passed, 3 skipped, 1 warning in 10.04s
 ```
 
-Complete full repository suite before the final narrow descriptor-wrapper
-cleanup refactor:
+The three skips are the deterministic POSIX file-replacement,
+directory-replacement, and retained-quarantine cleanup tests on this Windows
+host. They are platform-gated rather than claimed as executed here. The Windows
+delete-by-handle race tests executed and passed. WSL and Docker are unavailable
+in this environment; the POSIX implementation was source-audited against the
+descriptor-relative quarantine design above, but still awaits independent
+execution on a POSIX host.
+
+Complete full repository suite on the final owned implementation plus the
+then-current concurrent biology state:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
 ```text
-802 passed, 1 warning in 116.50s
+912 passed, 3 skipped, 1 warning in 114.28s
 ```
-
-The fresh full rerun after that narrow refactor was interrupted at collection
-when concurrent Publication Task 2 added `tests/test_registries.py` and
-`tests/test_safe_data.py` before adding their `almondlab.registries` and
-`almondlab.safe_data` modules. It reported two import errors and no provenance
-test failure. The fresh 137-test focused result above is authoritative for the
-post-refactor owned state; the prior complete 802-test run is retained as
-full-suite evidence rather than misreported as post-refactor.
-
-Per coordination, the post-refactor repository rerun explicitly excluded only
-those two not-yet-implementable concurrent Task 2 tests:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q --disable-warnings `
-  --ignore=tests\test_registries.py --ignore=tests\test_safe_data.py
-```
-
-It completed with `794 passed, 10 failed in 113.66s`. Every failure was in the
-concurrently edited `tests/test_paper1_contracts.py`: Pydantic could not
-serialize a newly introduced `mappingproxy` in
-`src/almondlab/paper1_contracts.py`. No provenance or schema test failed. This
-unrelated concurrent state is reported exactly and was not modified by Task 1.
 
 Dependency-free Draft 2020-12 schema check and optional external gate:
 

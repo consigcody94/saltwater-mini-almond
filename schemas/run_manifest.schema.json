@@ -97,7 +97,8 @@
     "portable_path": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|(?![\\s\\S])))(?!.*\\/(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|(?![\\s\\S])))[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*(?:/[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*)*(?![\\s\\S])"
+      "maxLength": 1024,
+      "pattern": "^(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|(?![\\s\\S])))(?!.*\\/(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|(?![\\s\\S])))(?=[A-Za-z0-9_.-]{1,255}(?:/|(?![\\s\\S])))[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*(?:/(?=[A-Za-z0-9_.-]{1,255}(?:/|(?![\\s\\S])))[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*)*(?![\\s\\S])"
     },
     "file_provenance": {
       "type": "object",
@@ -290,8 +291,7 @@
         },
         "pool_size": {
           "type": "integer",
-          "minimum": 4,
-          "maximum": 9007199254740991
+          "const": 4
         },
         "n_children_spawned": {
           "type": "integer",
@@ -327,7 +327,12 @@
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
         },
-        {"type": "number", "not": {"type": "integer"}},
+        {
+          "type": "number",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "not": {"type": "integer"}
+        },
         {"type": "string"},
         {
           "type": "array",

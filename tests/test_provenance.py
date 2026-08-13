@@ -68,6 +68,22 @@ def test_canonical_json_rejects_integers_outside_interoperable_range(
         provenance.canonical_json_bytes(value)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        float(2**53),
+        -float(2**53),
+        float("1e100"),
+        -float("1e100"),
+    ],
+)
+def test_canonical_json_rejects_floats_outside_interoperable_range(
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match="number|float|interoperable"):
+        provenance.canonical_json_bytes({"value": value})
+
+
 def test_sha256_file_hashes_exact_file_bytes(tmp_path: Path) -> None:
     source = tmp_path / "source.bin"
     source.write_bytes(b"science\r\n\x00")
@@ -244,6 +260,32 @@ def test_seed_node_rejects_invented_seedsequence_state() -> None:
             state=(1, 2, 3, 4),
             children={},
         )
+
+
+def test_seed_node_rejects_unregistered_pool_size_before_numpy_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoked = False
+
+    def refuse_numpy_allocation(*args: object, **kwargs: object) -> object:
+        nonlocal invoked
+        invoked = True
+        raise AssertionError("NumPy allocation must not be attempted")
+
+    monkeypatch.setattr(provenance.np.random, "SeedSequence", refuse_numpy_allocation)
+
+    with pytest.raises(ValueError, match="pool_size|pool size"):
+        provenance.SeedNode(
+            name="root",
+            entropy=7,
+            spawn_key=(),
+            pool_size=provenance.JSON_INTEGER_MAX,
+            n_children_spawned=0,
+            state=(1, 2, 3, 4),
+            children={},
+        )
+
+    assert invoked is False
 
 
 @pytest.mark.parametrize(
@@ -684,6 +726,28 @@ def test_run_manifest_rejects_out_of_range_integers_at_construction(
         _manifest(**changes)
 
 
+def test_huge_integral_float_is_refused_before_manifest_publication(
+    tmp_path: Path,
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+
+    with pytest.raises(ValueError, match="number|float|interoperable"):
+        manifest = _manifest(
+            run_id="SYN_demo",
+            deterministic_demo_id=True,
+            artifact_hashes={},
+            bayesian_raw_draws={"attack": float(2**53)},
+        )
+        provenance.finalize_manifest(manifest, run)
+
+    assert not (run.path / "run_manifest.json").exists()
+
+
 @pytest.mark.parametrize(
     "run_id", ["CON", "con.txt", "name.", "a..b", "valid\n"]
 )
@@ -705,6 +769,20 @@ def test_run_manifest_rejects_nonportable_run_ids(run_id: str) -> None:
 def test_run_manifest_rejects_every_nonportable_path_segment(path: str) -> None:
     with pytest.raises(ValueError, match="portable|path"):
         _manifest(config_hashes={path: "1" * 64})
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        "a" * 256,
+        "é" * 128,
+    ],
+)
+def test_run_manifest_rejects_portable_components_over_255_utf8_bytes(
+    component: str,
+) -> None:
+    with pytest.raises(ValueError, match="portable|path|255|byte"):
+        _manifest(config_hashes={f"configs/{component}": "1" * 64})
 
 
 def test_canonical_science_hash_excludes_only_declared_volatile_fields() -> None:
@@ -1153,6 +1231,137 @@ def test_finalize_manifest_hashes_artifacts_and_writes_canonical_document(
     expected_bytes = provenance.canonical_json_bytes(finalized.to_dict()) + b"\n"
     assert manifest_path.read_bytes() == expected_bytes
     assert json.loads(manifest_path.read_bytes()) == finalized.to_dict()
+
+
+def test_finalize_manifest_snapshots_stateful_artifact_items_once(
+    tmp_path: Path,
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    artifact = run.artifact_path("tables/result.csv")
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"result\n")
+
+    class OneShotArtifactPaths(dict[str, str]):
+        items_calls = 0
+
+        def items(self) -> object:  # type: ignore[override]
+            self.items_calls += 1
+            if self.items_calls > 1:
+                return ()
+            exposed = list(super().items())
+            self.clear()
+            return exposed
+
+    artifact_paths = OneShotArtifactPaths(
+        {"tables/result.csv": "tables/result.csv"}
+    )
+
+    finalized = provenance.finalize_manifest(
+        _manifest(
+            run_id="SYN_demo",
+            deterministic_demo_id=True,
+            artifact_hashes={},
+        ),
+        run,
+        artifact_paths=artifact_paths,
+    )
+
+    assert artifact_paths.items_calls == 1
+    assert artifact_paths == {}
+    assert finalized.artifact_hashes == {
+        "tables/result.csv": "5656fafa00d4f294bcb606cf4f7d4fa877390e46f583e8b3c8744ace104a31d1"
+    }
+
+
+def test_finalize_manifest_source_mapping_mutation_cannot_disable_held_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    artifact = run.artifact_path("tables/result.csv")
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"first\n")
+    artifact_paths = {"tables/result.csv": "tables/result.csv"}
+    real_replace = provenance.replace
+    real_create = provenance.atomic_create_bytes
+
+    def mutate_mapping_after_initial_capture(
+        instance: object, **changes: object
+    ) -> object:
+        artifact_paths.clear()
+        return real_replace(instance, **changes)
+
+    def mutate_artifact_after_create(
+        destination: str | Path, payload: bytes, **keywords: object
+    ) -> Path:
+        result = real_create(destination, payload, **keywords)  # type: ignore[arg-type]
+        artifact.write_bytes(b"second\n")
+        return result
+
+    monkeypatch.setattr(provenance, "replace", mutate_mapping_after_initial_capture)
+    monkeypatch.setattr(provenance, "atomic_create_bytes", mutate_artifact_after_create)
+
+    with pytest.raises(
+        (ValueError, provenance.AtomicCommitUncertainError),
+        match="changed|artifact|uncertain",
+    ):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                artifact_hashes={},
+            ),
+            run,
+            artifact_paths=artifact_paths,
+        )
+
+    assert artifact_paths == {}
+    assert not (run.path / "run_manifest.json").exists()
+
+
+def test_finalize_manifest_rejects_duplicate_items_from_stateful_mapping(
+    tmp_path: Path,
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_demo",
+    )
+    artifact = run.artifact_path("tables/result.csv")
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"result\n")
+
+    class DuplicateArtifactPaths(dict[str, str]):
+        def items(self) -> object:  # type: ignore[override]
+            return [
+                ("tables/result.csv", "tables/result.csv"),
+                ("tables/result.csv", "tables/result.csv"),
+            ]
+
+    with pytest.raises(ValueError, match="duplicate|collision"):
+        provenance.finalize_manifest(
+            _manifest(
+                run_id="SYN_demo",
+                deterministic_demo_id=True,
+                artifact_hashes={},
+            ),
+            run,
+            artifact_paths=DuplicateArtifactPaths(
+                {"tables/result.csv": "tables/result.csv"}
+            ),
+        )
+
+    assert not (run.path / "run_manifest.json").exists()
 
 
 def test_finalize_manifest_refuses_mismatched_run_identity_before_write(
@@ -1708,6 +1917,166 @@ def test_windows_identity_checked_rmdir_never_deletes_attacker_replacement(
     assert target.is_dir()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor-relative cleanup")
+def test_posix_identity_checked_unlink_quarantines_racing_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "temporary"
+    displaced = tmp_path / "displaced"
+    target.write_bytes(b"expected temporary")
+    metadata = target.stat(follow_symlinks=False)
+    expected = (metadata.st_dev, metadata.st_ino)
+    attacked = False
+    quarantine: Path | None = None
+    real_rename = provenance._rename_directory_noreplace
+
+    def replace_immediately_before_quarantine(
+        parent_descriptor: int, source_name: str, target_name: str
+    ) -> None:
+        nonlocal attacked, quarantine
+        attacked = True
+        target.rename(displaced)
+        target.write_bytes(b"attacker replacement")
+        quarantine = tmp_path / target_name
+        real_rename(parent_descriptor, source_name, target_name)
+
+    monkeypatch.setattr(
+        provenance,
+        "_rename_name_noreplace",
+        replace_immediately_before_quarantine,
+        raising=False,
+    )
+    parent_descriptor = provenance._open_directory_descriptor(tmp_path)
+    try:
+        removed = provenance._unlink_name_if_identity(
+            parent_descriptor, target.name, expected
+        )
+    finally:
+        os.close(parent_descriptor)
+
+    assert attacked is True
+    assert removed is False
+    assert displaced.read_bytes() == b"expected temporary"
+    assert quarantine is not None
+    assert quarantine.read_bytes() == b"attacker replacement"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor-relative cleanup")
+def test_posix_identity_checked_rmdir_quarantines_racing_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "temporary"
+    displaced = tmp_path / "displaced"
+    target.mkdir()
+    metadata = target.stat(follow_symlinks=False)
+    expected = (metadata.st_dev, metadata.st_ino)
+    attacked = False
+    quarantine: Path | None = None
+    real_rename = provenance._rename_directory_noreplace
+
+    def replace_immediately_before_quarantine(
+        parent_descriptor: int, source_name: str, target_name: str
+    ) -> None:
+        nonlocal attacked, quarantine
+        attacked = True
+        target.rename(displaced)
+        target.mkdir()
+        (target / "sentinel.txt").write_bytes(b"attacker replacement")
+        quarantine = tmp_path / target_name
+        real_rename(parent_descriptor, source_name, target_name)
+
+    monkeypatch.setattr(
+        provenance,
+        "_rename_name_noreplace",
+        replace_immediately_before_quarantine,
+        raising=False,
+    )
+    parent_descriptor = provenance._open_directory_descriptor(tmp_path)
+    try:
+        removed = provenance._rmdir_name_if_identity(
+            parent_descriptor, target.name, expected
+        )
+    finally:
+        os.close(parent_descriptor)
+
+    assert attacked is True
+    assert removed is False
+    assert displaced.is_dir()
+    assert quarantine is not None
+    assert (quarantine / "sentinel.txt").read_bytes() == b"attacker replacement"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor-relative cleanup")
+def test_posix_cleanup_retains_and_reports_quarantine_when_delete_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "temporary"
+    target.write_bytes(b"retained expected identity")
+    metadata = target.stat(follow_symlinks=False)
+    expected = (metadata.st_dev, metadata.st_ino)
+    real_unlink = os.unlink
+
+    def fail_quarantine_delete(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        if str(path).startswith(".almondlab-quarantine-"):
+            raise OSError("forced quarantine retention")
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(provenance.os, "unlink", fail_quarantine_delete)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance._unlink_path_if_identity(target, expected)
+
+    assert captured.value.retained_path is not None
+    assert captured.value.retained_path.read_bytes() == b"retained expected identity"
+    assert not target.exists()
+
+
+def test_schema_integer_type_uses_draft_2020_12_mathematical_semantics() -> None:
+    integer_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "integer",
+    }
+    noninteger_number_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "number",
+        "not": {"type": "integer"},
+    }
+
+    provenance.validate_json_schema_subset(integer_schema, 1.0)
+    provenance.validate_json_schema_subset(noninteger_number_schema, 1.5)
+    with pytest.raises(ValueError, match="schema"):
+        provenance.validate_json_schema_subset(noninteger_number_schema, 1.0)
+
+
+def test_manifest_pool_size_attack_is_rejected_before_numpy_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema_path = Path(__file__).parents[1] / "schemas" / "run_manifest.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    document = _golden_manifest_document()
+    root = document["seed_tree"]["root"]  # type: ignore[index]
+    root["pool_size"] = provenance.JSON_INTEGER_MAX  # type: ignore[index]
+    child = root["children"]["simulation"]  # type: ignore[index]
+    child["pool_size"] = provenance.JSON_INTEGER_MAX  # type: ignore[index]
+    invoked = False
+
+    def refuse_numpy_allocation(*args: object, **kwargs: object) -> object:
+        nonlocal invoked
+        invoked = True
+        raise AssertionError("NumPy allocation must not be attempted")
+
+    monkeypatch.setattr(provenance.np.random, "SeedSequence", refuse_numpy_allocation)
+
+    with pytest.raises(ValueError, match="schema|pool_size|pool size"):
+        provenance.validate_run_manifest_document(schema, document)
+
+    assert invoked is False
+
+
 def test_run_manifest_schema_accepts_document_and_rejects_boundary_corruptions() -> None:
     schema_path = Path(__file__).parents[1] / "schemas" / "run_manifest.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -1764,12 +2133,15 @@ def test_run_manifest_schema_accepts_document_and_rejects_boundary_corruptions()
         {**document, "config_hashes": {"configs//config.yaml": "1" * 64}},
         {**document, "config_hashes": {"configs/con.txt": "1" * 64}},
         {**document, "config_hashes": {"configs/name.": "1" * 64}},
+        {**document, "config_hashes": {"a" * 256: "1" * 64}},
+        {**document, "config_hashes": {"é" * 128: "1" * 64}},
         {**document, "run_id": "CON"},
         {**document, "run_id": "con.txt"},
         {**document, "run_id": "name."},
         {**document, "run_id": "a..b"},
         {**document, "run_id": "valid\n"},
         {**document, "bayesian_raw_draws": {"chain": [[10**5000]]}},
+        {**document, "bayesian_raw_draws": {"chain": [[float(2**53)]]}},
         {
             **document,
             "lockfile": {  # type: ignore[dict-item]
