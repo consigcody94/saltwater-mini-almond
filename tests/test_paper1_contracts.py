@@ -452,17 +452,18 @@ def _write_scenario_yaml(tmp_path: Path, payload: object) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("mutation", "expected_code"),
+    ("mutation", "expected_code", "expected_field_path"),
     [
-        ("missing", "INCOMPLETE_SYNTHETIC_SCENARIO"),
-        ("extra", "UNREGISTERED_SYNTHETIC_PARAMETER"),
-        ("non_string", "SYNTHETIC_SCENARIO_INVALID"),
+        ("missing", "INCOMPLETE_SYNTHETIC_SCENARIO", "root"),
+        ("extra", "UNREGISTERED_SYNTHETIC_PARAMETER", "root"),
+        ("non_string", "SYNTHETIC_SCENARIO_INVALID", "yaml"),
     ],
 )
 def test_synthetic_scenario_document_rejects_nonexact_root_schema(
     tmp_path: Path,
     mutation: str,
     expected_code: str,
+    expected_field_path: str,
 ) -> None:
     """Catches hidden, omitted, or non-string constants at the document root."""
     payload = yaml.safe_load(
@@ -480,7 +481,7 @@ def test_synthetic_scenario_document_rejects_nonexact_root_schema(
         load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
 
     assert exc_info.value.code == expected_code
-    assert exc_info.value.field_path == "root"
+    assert exc_info.value.field_path == expected_field_path
 
 
 def test_synthetic_scenario_document_validates_detached_template_schema(
@@ -627,6 +628,106 @@ def test_synthetic_scenario_yaml_accepts_merge_sequence_with_explicit_override(
 
     assert scenarios[1].parameters.root_na_permeability_l_cm2_h == 0.0
     assert scenarios[1].parameters.root_cl_permeability_l_cm2_h == 0.02
+
+
+def test_synthetic_scenario_yaml_translates_malformed_parser_input(
+    tmp_path: Path,
+) -> None:
+    """Catches a PyYAML ParserError escaping the scenario contract boundary."""
+    malformed = tmp_path / "malformed-scenario.yaml"
+    malformed.write_text("scenarios: [\n", encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "ParserError"
+
+
+def test_synthetic_scenario_yaml_rejects_non_string_mapping_keys_before_schema(
+    tmp_path: Path,
+) -> None:
+    """Catches mixed bool/string keys reaching set sorting or schema coercion."""
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "mixed-key-scenario.yaml"
+    malformed.write_text(
+        source + "true: shadow\nextra_string: other\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlKeyTypeError"
+
+
+def test_synthetic_scenario_yaml_rejects_graph_beyond_code_owned_depth_limit(
+    tmp_path: Path,
+) -> None:
+    """Catches recursive traversal beyond the documented scenario graph budget."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    depth = biology_surrogate.MAX_YAML_DEPTH + 1
+    nested = "[" * depth + "0" + "]" * depth
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "scenario-depth.yaml"
+    malformed.write_text(source + f"extra: {nested}\n", encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlResourceLimitError"
+
+
+def test_synthetic_scenario_yaml_rejects_alias_expansion_bomb(tmp_path: Path) -> None:
+    """Catches excessive repeated aliases before merge construction expands them."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    aliases = ", ".join(
+        "*unit" for _ in range(biology_surrogate.MAX_YAML_ALIAS_REFERENCES + 1)
+    )
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "scenario-alias-bomb.yaml"
+    malformed.write_text(
+        source + f"unit: &unit [1]\nbomb: [{aliases}]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlResourceLimitError"
+
+
+def test_synthetic_scenario_yaml_translates_depth_1500_recursion_failure(
+    tmp_path: Path,
+) -> None:
+    """Catches parser/composer RecursionError escaping the scenario loader."""
+    nested = "[" * 1500 + "0" + "]" * 1500
+    malformed = tmp_path / "scenario-recursion.yaml"
+    malformed.write_text(f"extra: {nested}\n", encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] in {
+        "RecursionError",
+        "YamlResourceLimitError",
+    }
 
 
 def _scenario_payload() -> dict[str, object]:

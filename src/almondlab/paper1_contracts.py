@@ -8,6 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Literal
 
+import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -838,7 +839,25 @@ def _load_yaml_mapping(
                 },
             )
         raise ValueError("cyclic YAML alias graph") from error
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        yaml.YAMLError,
+        RecursionError,
+        MemoryError,
+    ) as error:
+        if scenario_boundary:
+            _scenario_invalid(
+                "synthetic scenario YAML could not be safely loaded",
+                "yaml",
+                cause=error,
+            )
+        raise ValueError(f"could not safely load YAML mapping from {path}") from error
     if not isinstance(payload, dict):
+        if scenario_boundary:
+            _scenario_invalid("synthetic scenario YAML must be a mapping", "yaml")
         raise ValueError(f"expected a mapping in {path}")
     return payload
 

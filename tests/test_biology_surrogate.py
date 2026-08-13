@@ -695,6 +695,51 @@ def _cursor() -> LedgerCursor:
     return LedgerCursor(run_id="BIO", chain_id="plant", next_ordinal=0)
 
 
+def _zero_transport_parameters(**updates: object) -> BiologyParameters:
+    values: dict[str, object] = {
+        "root_na_permeability_l_cm2_h": 0.0,
+        "root_cl_permeability_l_cm2_h": 0.0,
+        "root_k_permeability_l_cm2_h": 0.0,
+        "na_efflux_vmax_mmol_h": 0.0,
+        "na_sequestration_vmax_mmol_h": 0.0,
+        "cl_sequestration_vmax_mmol_h": 0.0,
+        "k_sequestration_vmax_mmol_h": 0.0,
+        "na_vacuole_release_h_inv": 0.0,
+        "cl_vacuole_release_h_inv": 0.0,
+        "k_vacuole_release_h_inv": 0.0,
+        "na_xylem_loading_l_h": 0.0,
+        "cl_xylem_loading_l_h": 0.0,
+        "k_xylem_loading_l_h": 0.0,
+        "na_xylem_retrieval_l_h": 0.0,
+        "cl_xylem_retrieval_l_h": 0.0,
+        "k_xylem_retrieval_l_h": 0.0,
+        "xylem_flow_l_h": 0.0,
+    }
+    values.update(updates)
+    return _parameters(**values)
+
+
+def _state_with_stock(
+    compartment_id: str,
+    entity: ConservedEntity,
+    amount: float,
+) -> PlantState:
+    state = _state()
+    compartment = state.network_state.compartments[compartment_id]
+    updated_compartment = replace(
+        compartment,
+        stocks={**compartment.stocks, entity: amount},
+    )
+    network = replace(
+        state.network_state,
+        compartments={
+            **state.network_state.compartments,
+            compartment_id: updated_compartment,
+        },
+    )
+    return replace(state, network_state=network)
+
+
 def test_advance_plant_uses_canonical_core_literal_audit_and_matches_euler_hand_oracle() -> None:
     """Catches hidden transport, post-step derivatives, or unaudited ledger use."""
     before = _state()
@@ -815,6 +860,31 @@ def test_substep_partition_property_preserves_binary64_duration_authority(
     assert all(0.0 < step <= maximum_step_hours for step in partition)
 
 
+def test_substep_partition_closes_exact_public_cap_after_pair_preflight() -> None:
+    """Catches a 20,000-step pair asking for a post-preflight step 20,001."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    duration_hours = 0.005012190753747413
+    maximum_step_hours = 2.506095376873707e-7
+    parameters = _parameters(integrator_max_step_hours=maximum_step_hours)
+    forcing = _forcing(duration_hours=duration_hours)
+
+    biology_surrogate.validate_simulation_domain(parameters, forcing)
+    partition = biology_surrogate._substep_partition(
+        duration_hours,
+        maximum_step_hours,
+    )
+
+    assert len(partition) == biology_surrogate.MAX_INTEGRATOR_SUBSTEPS
+    assert math.fsum(partition) == duration_hours
+    assert all(
+        biology_surrogate.MIN_CORE_INTEGRABLE_DURATION_HOURS
+        < step
+        <= maximum_step_hours
+        for step in partition
+    )
+
+
 @pytest.mark.parametrize(
     "duration_hours",
     [math.nextafter(0.0, 1.0), math.ulp(0.0), 1e-15, 1e-14],
@@ -855,6 +925,311 @@ def test_biology_parameters_reject_core_incompatible_integrator_maximum(
 
     assert exc_info.value.code == "BIOLOGY_PARAMETER_VIOLATION"
     assert exc_info.value.field_path == "integrator_max_step_hours"
+
+
+def test_mandatory_half_step_accepts_the_next_public_maximum_above_boundary() -> None:
+    """Catches simulate_plant rebuilding its fine step through the public minimum."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    maximum_step_hours = math.nextafter(
+        biology_surrogate.MIN_INTEGRATOR_MAX_STEP_HOURS,
+        math.inf,
+    )
+    duration_hours = math.nextafter(
+        biology_surrogate.MIN_CORE_INTEGRABLE_DURATION_HOURS,
+        math.inf,
+    )
+    result = simulate_plant(
+        _state(),
+        _zero_transport_parameters(
+            integrator_max_step_hours=maximum_step_hours,
+            ros_production_h_inv=0.0,
+            ros_clearance_h_inv=0.0,
+            injury_damage_h_inv=0.0,
+            injury_repair_h_inv=0.0,
+            mannitol_vmax_mmol_h=0.0,
+            mannitol_turnover_h_inv=0.0,
+            radiation_use_efficiency_g_mol_apar_inv=0.0,
+            maintenance_cost_g_h=0.0,
+            redox_growth_penalty_h_inv=0.0,
+            cipk_pleiotropy_penalty_h_inv=0.0,
+            biomass_loss_h_inv=0.0,
+            senescence_h_inv=0.0,
+        ),
+        (_forcing(duration_hours=duration_hours, apar_mol_h=0.0),),
+        cursor=_cursor(),
+    )
+
+    assert result.convergence.coarse_step_hours == maximum_step_hours
+    assert result.convergence.fine_step_hours == 0.5 * maximum_step_hours
+    assert result.convergence.fine_step_hours > (
+        biology_surrogate.MIN_CORE_INTEGRABLE_DURATION_HOURS
+    )
+    assert result.state.time_hours == duration_hours
+
+
+def test_simulation_domain_preflight_rejects_cap_plus_one_without_flux_work() -> None:
+    """Catches a huge partition being allocated before the operational cap check."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    parameters = _parameters(
+        root_area_cm2=1e308,
+        root_na_permeability_l_cm2_h=1e308,
+    )
+    duration_hours = (
+        biology_surrogate.MAX_INTEGRATOR_SUBSTEPS + 1
+    ) * parameters.integrator_max_step_hours
+    forcing = _forcing(duration_hours=duration_hours)
+
+    with pytest.raises(AlmondLabError) as direct:
+        biology_surrogate.validate_simulation_domain(parameters, forcing)
+    with pytest.raises(AlmondLabError) as integrated:
+        advance_plant(_state(), parameters, forcing, cursor=_cursor())
+
+    for error in (direct.value, integrated.value):
+        assert error.code == "BIOLOGY_SIMULATION_DOMAIN_INVALID"
+        assert error.field_path == "forcing.duration_hours"
+        assert error.details == {
+            "maximum_substeps": biology_surrogate.MAX_INTEGRATOR_SUBSTEPS,
+            "requested_substeps": biology_surrogate.MAX_INTEGRATOR_SUBSTEPS + 1,
+            "trajectory": "coarse",
+        }
+
+
+def test_simulation_domain_preflight_reports_huge_finite_pair_as_cap_violation() -> None:
+    """Catches float ratio overflow escaping the structured substep-domain error."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    parameters = _parameters()
+    forcing = _forcing(duration_hours=1e308)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        biology_surrogate.validate_simulation_domain(parameters, forcing)
+
+    assert exc_info.value.code == "BIOLOGY_SIMULATION_DOMAIN_INVALID"
+    assert exc_info.value.field_path == "forcing.duration_hours"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["maximum_substeps"] == (
+        biology_surrogate.MAX_INTEGRATOR_SUBSTEPS
+    )
+    assert exc_info.value.details["requested_substeps"] > 10**300
+    assert exc_info.value.details["trajectory"] == "coarse"
+
+
+def test_simulate_preflights_fine_trajectory_before_coarse_flux_work() -> None:
+    """Catches coarse evolution beginning before the mandatory fine plan is bounded."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    parameters = _parameters(
+        root_area_cm2=1e308,
+        root_na_permeability_l_cm2_h=1e308,
+    )
+    coarse_substeps = biology_surrogate.MAX_INTEGRATOR_SUBSTEPS // 2 + 1
+    forcing = _forcing(
+        duration_hours=coarse_substeps * parameters.integrator_max_step_hours
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        simulate_plant(_state(), parameters, (forcing,), cursor=_cursor())
+
+    assert exc_info.value.code == "BIOLOGY_SIMULATION_DOMAIN_INVALID"
+    assert exc_info.value.field_path == "forcings"
+    assert exc_info.value.details == {
+        "maximum_substeps": biology_surrogate.MAX_INTEGRATOR_SUBSTEPS,
+        "requested_substeps": 2 * coarse_substeps,
+        "trajectory": "fine",
+    }
+
+
+def test_simulate_preflights_total_schedule_before_any_interval_evolves() -> None:
+    """Catches individually bounded intervals creating an unbounded trajectory collection."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    parameters = _parameters(
+        root_area_cm2=1e308,
+        root_na_permeability_l_cm2_h=1e308,
+    )
+    interval_substeps = biology_surrogate.MAX_INTEGRATOR_SUBSTEPS // 4 + 1
+    forcing = _forcing(
+        duration_hours=interval_substeps * parameters.integrator_max_step_hours
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        simulate_plant(_state(), parameters, (forcing, forcing), cursor=_cursor())
+
+    assert exc_info.value.code == "BIOLOGY_SIMULATION_DOMAIN_INVALID"
+    assert exc_info.value.field_path == "forcings"
+    assert exc_info.value.details == {
+        "maximum_substeps": biology_surrogate.MAX_INTEGRATOR_SUBSTEPS,
+        "requested_substeps": 4 * interval_substeps,
+        "trajectory": "fine",
+    }
+
+
+def test_simulate_stops_consuming_schedule_at_first_domain_violation() -> None:
+    """Catches materializing an entire iterable before preflighting its first forcing."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    parameters = _parameters()
+    forcing = _forcing(
+        duration_hours=(
+            biology_surrogate.MAX_INTEGRATOR_SUBSTEPS + 1
+        )
+        * parameters.integrator_max_step_hours
+    )
+
+    def schedule() -> object:
+        yield forcing
+        raise AssertionError("schedule was consumed after a decisive violation")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        simulate_plant(_state(), parameters, schedule(), cursor=_cursor())
+
+    assert exc_info.value.code == "BIOLOGY_SIMULATION_DOMAIN_INVALID"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["requested_substeps"] == (
+        biology_surrogate.MAX_INTEGRATOR_SUBSTEPS + 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("event_suffix", "state", "parameter_updates"),
+    [
+        (
+            "uptake-na",
+            _state(),
+            {"root_area_cm2": 1.0, "root_na_permeability_l_cm2_h": 5e-324},
+        ),
+        (
+            "efflux-na",
+            _state(),
+            {"na_efflux_vmax_mmol_h": 3e-323},
+        ),
+        (
+            "sequester-na",
+            _state(),
+            {"na_sequestration_vmax_mmol_h": 1.5e-323},
+        ),
+        (
+            "release-na",
+            _state_with_stock("root-vacuole", ConservedEntity.NA, 0.1),
+            {"na_vacuole_release_h_inv": 1.5e-322},
+        ),
+        (
+            "load-na",
+            _state(),
+            {"na_xylem_loading_l_h": 1.5e-323},
+        ),
+        (
+            "retrieve-na",
+            _state(),
+            {"na_xylem_retrieval_l_h": 3e-323},
+        ),
+        (
+            "deposit-na",
+            _state(),
+            {"xylem_flow_l_h": 3e-323},
+        ),
+    ],
+)
+def test_unrepresentable_transition_amount_is_omitted_without_ledger_or_cost(
+    event_suffix: str,
+    state: PlantState,
+    parameter_updates: dict[str, float],
+) -> None:
+    """Catches every typed positive subnormal rate becoming a zero-amount transaction."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    parameters = _zero_transport_parameters(**parameter_updates)
+    ordinary = plant_fluxes(state, parameters, _forcing(duration_hours=1.0))
+    duration_hours = math.nextafter(
+        biology_surrogate.MIN_CORE_INTEGRABLE_DURATION_HOURS,
+        math.inf,
+    )
+    cursor = _cursor()
+    result = advance_plant(
+        state,
+        parameters,
+        _forcing(duration_hours=duration_hours),
+        cursor=cursor,
+    )
+
+    assert any(event.event_id == event_suffix for event in ordinary.events)
+    assert result.steps[0].fluxes.events == ()
+    assert result.expected_events == ()
+    assert result.expected_transactions == ()
+    assert result.flux_outcomes == ()
+    assert result.ledger == ()
+    assert result.next_cursor == cursor
+    assert result.state.network_state == state.network_state
+    assert result.state.allocatable_energy_atp_eq == state.allocatable_energy_atp_eq
+    assert result.steps[0].efflux_cost_g_h == 0.0
+    assert result.audits[0].balanced
+
+
+@pytest.mark.parametrize(
+    ("parameter_updates", "kept_suffix", "omitted_suffix", "expected_events"),
+    [
+        (
+            {
+                "na_efflux_vmax_mmol_h": 0.4,
+                "na_sequestration_vmax_mmol_h": 1.5e-323,
+            },
+            "efflux-na",
+            "sequester-na",
+            1,
+        ),
+        (
+            {"xylem_flow_l_h": 0.1, "na_xylem_retrieval_l_h": 3e-323},
+            "deposit-na",
+            "retrieve-na",
+            3,
+        ),
+    ],
+)
+def test_mixed_source_group_ignores_underflow_amount_in_cap_and_cursor_authority(
+    parameter_updates: dict[str, float],
+    kept_suffix: str,
+    omitted_suffix: str,
+    expected_events: int,
+) -> None:
+    """Catches a zero-representable competitor corrupting a real source cap group."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    state = _state()
+    parameters = _zero_transport_parameters(**parameter_updates)
+    duration_hours = math.nextafter(
+        biology_surrogate.MIN_CORE_INTEGRABLE_DURATION_HOURS,
+        math.inf,
+    )
+    result = advance_plant(
+        state,
+        parameters,
+        _forcing(duration_hours=duration_hours),
+        cursor=_cursor(),
+    )
+    event_ids = {
+        event.event_id.rsplit("-", 2)[-2]
+        + "-"
+        + event.event_id.rsplit("-", 1)[-1]
+        for event in result.expected_events
+    }
+
+    assert kept_suffix in event_ids
+    assert omitted_suffix not in event_ids
+    assert all(
+        not event.event_id.endswith(omitted_suffix)
+        for event in result.expected_events
+    )
+    assert len(result.expected_events) == expected_events
+    assert len(result.expected_transactions) == expected_events
+    assert len(result.flux_outcomes) == expected_events
+    assert len(result.ledger) == 2 * expected_events
+    assert result.next_cursor.next_ordinal == expected_events
+    assert result.audits[0].balanced
+    assert result.state.network_state.total_stock(ConservedEntity.NA) == (
+        state.network_state.total_stock(ConservedEntity.NA)
+    )
 
 
 def test_advance_plant_rejects_unrepresentable_time_progress_before_flux_work() -> None:
@@ -1210,6 +1585,37 @@ def test_canopy_auc_reports_derived_overflow_at_its_stable_public_boundary() -> 
     assert exc_info.value.field_path == "canopy_auc"
 
 
+def test_canopy_auc_preserves_finite_result_when_large_canopy_cancels_tiny_width() -> None:
+    """Catches avoidable endpoint-sum overflow before multiplying by a tiny width."""
+    assert canopy_auc([0.0, 1e-308], [1e308, 1e308], 1.0) == (
+        0.9999999999999999
+    )
+
+
+def test_canopy_auc_returns_a_representable_subnormal_exact_accumulation() -> None:
+    """Catches treating the smallest positive binary64 AUC as zero or invalid."""
+    assert canopy_auc([0.0, 5e-324], [1.0, 1.0], 1.0) == 5e-324
+
+
+def test_canopy_auc_rejects_positive_exact_result_that_underflows_binary64() -> None:
+    """Catches silently rounding a positive unrepresentable integral to zero."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        canopy_auc([0.0, 1e-308], [5e-324, 5e-324], 1.0)
+
+    assert exc_info.value.code == "CANOPY_AUC_INVALID"
+    assert exc_info.value.field_path == "canopy_auc"
+    assert exc_info.value.details == {"reason": "positive_result_underflow"}
+
+
+def test_canopy_auc_exactly_accumulates_mixed_scale_intervals_before_rounding() -> None:
+    """Catches sequential rounding losing a representable contribution across intervals."""
+    assert canopy_auc(
+        [0.0, 5e-324, 1.0],
+        [1.0, 1.0, 1.0],
+        1.0,
+    ) == 1.0
+
+
 def test_simulate_plant_runs_registered_step_halving_convergence_oracle() -> None:
     """Catches a trajectory accepted without its registered half-step comparison."""
     result = simulate_plant(
@@ -1511,6 +1917,156 @@ def test_candidate_effect_yaml_rejects_self_referential_merge_alias(tmp_path: Pa
     assert exc_info.value.field_path == "candidate_effects"
     assert exc_info.value.details is not None
     assert exc_info.value.details["cause_type"] == "YamlAliasCycleError"
+
+
+@pytest.mark.parametrize(
+    ("replacement", "cause_type"),
+    [
+        ("candidates: [\n", "ParserError"),
+        ("true: shadow\nextra_string: other\n", "YamlKeyTypeError"),
+    ],
+)
+def test_candidate_effect_yaml_translates_syntax_and_key_type_failures(
+    tmp_path: Path,
+    replacement: str,
+    cause_type: str,
+) -> None:
+    """Catches parser errors or mixed primitive root keys escaping the candidate API."""
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "candidate-malformed.yaml"
+    malformed.write_text(
+        replacement if replacement.startswith("candidates") else source + replacement,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == cause_type
+
+
+@pytest.mark.parametrize("schema_version", [True, ""])
+def test_candidate_effect_yaml_schema_version_uses_candidate_error_contract(
+    tmp_path: Path,
+    schema_version: object,
+) -> None:
+    """Catches candidate schema metadata leaking the general biology parameter code."""
+    payload = yaml.safe_load(
+        (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    )
+    payload["schema_version"] = schema_version
+    malformed = tmp_path / "candidate-schema.yaml"
+    malformed.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "schema_version"
+
+
+def test_candidate_effect_yaml_rejects_graph_beyond_code_owned_depth_limit(
+    tmp_path: Path,
+) -> None:
+    """Catches recursive traversal beyond the documented YAML graph budget."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    depth = biology_surrogate.MAX_YAML_DEPTH + 1
+    nested = "[" * depth + "0" + "]" * depth
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "candidate-depth.yaml"
+    malformed.write_text(source + f"extra: {nested}\n", encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlResourceLimitError"
+
+
+def test_candidate_effect_yaml_handles_bounded_deep_graph_without_recursion_leak(
+    tmp_path: Path,
+) -> None:
+    """Catches rejecting a bounded graph before ordinary candidate schema validation."""
+    nested = "[" * 20 + "0" + "]" * 20
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "candidate-bounded-depth.yaml"
+    malformed.write_text(source + f"extra: {nested}\n", encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert "cause_type" not in exc_info.value.details
+
+
+def test_candidate_effect_yaml_rejects_alias_expansion_bomb(tmp_path: Path) -> None:
+    """Catches a bounded node graph with excessive repeated alias references."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    aliases = ", ".join(
+        "*unit" for _ in range(biology_surrogate.MAX_YAML_ALIAS_REFERENCES + 1)
+    )
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    malformed = tmp_path / "candidate-alias-bomb.yaml"
+    malformed.write_text(
+        source + f"unit: &unit [1]\nbomb: [{aliases}]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlResourceLimitError"
+
+
+def test_candidate_effect_yaml_rejects_shallow_graph_over_node_budget(
+    tmp_path: Path,
+) -> None:
+    """Catches a wide shallow graph bypassing the depth and alias budgets."""
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    wide_sequence = ",".join("0" for _ in range(10_001))
+    malformed = tmp_path / "candidate-node-budget.yaml"
+    malformed.write_text(
+        source + f"extra: [{wide_sequence}]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlResourceLimitError"
+
+
+def test_candidate_effect_yaml_translates_parser_recursion_exhaustion(tmp_path: Path) -> None:
+    """Catches a depth-1500 parser RecursionError escaping the candidate boundary."""
+    nested = "[" * 1500 + "0" + "]" * 1500
+    malformed = tmp_path / "candidate-recursion.yaml"
+    malformed.write_text(f"extra: {nested}\n", encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] in {
+        "RecursionError",
+        "YamlResourceLimitError",
+    }
 
 
 def test_candidate_mapping_and_loader_reject_non_string_keys_or_path_with_stable_error() -> None:

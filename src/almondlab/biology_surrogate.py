@@ -11,7 +11,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from fractions import Fraction
-from math import ceil, exp, fsum, inf, isclose, isfinite, nextafter
+from math import exp, fsum, inf, isclose, isfinite, nextafter
 from numbers import Real
 from pathlib import Path
 from types import MappingProxyType
@@ -113,6 +113,16 @@ MIN_CORE_INTEGRABLE_DURATION_HOURS: Final[float] = 1e-14
 MIN_INTEGRATOR_MAX_STEP_HOURS: Final[float] = (
     2.0 * MIN_CORE_INTEGRABLE_DURATION_HOURS
 )
+# Bounds the materialized trajectory, diagnostics, ledger, and transaction
+# authority collections.  At the registered 0.25 h coarse maximum this still
+# covers 208 days; at the mandatory 0.125 h fine step it covers 104 days.
+MAX_INTEGRATOR_SUBSTEPS: Final[int] = 20_000
+
+# Safe YAML resource budgets are checked from the token stream before PyYAML's
+# recursive composer runs, then checked again on the composed graph.
+MAX_YAML_DEPTH: Final[int] = 64
+MAX_YAML_NODES: Final[int] = 10_000
+MAX_YAML_ALIAS_REFERENCES: Final[int] = 256
 
 
 class YamlDuplicateKeyError(yaml.YAMLError):
@@ -134,6 +144,70 @@ class YamlAliasCycleError(yaml.YAMLError):
         self.column = node.start_mark.column + 1
 
 
+class YamlKeyTypeError(yaml.YAMLError):
+    """A YAML mapping key that is not an exact primitive string."""
+
+    def __init__(self, node: yaml.nodes.Node) -> None:
+        super().__init__("YAML mapping keys must be primitive strings")
+        self.line = node.start_mark.line + 1
+        self.column = node.start_mark.column + 1
+
+
+class YamlResourceLimitError(yaml.YAMLError):
+    """A YAML stream or graph exceeds a code-owned resource budget."""
+
+    def __init__(self, limit_name: str, limit: int, observed: int) -> None:
+        super().__init__(f"YAML {limit_name} exceeds {limit}")
+        self.limit_name = limit_name
+        self.limit = limit
+        self.observed = observed
+
+
+def _validate_yaml_token_budget(stream: str) -> None:
+    """Reject excessive syntax depth/nodes/aliases before recursive compose."""
+
+    depth = 0
+    nodes = 0
+    aliases = 0
+    start_tokens = (
+        yaml.tokens.BlockMappingStartToken,
+        yaml.tokens.BlockSequenceStartToken,
+        yaml.tokens.FlowMappingStartToken,
+        yaml.tokens.FlowSequenceStartToken,
+    )
+    end_tokens = (
+        yaml.tokens.BlockEndToken,
+        yaml.tokens.FlowMappingEndToken,
+        yaml.tokens.FlowSequenceEndToken,
+    )
+    node_tokens = (
+        yaml.tokens.ScalarToken,
+        yaml.tokens.AliasToken,
+    )
+    for token in yaml.scan(stream, Loader=yaml.SafeLoader):
+        if isinstance(token, start_tokens):
+            depth += 1
+            nodes += 1
+            if depth > MAX_YAML_DEPTH:
+                raise YamlResourceLimitError(
+                    "depth", MAX_YAML_DEPTH, depth
+                )
+        elif isinstance(token, end_tokens):
+            depth -= 1
+        elif isinstance(token, node_tokens):
+            nodes += 1
+        if isinstance(token, yaml.tokens.AliasToken):
+            aliases += 1
+            if aliases > MAX_YAML_ALIAS_REFERENCES:
+                raise YamlResourceLimitError(
+                    "alias_references",
+                    MAX_YAML_ALIAS_REFERENCES,
+                    aliases,
+                )
+        if nodes > MAX_YAML_NODES:
+            raise YamlResourceLimitError("nodes", MAX_YAML_NODES, nodes)
+
+
 class _StrictSafeLoader(yaml.SafeLoader):
     """Safe loader with graph-cycle and raw explicit-key validation."""
 
@@ -144,48 +218,56 @@ class _StrictSafeLoader(yaml.SafeLoader):
     def _validate_graph(self, root: yaml.nodes.Node) -> None:
         active: set[int] = set()
         complete: set[int] = set()
-
-        def visit(node: yaml.nodes.Node) -> None:
+        discovered: set[int] = set()
+        stack: list[tuple[yaml.nodes.Node, int, bool]] = [(root, 1, False)]
+        while stack:
+            node, depth, exiting = stack.pop()
             identity = id(node)
+            if exiting:
+                active.remove(identity)
+                complete.add(identity)
+                continue
             if identity in active:
                 raise YamlAliasCycleError(node)
             if identity in complete:
-                return
+                continue
+            if depth > MAX_YAML_DEPTH:
+                raise YamlResourceLimitError("depth", MAX_YAML_DEPTH, depth)
+            discovered.add(identity)
+            if len(discovered) > MAX_YAML_NODES:
+                raise YamlResourceLimitError(
+                    "nodes", MAX_YAML_NODES, len(discovered)
+                )
             active.add(identity)
+            stack.append((node, depth, True))
+            children: list[yaml.nodes.Node] = []
             if isinstance(node, yaml.nodes.MappingNode):
                 seen: set[object] = set()
                 for key_node, value_node in node.value:
-                    key = (
-                        "<<"
-                        if key_node.tag == "tag:yaml.org,2002:merge"
-                        else self.construct_object(key_node, deep=False)
-                    )
-                    try:
-                        duplicate = key in seen
-                    except TypeError as error:
-                        raise yaml.constructor.ConstructorError(
-                            "while constructing a mapping",
-                            node.start_mark,
-                            "found unhashable key",
-                            key_node.start_mark,
-                        ) from error
+                    if key_node.tag == "tag:yaml.org,2002:merge":
+                        key = "<<"
+                    elif (
+                        not isinstance(key_node, yaml.nodes.ScalarNode)
+                        or key_node.tag != "tag:yaml.org,2002:str"
+                    ):
+                        raise YamlKeyTypeError(key_node)
+                    else:
+                        key = key_node.value
+                    duplicate = key in seen
                     if duplicate:
                         raise YamlDuplicateKeyError(key, key_node)
                     seen.add(key)
-                    visit(key_node)
-                    visit(value_node)
+                    children.extend((key_node, value_node))
             elif isinstance(node, yaml.nodes.SequenceNode):
-                for child in node.value:
-                    visit(child)
-            active.remove(identity)
-            complete.add(identity)
-
-        visit(root)
+                children.extend(node.value)
+            for child in reversed(children):
+                stack.append((child, depth + 1, False))
 
 
 def _strict_yaml_load(stream: str) -> object:
     """Load YAML safely after rejecting duplicate keys and alias cycles."""
 
+    _validate_yaml_token_budget(stream)
     return yaml.load(stream, Loader=_StrictSafeLoader)
 
 
@@ -251,6 +333,19 @@ def _weak_label(value: object, field_path: str) -> EvidenceLabel:
 def _schema_version(value: object, field_path: str = "schema_version") -> str:
     if not isinstance(value, str) or not value.strip():
         fail(_PARAMETER_CODE, "schema version must be a nonempty string", field_path)
+    return value
+
+
+def _candidate_schema_version(
+    value: object,
+    field_path: str = "schema_version",
+) -> str:
+    if not isinstance(value, str) or not value.strip():
+        fail(
+            "CANDIDATE_PARAMETER_VIOLATION",
+            "candidate schema version must be a nonempty string",
+            field_path,
+        )
     return value
 
 
@@ -717,9 +812,18 @@ class CandidateEffects:
         object.__setattr__(
             self,
             "schema_version",
-            _schema_version(self.schema_version, "schema_version"),
+            _candidate_schema_version(self.schema_version, "schema_version"),
         )
-        label = _weak_label(self.evidence_label, "evidence_label")
+        if (
+            not isinstance(self.evidence_label, EvidenceLabel)
+            or self.evidence_label not in _WEAK_LABELS
+        ):
+            fail(
+                "CANDIDATE_PARAMETER_VIOLATION",
+                "candidate evidence must be hypothesis_prior or synthetic_only",
+                "evidence_label",
+            )
+        label = self.evidence_label
         if not isinstance(self.parameters, Mapping):
             fail(
                 "CANDIDATE_PARAMETER_VIOLATION",
@@ -875,7 +979,15 @@ def load_candidate_effects(path: str | Path) -> Mapping[str, CandidateEffects]:
                 "column": error.column,
             },
         )
-    except (OSError, TypeError, ValueError, UnicodeError, yaml.YAMLError) as error:
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        yaml.YAMLError,
+        RecursionError,
+        MemoryError,
+    ) as error:
         fail(
             "CANDIDATE_PARAMETER_VIOLATION",
             "candidate effect fixture could not be read",
@@ -904,7 +1016,9 @@ def load_candidate_effects(path: str | Path) -> Mapping[str, CandidateEffects]:
                 "extra": sorted(set(payload) - expected_top),
             },
         )
-    version = _schema_version(payload["schema_version"], "schema_version")
+    version = _candidate_schema_version(
+        payload["schema_version"], "schema_version"
+    )
     if payload["interpretation"] != "synthetic_design_input_only":
         fail(
             "CANDIDATE_PARAMETER_VIOLATION",
@@ -1828,6 +1942,29 @@ def _namespace_events(
     )
 
 
+def _representable_amount_events(
+    events: tuple[InternalEntityFlux, ...],
+    duration_hours: float,
+) -> tuple[InternalEntityFlux, ...]:
+    """Omit rates whose requested amount rounds to exact binary64 zero.
+
+    Such an amount has no representable physical transfer in the canonical
+    ledger.  Omitting it avoids inventing a minimum mass, a zero transaction,
+    a cursor ordinal, or an energy cost.
+    """
+
+    retained: list[InternalEntityFlux] = []
+    for event in events:
+        requested = _product(
+            event.rate_per_hour,
+            duration_hours,
+            field_path=f"events.{event.event_id}.requested_amount",
+        )
+        if requested != 0.0:
+            retained.append(event)
+    return tuple(retained)
+
+
 def _literal_transaction_authority(
     state: NetworkState,
     events: tuple[InternalEntityFlux, ...],
@@ -1846,6 +1983,8 @@ def _literal_transaction_authority(
             duration_hours,
             field_path=f"expected_transactions.{event.event_id}.requested_amount",
         )
+        if requested == 0.0:
+            continue
         demands[(event.source, event.entity)].append((event.event_id, requested))
     caps: dict[tuple[str, ConservedEntity], float] = {}
     for (source, entity), grouped in demands.items():
@@ -1866,12 +2005,12 @@ def _literal_transaction_authority(
     expectations: list[LedgerTransactionExpectation] = []
     applied_by_event: dict[str, float] = {}
     for event in sorted(events, key=lambda item: item.event_id):
+        grouped_demands = demands.get((event.source, event.entity), ())
+        requested_by_id = dict(grouped_demands)
+        if event.event_id not in requested_by_id:
+            continue
         transaction_id, shadow = shadow.issue()
-        requested = next(
-            value
-            for event_id, value in demands[(event.source, event.entity)]
-            if event_id == event.event_id
-        )
+        requested = requested_by_id[event.event_id]
         applied = _product(
             requested,
             caps[(event.source, event.entity)],
@@ -2188,100 +2327,161 @@ def _dead_diagnostic(
     )
 
 
+def _simulation_domain_failure(
+    *,
+    field_path: str,
+    requested_substeps: int,
+    trajectory: str,
+) -> None:
+    fail(
+        "BIOLOGY_SIMULATION_DOMAIN_INVALID",
+        "biology trajectory exceeds the public materialized-substep limit",
+        field_path,
+        {
+            "maximum_substeps": MAX_INTEGRATOR_SUBSTEPS,
+            "requested_substeps": requested_substeps,
+            "trajectory": trajectory,
+        },
+    )
+
+
+def _planned_substep_count(
+    duration_hours: float,
+    maximum_step_hours: float,
+    *,
+    field_path: str,
+    trajectory: str,
+) -> int:
+    count = _exact_substep_count(duration_hours, maximum_step_hours)
+    if count > MAX_INTEGRATOR_SUBSTEPS:
+        _simulation_domain_failure(
+            field_path=field_path,
+            requested_substeps=count,
+            trajectory=trajectory,
+        )
+    return count
+
+
+def _exact_substep_count(
+    duration_hours: float,
+    maximum_step_hours: float,
+) -> int:
+    exact_ratio = Fraction.from_float(duration_hours) / Fraction.from_float(
+        maximum_step_hours
+    )
+    return -(-exact_ratio.numerator // exact_ratio.denominator)
+
+
+def validate_simulation_domain(
+    parameters: BiologyParameters,
+    forcing: RootZoneForcing,
+) -> None:
+    """Preflight one public forcing/parameter pair before materialization.
+
+    Accepted pairs require at most :data:`MAX_INTEGRATOR_SUBSTEPS` coarse
+    substeps.  Mandatory half-step schedules receive an additional whole-run
+    preflight in :func:`simulate_plant`.
+    """
+
+    params = _canonical_parameters(parameters)
+    external = _canonical_forcing(forcing)
+    _planned_substep_count(
+        external.duration_hours,
+        params.integrator_max_step_hours,
+        field_path="forcing.duration_hours",
+        trajectory="coarse",
+    )
+
+
 def _substep_partition(
     duration_hours: float,
     maximum_step_hours: float,
+    *,
+    field_path: str = "forcing.duration_hours",
+    trajectory: str = "coarse",
 ) -> tuple[float, ...]:
-    """Plan a deterministic integer partition with no float-tail threshold."""
+    """Plan a bounded partition whose exact binary64 sum is the duration."""
 
-    count = ceil(
-        _ratio(
-            duration_hours,
-            maximum_step_hours,
-            "forcing.duration_hours.substep_ratio",
-        )
+    count = _planned_substep_count(
+        duration_hours,
+        maximum_step_hours,
+        field_path=field_path,
+        trajectory=trajectory,
     )
-    if count > 1_000_000:
-        fail(_NUMERIC_CODE, "biology substep limit exceeded", "forcing.duration_hours")
-    while True:
-        even_step = _ratio(
-            duration_hours,
-            float(count),
-            "forcing.duration_hours.partition_step",
+    exact_duration = Fraction.from_float(duration_hours)
+    exact_average = exact_duration / count
+    base_step = _result(
+        float(exact_average),
+        "forcing.duration_hours.partition_step",
+    )
+    # A correctly rounded quotient can be one ULP above the registered
+    # maximum even though the exact average is not.
+    if base_step > maximum_step_hours:
+        base_step = maximum_step_hours
+    if base_step <= MIN_CORE_INTEGRABLE_DURATION_HOURS:
+        base_step = nextafter(MIN_CORE_INTEGRABLE_DURATION_HOURS, inf)
+    if not (
+        MIN_CORE_INTEGRABLE_DURATION_HOURS
+        < base_step
+        <= maximum_step_hours
+    ):
+        fail(
+            _NUMERIC_CODE,
+            "biology duration and maximum have no core-integrable partition",
+            field_path,
+            {"exclusive_minimum_hours": MIN_CORE_INTEGRABLE_DURATION_HOURS},
         )
-        uniform = (even_step,) * count
-        if (
-            MIN_CORE_INTEGRABLE_DURATION_HOURS
-            < even_step
-            <= maximum_step_hours
-            and fsum(uniform) == duration_hours
-        ):
-            return uniform
-        upper_step = nextafter(even_step, inf)
-        upper_uniform = (upper_step,) * count
-        if (
-            MIN_CORE_INTEGRABLE_DURATION_HOURS
-            < upper_step
-            <= maximum_step_hours
-            and fsum(upper_uniform) == duration_hours
-        ):
-            return upper_uniform
-        prefix = (even_step,) * (count - 1)
-        exact_tail = Fraction.from_float(duration_hours) - (
-            Fraction.from_float(even_step) * (count - 1)
+
+    exact_base = Fraction.from_float(base_step)
+    exact_uniform = exact_base * count
+    uniform = (base_step,) * count
+    if (
+        float(exact_uniform) == duration_hours
+        and fsum(uniform) == duration_hours
+    ):
+        return uniform
+
+    exact_delta = exact_duration - exact_uniform
+    direction = inf if exact_delta > 0 else -inf
+    adjacent_step = nextafter(base_step, direction)
+    if not (
+        MIN_CORE_INTEGRABLE_DURATION_HOURS
+        < adjacent_step
+        <= maximum_step_hours
+    ):
+        fail(
+            _NUMERIC_CODE,
+            "biology partition cannot preserve exact duration authority",
+            field_path,
         )
-        tail = _result(
-            float(exact_tail),
-            "forcing.duration_hours.partition_tail",
+    exact_adjustment = Fraction.from_float(adjacent_step) - exact_base
+    adjustment_ratio = exact_delta / exact_adjustment
+    lower_count = adjustment_ratio.numerator // adjustment_ratio.denominator
+    selected_count: int | None = None
+    for adjusted_count in range(
+        max(0, lower_count - 2),
+        min(count, lower_count + 3) + 1,
+    ):
+        exact_sum = exact_uniform + exact_adjustment * adjusted_count
+        if float(exact_sum) == duration_hours:
+            selected_count = adjusted_count
+            break
+    if selected_count is None:
+        fail(
+            _NUMERIC_CODE,
+            "biology partition cannot preserve exact duration authority",
+            field_path,
         )
-        if tail <= MIN_CORE_INTEGRABLE_DURATION_HOURS:
-            fail(
-                _NUMERIC_CODE,
-                "biology duration and maximum have no core-integrable partition",
-                "forcing.duration_hours",
-                {"exclusive_minimum_hours": MIN_CORE_INTEGRABLE_DURATION_HOURS},
-            )
-        partition = (*prefix, tail)
-        if all(
-            MIN_CORE_INTEGRABLE_DURATION_HOURS < step <= maximum_step_hours
-            for step in partition
-        ):
-            integrated = fsum(partition)
-            while integrated != duration_hours:
-                direction = inf if integrated < duration_hours else -inf
-                adjusted = nextafter(tail, direction)
-                if not (
-                    MIN_CORE_INTEGRABLE_DURATION_HOURS
-                    < adjusted
-                    <= maximum_step_hours
-                ):
-                    fail(
-                        _NUMERIC_CODE,
-                        "biology partition cannot preserve exact duration authority",
-                        "forcing.duration_hours",
-                    )
-                candidate = (*prefix, adjusted)
-                candidate_integrated = fsum(candidate)
-                if (
-                    integrated < duration_hours < candidate_integrated
-                    or candidate_integrated < duration_hours < integrated
-                ):
-                    fail(
-                        _NUMERIC_CODE,
-                        "biology partition cannot preserve exact duration authority",
-                        "forcing.duration_hours",
-                    )
-                tail = adjusted
-                partition = candidate
-                integrated = candidate_integrated
-            return partition
-        count += 1
-        if count > 1_000_000:
-            fail(
-                _NUMERIC_CODE,
-                "biology substep limit exceeded",
-                "forcing.duration_hours",
-            )
+    partition = (adjacent_step,) * selected_count + (base_step,) * (
+        count - selected_count
+    )
+    if fsum(partition) != duration_hours:
+        fail(
+            _NUMERIC_CODE,
+            "biology partition cannot preserve exact duration authority",
+            field_path,
+        )
+    return partition
 
 
 def _registered_target_time(
@@ -2315,14 +2515,15 @@ def _time_targets(
 
     targets: list[float] = []
     previous = start_time_hours
-    for index in range(len(durations)):
+    exact_elapsed = Fraction(0)
+    for index, duration in enumerate(durations):
+        exact_elapsed += Fraction.from_float(duration)
         if index == len(durations) - 1:
             target = final_target
         else:
-            elapsed = _product(
-                float(index + 1),
-                durations[0],
-                field_path="forcing.duration_hours.partition_elapsed",
+            elapsed = _result(
+                float(exact_elapsed),
+                "forcing.duration_hours.partition_elapsed",
             )
             target = _sum(
                 (start_time_hours, elapsed),
@@ -2358,13 +2559,46 @@ def advance_plant(
     external = _canonical_forcing(forcing)
     if not isinstance(cursor, LedgerCursor):
         fail("LEDGER_CURSOR_REQUIRED", "cursor must be LedgerCursor", "cursor")
+    validate_simulation_domain(params, external)
+    return _advance_plant_canonical(
+        current,
+        params,
+        external,
+        cursor=cursor,
+        maximum_step_hours=params.integrator_max_step_hours,
+        trajectory="coarse",
+        domain_field_path="forcing.duration_hours",
+    )
+
+
+def _advance_plant_canonical(
+    current: PlantState,
+    params: BiologyParameters,
+    external: RootZoneForcing,
+    *,
+    cursor: LedgerCursor,
+    maximum_step_hours: float,
+    trajectory: str,
+    domain_field_path: str,
+) -> AdvancePlantResult:
+    """Advance already-canonical inputs under a preflighted solver step."""
+
+    _planned_substep_count(
+        external.duration_hours,
+        maximum_step_hours,
+        field_path=domain_field_path,
+        trajectory=trajectory,
+    )
     interval_start_time = current.time_hours
     final_target_time = _registered_target_time(
         interval_start_time,
         external.duration_hours,
     )
     durations = _substep_partition(
-        external.duration_hours, params.integrator_max_step_hours
+        external.duration_hours,
+        maximum_step_hours,
+        field_path=domain_field_path,
+        trajectory=trajectory,
     )
     target_times = _time_targets(
         interval_start_time,
@@ -2383,6 +2617,10 @@ def advance_plant(
     for index, duration in enumerate(durations):
         subforcing = replace(external, duration_hours=duration)
         raw_fluxes = plant_fluxes(current, params, subforcing)
+        raw_fluxes = replace(
+            raw_fluxes,
+            events=_representable_amount_events(raw_fluxes.events, duration),
+        )
         namespaced = _namespace_events(raw_fluxes.events, next_cursor)
         fluxes = replace(raw_fluxes, events=namespaced)
         expectations, applied = _literal_transaction_authority(
@@ -2510,7 +2748,14 @@ def canopy_auc(
     canopy_area_cm2: object,
     pretreatment_canopy_area_cm2: object,
 ) -> float:
-    """Integrate canopy normalized to pretreatment area by the trapezoidal rule."""
+    """Integrate normalized canopy with exact binary-rational arithmetic.
+
+    All finite inputs are accumulated exactly and rounded to binary64 once.
+    A finite representable result (including a subnormal) succeeds. A true
+    overflow, or a positive exact result that rounds to zero, fails with the
+    stable ``CANOPY_AUC_INVALID`` boundary rather than silently saturating or
+    losing positive area.
+    """
 
     times = _auc_vector(times_days, "times_days")
     canopy = _auc_vector(canopy_area_cm2, "canopy_area_cm2")
@@ -2531,52 +2776,91 @@ def canopy_auc(
         fail("CANOPY_AUC_INVALID", "canopy values must be nonnegative", "canopy_area_cm2")
     if any(right <= left for left, right in zip(times, times[1:])):
         fail("CANOPY_AUC_INVALID", "times must be strictly increasing", "times_days")
+    exact_total = Fraction(0)
+    exact_pretreatment = Fraction.from_float(pretreatment)
+    for index in range(len(times) - 1):
+        exact_width = Fraction.from_float(times[index + 1]) - Fraction.from_float(
+            times[index]
+        )
+        exact_canopy_sum = Fraction.from_float(canopy[index]) + Fraction.from_float(
+            canopy[index + 1]
+        )
+        exact_total += (
+            exact_width * exact_canopy_sum / (2 * exact_pretreatment)
+        )
     try:
-        terms: list[float] = []
-        for index in range(len(times) - 1):
-            width = _sum(
-                (times[index + 1], -times[index]),
-                f"canopy_auc.{index}.width",
-            )
-            left_normalized = _ratio(
-                canopy[index],
-                pretreatment,
-                f"canopy_auc.{index}.left_normalized",
-            )
-            right_normalized = _ratio(
-                canopy[index + 1],
-                pretreatment,
-                f"canopy_auc.{index}.right_normalized",
-            )
-            normalized_sum = _sum(
-                (left_normalized, right_normalized),
-                f"canopy_auc.{index}.normalized_sum",
-            )
-            terms.append(
-                _product(
-                    0.5,
-                    width,
-                    normalized_sum,
-                    field_path=f"canopy_auc.{index}.term",
-                )
-            )
-        return _sum(tuple(terms), "canopy_auc")
-    except AlmondLabError as error:
+        rounded = float(exact_total)
+    except (OverflowError, ValueError) as error:
         fail(
             "CANOPY_AUC_INVALID",
             "trapezoidal integral must remain finite",
             "canopy_auc",
-            {"cause": error.code},
+            {"reason": "result_overflow", "cause_type": type(error).__name__},
         )
+    if not isfinite(rounded):
+        fail(
+            "CANOPY_AUC_INVALID",
+            "trapezoidal integral must remain finite",
+            "canopy_auc",
+            {"reason": "result_overflow"},
+        )
+    if exact_total > 0 and rounded == 0.0:
+        fail(
+            "CANOPY_AUC_INVALID",
+            "positive trapezoidal integral is not representable in binary64",
+            "canopy_auc",
+            {"reason": "positive_result_underflow"},
+        )
+    return rounded
 
 
-def _forcing_tuple(value: object) -> tuple[RootZoneForcing, ...]:
+def _forcing_tuple(
+    value: object,
+    *,
+    parameters: BiologyParameters,
+    fine_step_hours: float,
+) -> tuple[RootZoneForcing, ...]:
+    """Canonicalize a schedule, stopping at its first domain violation."""
+
     if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, Iterable):
-        fail("BIOLOGY_FORCING_VIOLATION", "forcings must be a nonempty iterable", "forcings")
-    items = tuple(value)
+        fail(
+            "BIOLOGY_FORCING_VIOLATION",
+            "forcings must be a nonempty iterable",
+            "forcings",
+        )
+    items: list[RootZoneForcing] = []
+    coarse_total = 0
+    fine_total = 0
+    for raw_item in value:
+        item = _canonical_forcing(raw_item)
+        # Apply the same public pair contract used by advance_plant before
+        # retaining the item or doing any trajectory work.
+        validate_simulation_domain(parameters, item)
+        coarse_increment = _exact_substep_count(
+            item.duration_hours,
+            parameters.integrator_max_step_hours,
+        )
+        coarse_total += coarse_increment
+        if coarse_total > MAX_INTEGRATOR_SUBSTEPS:
+            _simulation_domain_failure(
+                field_path="forcings",
+                requested_substeps=coarse_total,
+                trajectory="coarse",
+            )
+        fine_total += _exact_substep_count(
+            item.duration_hours,
+            fine_step_hours,
+        )
+        if fine_total > MAX_INTEGRATOR_SUBSTEPS:
+            _simulation_domain_failure(
+                field_path="forcings",
+                requested_substeps=fine_total,
+                trajectory="fine",
+            )
+        items.append(item)
     if not items:
         fail("BIOLOGY_FORCING_VIOLATION", "forcings cannot be empty", "forcings")
-    return tuple(_canonical_forcing(item) for item in items)
+    return tuple(items)
 
 
 def _run_forcings(
@@ -2584,7 +2868,17 @@ def _run_forcings(
     params: BiologyParameters,
     forcings: tuple[RootZoneForcing, ...],
     cursor: LedgerCursor,
-) -> tuple[PlantState, tuple[PlantState, ...], tuple[AdvancePlantResult, ...], tuple[LedgerEntry, ...], LedgerCursor, int]:
+    *,
+    maximum_step_hours: float,
+    trajectory: str,
+) -> tuple[
+    PlantState,
+    tuple[PlantState, ...],
+    tuple[AdvancePlantResult, ...],
+    tuple[LedgerEntry, ...],
+    LedgerCursor,
+    int,
+]:
     current = state
     states = [state]
     intervals: list[AdvancePlantResult] = []
@@ -2592,7 +2886,15 @@ def _run_forcings(
     next_cursor = cursor
     substeps = 0
     for forcing in forcings:
-        result = advance_plant(current, params, forcing, cursor=next_cursor)
+        result = _advance_plant_canonical(
+            current,
+            params,
+            forcing,
+            cursor=next_cursor,
+            maximum_step_hours=maximum_step_hours,
+            trajectory=trajectory,
+            domain_field_path="forcings",
+        )
         intervals.append(result)
         states.extend(result.states[1:])
         ledger.extend(result.ledger)
@@ -2673,17 +2975,34 @@ def simulate_plant(
 
     initial = _canonical_state(state)
     params = _canonical_parameters(parameters)
-    schedule = _forcing_tuple(forcings)
     if not isinstance(cursor, LedgerCursor):
         fail("LEDGER_CURSOR_REQUIRED", "cursor must be LedgerCursor", "cursor")
-    coarse = _run_forcings(initial, params, schedule, cursor)
     half_step = _product(
         0.5,
         params.integrator_max_step_hours,
         field_path="step_halving.fine_step_hours",
     )
-    fine_params = replace(params, integrator_max_step_hours=half_step)
-    fine = _run_forcings(initial, fine_params, schedule, cursor)
+    schedule = _forcing_tuple(
+        forcings,
+        parameters=params,
+        fine_step_hours=half_step,
+    )
+    coarse = _run_forcings(
+        initial,
+        params,
+        schedule,
+        cursor,
+        maximum_step_hours=params.integrator_max_step_hours,
+        trajectory="coarse",
+    )
+    fine = _run_forcings(
+        initial,
+        params,
+        schedule,
+        cursor,
+        maximum_step_hours=half_step,
+        trajectory="fine",
+    )
     coarse_state = coarse[0]
     fine_state = fine[0]
     coarse_values = _state_coordinates(coarse_state)

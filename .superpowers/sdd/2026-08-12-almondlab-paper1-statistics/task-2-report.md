@@ -196,6 +196,130 @@ modules and focused tests; scoped `git diff --check`; absence of hidden
 LF-only candidate fixture mirrors (574 bytes). No efficacy, survival, yield,
 food-safety, calibration, or preferred-candidate claim is made.
 
+## Final rereview repair I - RED evidence
+
+The next exact-commit rereview found five Important boundary classes still
+open: zero-representable subnormal transfer amounts, public-step closure under
+mandatory halving, an undeclared one-million-substep allocation cap, avoidable
+trapezoid overflow, and non-total YAML graph/error handling. Tests were added
+against public state, ledger/cursor authority, or structured errors before any
+production edit. The exact RED selection was:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_paper1_contracts.py -q -k "mandatory_half_step or simulation_domain_preflight or simulate_preflights or unrepresentable_transition_amount or mixed_source_group or preserves_finite_result or representable_subnormal_exact or positive_exact_result or exactly_accumulates_mixed or translates_syntax_and_key or schema_version_uses_candidate or graph_beyond_code_owned or bounded_deep_graph or alias_expansion_bomb or parser_recursion_exhaustion or translates_malformed_parser or non_string_mapping_keys or depth_1500_recursion"
+```
+
+Result: exit 1; **27 failed, 3 passed, 140 deselected in 7.17 s**. The
+failures reproduced all seven typed transition families and both shared-source
+mixed cap groups, fine-step public reconstruction, absent coarse/fine/schedule
+preflights, all requested AUC scale boundaries, and candidate/scenario YAML
+syntax, key-type, schema, depth, alias, and recursion failures. The three
+passing controls covered bounded-deep candidate traversal, exact mixed-scale
+AUC accumulation, and one already-stable malformed-input path.
+
+Three narrower RED additions then closed preflight-resource variants found
+during implementation. A finite `1e308` forcing exposed float ratio overflow
+instead of the structured domain error (**1 failed, 109 deselected in 1.03
+s**); a generator that raises after its first invalid forcing exposed eager
+schedule consumption (**1 failed, 110 deselected in 0.97 s**); and a shallow
+10,001-element YAML sequence exposed the initially missing node budget (**1
+failed, 111 deselected in 1.60 s**). Restoring the node budget made its exact
+selection pass (**1 passed, 111 deselected in 0.82 s**). The complete original
+round-I regression selection then passed **30 passed, 140 deselected in 1.38
+s**.
+
+The subsequent deterministic partition audit found an accepted pair at the
+exact public cap that preflighted as 20,000 substeps but whose former
+uniform-plus-tail construction attempted substep 20,001. Its public
+counterexample (`duration_hours=0.005012190753747413`,
+`maximum_step_hours=2.506095376873707e-7`) was captured first (**1 failed, 112
+deselected in 1.03 s**) and then repaired. A fixed-seed audit of 5,000
+factor-derived and 5,000 arbitrary accepted finite pairs subsequently verified
+exact `fsum` duration authority, the public open lower bound, maximum-step
+authority, and the 20,000-step cap.
+
+### Final rereview repair I - implementation
+
+- Rates whose duration product is exactly zero in binary64 are now removed
+  before event namespacing or core invocation. They create no physical event,
+  transaction, ledger rows, cursor ordinal, ATP charge, or synthetic minimum
+  mass. Tests exercise uptake, efflux, sequestration, release, xylem loading,
+  retrieval, and deposition independently, plus representable/underflow
+  competitors sharing the symplast or xylem source cap.
+- The public parameter contract remains the exact open bound
+  `integrator_max_step_hours > 2e-14`. The mandatory half-step is now an
+  internal solver setting rather than a reconstructed public
+  `BiologyParameters`, so the next binary64 maximum above the boundary supports
+  both trajectories and every fine step remains above the core-integrable
+  minimum.
+- `MAX_INTEGRATOR_SUBSTEPS = 20_000` is a code-owned public materialization
+  limit. At the registered 0.25-hour coarse step it covers 208 days and at the
+  required 0.125-hour fine step it covers 104 days, exceeding the registered
+  84-day simulation. `validate_simulation_domain` eagerly validates each
+  public forcing/parameter pair; `simulate_plant` additionally preflights whole
+  coarse and fine schedules while consuming iterables only until the first
+  decisive violation. Exact binary-rational ceiling counts handle all finite
+  durations, including `1e308`, and raise
+  `BIOLOGY_SIMULATION_DOMAIN_INVALID` before trajectory allocation, flux/core
+  work, ledger mutation, cursor advance, or RNG use.
+- The bounded partition now mixes only the two adjacent binary64 values around
+  the exact rational average. It selects their counts with exact
+  binary-rational arithmetic and requires `fsum(partition)` to equal the
+  reported duration. This closes the exact-cap pair without allocating a
+  forbidden extra step; cumulative public time targets now use each actual
+  partition duration rather than assuming a uniform prefix.
+- `canopy_auc` evaluates every finite input through the registered trapezoid
+  formula using exact binary-rational products, endpoint sums, normalization,
+  and accumulation, then rounds once to binary64. Finite normal and subnormal
+  results succeed; a true overflow or a positive exact result that rounds to
+  zero fails as `CANOPY_AUC_INVALID` with a stable reason. Thus the requested
+  huge-canopy/tiny-width case returns `0.9999999999999999` without avoidable
+  intermediate overflow.
+- The shared strict YAML loader now applies code-owned pre-compose limits of
+  `MAX_YAML_DEPTH = 64`, `MAX_YAML_NODES = 10_000`, and
+  `MAX_YAML_ALIAS_REFERENCES = 256`, followed by iterative graph validation.
+  Mapping keys must be exact primitive YAML strings apart from the legal merge
+  tag. Duplicate keys, duplicate explicit merge keys, cycles, excessive depth,
+  wide node graphs, and alias expansion bombs fail at every depth while one
+  legal merge or merge sequence retains standard explicit-key override
+  precedence. Scenario parse/resource failures become
+  `SYNTHETIC_SCENARIO_INVALID`; every candidate payload or schema failure uses
+  `CANDIDATE_PARAMETER_VIOLATION`. PyYAML, recursion, type, memory, encoding,
+  value, and I/O exceptions are translated without catching `BaseException`.
+
+### Final rereview repair I - GREEN and verification evidence
+
+Fresh focused biology and Paper 1 contract verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_paper1_contracts.py -q
+```
+
+Result: exit 0; **174 passed in 4.00 s**.
+
+Fresh expanded biology/core verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_hydraulics.py tests\test_mass_balance.py tests\test_paper1_contracts.py tests\test_contracts.py tests\test_core_acceptance.py tests\test_verification_resources.py -q
+```
+
+Result: exit 0; **548 passed in 104.97 s**.
+
+Fresh complete repository verification against the stabilized shared live tree:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests -q
+```
+
+Result: exit 0; **1055 passed, 3 POSIX-only tests skipped in 124.66 s**.
+
+Static verification passed over the two owned source modules and focused test
+modules, and scoped `git diff --check` passed over all six owned paths. Only
+Git's existing Windows line-ending conversion warnings were emitted. No
+registry, public-data, provenance, visualization, mass-balance, or hydraulics
+path was changed by this repair. No scientific efficacy, survival, yield,
+food-safety, calibration, or preferred-candidate claim is made.
+
 A fresh independent review will target the exact repair commit after it is
 created.
 
