@@ -1,0 +1,100 @@
+# Versioned hypothesis inputs for virtual operating-characteristic work only.
+scenario_parameters: &scenario_parameters
+  root_na_permeability: 0.12
+  root_cl_permeability: 0.10
+  root_k_permeability: 0.08
+  root_water_conductivity: 0.50
+  na_efflux_capacity: 0.25
+  hkt_retrieval_capacity: 0.20
+  mannitol_synthesis_capacity: 0.15
+  apx_capacity: 0.18
+  sos2_kinase_capacity: 0.16
+  na_influx_km: 2.0
+  mannitol_km: 0.50
+  mannitol_turnover_rate: 0.05
+  biomass_loss_rate: 0.03
+  senescence_rate: 0.02
+  atp_per_na_efflux: 1.0
+  carbon_cost_per_mannitol: 0.05
+  apx_energy_cost: 0.03
+  cipk_energy_cost: 0.03
+  biomass_conversion: 0.80
+  root_na_initial_stock: 1.0
+  root_cl_initial_stock: 1.0
+  root_k_initial_stock: 1.0
+  initial_biomass: 5.0
+  initial_canopy_area: 25.0
+  forcing_ecw_ds_m: 6.0
+  forcing_temperature_k: 298.15
+  forcing_osmolality_osmol_kg: 0.15
+  run_variance: 0.02
+  batch_variance: 0.02
+  reservoir_variance: 0.04
+  plant_variance: 0.10
+  canopy_observation_error_sd: 0.05
+  ion_observation_error_sd: 0.04
+  h3_observation_error_sd: 0.05
+  missingness_intercept: -3.0
+  missingness_stress_slope: 0.20
+  mnar_tipping_delta: 0.10
+  duration_days: 84.0
+scenarios:
+  - scenario_id: perfect_control
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters: *scenario_parameters
+  - scenario_id: true_ion_exclusion
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      na_efflux_capacity: 0.35
+  - scenario_id: root_na_accumulation
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      root_na_initial_stock: 2.0
+  - scenario_id: marker_only
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      apx_capacity: 0.30
+  - scenario_id: nonsaline_penalty
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      carbon_cost_per_mannitol: 0.15
+  - scenario_id: chassis_interaction
+    schema_version: "1.3"
+    evidence_label: hypothesis_prior
+    parameters:
+      <<: *scenario_parameters
+      root_water_conductivity: 0.35
+  - scenario_id: delayed_toxicity
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      senescence_rate: 0.06
+  - scenario_id: sensor_drift_missingness
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      canopy_observation_error_sd: 0.12
+      missingness_stress_slope: 0.60
+  - scenario_id: insufficient_purge
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      forcing_ecw_ds_m: 10.0
+  - scenario_id: selection_bias_false_leader
+    schema_version: "1.3"
+    evidence_label: synthetic_only
+    parameters:
+      <<: *scenario_parameters
+      plant_variance: 0.20
