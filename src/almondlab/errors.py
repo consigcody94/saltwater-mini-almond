@@ -61,7 +61,7 @@ def finite_float(
         fail(code, "value must be a finite real number", field_path)
     try:
         converted = float(value)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         fail(code, "value must be a finite real number", field_path)
     if not isfinite(converted):
         fail(code, "value must be a finite real number", field_path)

@@ -298,13 +298,55 @@ class LedgerEntryKind(StrEnum):
     EXTERNAL = "external"
 
 
+_INBOUND_BOUNDARY_CATEGORIES: Final[frozenset[ExternalBoundaryCategory]] = frozenset(
+    {
+        ExternalBoundaryCategory.SOURCE_FEED,
+        ExternalBoundaryCategory.EXTERNAL_MAKEUP,
+        ExternalBoundaryCategory.AMENDMENT,
+    }
+)
+_OUTPUT_BOUNDARY_CATEGORIES: Final[frozenset[ExternalBoundaryCategory]] = frozenset(
+    {
+        ExternalBoundaryCategory.DISPOSED_CONCENTRATE,
+        ExternalBoundaryCategory.PURGE_OR_DISCHARGE,
+        ExternalBoundaryCategory.SAMPLING,
+        ExternalBoundaryCategory.LEAK,
+        ExternalBoundaryCategory.VENTED_VAPOR,
+        ExternalBoundaryCategory.HARVESTED_TISSUE,
+        ExternalBoundaryCategory.REMOVED_SOLID,
+        ExternalBoundaryCategory.TREATMENT_LOSS,
+        ExternalBoundaryCategory.OTHER_MEASURED_OUTPUT,
+    }
+)
+if (
+    _INBOUND_BOUNDARY_CATEGORIES | _OUTPUT_BOUNDARY_CATEGORIES
+    != frozenset(ExternalBoundaryCategory)
+    or _INBOUND_BOUNDARY_CATEGORIES & _OUTPUT_BOUNDARY_CATEGORIES
+):
+    raise RuntimeError("external boundary direction registry must be exhaustive")
+
+_AQUEOUS_TRANSFER_PHASES: Final[frozenset[OperatorPhase]] = frozenset(
+    {
+        OperatorPhase.IRRIGATION,
+        OperatorPhase.LAYER_DRAINAGE,
+        OperatorPhase.DRAINAGE_CONDENSATE_RETURN,
+        OperatorPhase.TREATMENT_BLENDING,
+    }
+)
+
+
 MAX_LEDGER_ORDINAL: Final[int] = 999_999_999_999
 _EXHAUSTED_LEDGER_ORDINAL: Final[int] = MAX_LEDGER_ORDINAL + 1
 
 
 @dataclass(frozen=True, slots=True)
 class LedgerCursor:
-    """A deterministic, immutable transaction namespace and ordinal cursor."""
+    """A deterministic, immutable transaction namespace and ordinal cursor.
+
+    ``next_ordinal`` accepts the single one-past-the-namespace sentinel so an
+    issuance call can return an immutable exhausted cursor.  Such a cursor is
+    observable through :attr:`exhausted` but can never issue a transaction ID.
+    """
 
     run_id: str
     chain_id: str
@@ -331,6 +373,12 @@ class LedgerCursor:
                 "next_ordinal exceeds the 12-digit ledger namespace",
                 "next_ordinal",
             )
+
+    @property
+    def exhausted(self) -> bool:
+        """Whether the cursor represents the one-past-the-namespace sentinel."""
+
+        return self.next_ordinal > MAX_LEDGER_ORDINAL
 
     def issue(self) -> tuple[str, LedgerCursor]:
         """Return this ordinal's ID and an advanced cursor without mutation."""
@@ -383,6 +431,7 @@ class LedgerEntry:
     evidence_label: EvidenceLabel
     boundary_category: ExternalBoundaryCategory | None = None
     internal_flux_kind: InternalEntityFluxKind | None = None
+    internal_water_flow_kind: InternalWaterFlowKind | None = None
     physical_transfer_id: str | None = None
     carrier_volume_l: float | None = None
     water_density_kg_l: float | None = None
@@ -445,6 +494,14 @@ class LedgerEntry:
                 "internal_flux_kind must be an InternalEntityFluxKind",
                 "internal_flux_kind",
             )
+        if self.internal_water_flow_kind is not None and not isinstance(
+            self.internal_water_flow_kind, InternalWaterFlowKind
+        ):
+            fail(
+                "LEDGER_TYPE_INVALID",
+                "internal_water_flow_kind must be an InternalWaterFlowKind",
+                "internal_water_flow_kind",
+            )
 
         amount = finite_float(
             self.amount,
@@ -497,8 +554,14 @@ class LedgerEntry:
                     "water rows require water density",
                     "water_density_kg_l",
                 )
+            if (amount == 0.0) != (carrier_volume == 0.0):
+                fail(
+                    "LEDGER_WATER_ZERO_MISMATCH",
+                    "water amount is zero exactly when carrier volume is zero",
+                    "carrier_volume_l",
+                )
             if not isclose(
-                abs(amount), carrier_volume * density, rel_tol=1e-12, abs_tol=1e-12
+                abs(amount), carrier_volume * density, rel_tol=1e-12, abs_tol=0.0
             ):
                 fail(
                     "LEDGER_WATER_IDENTITY_MISMATCH",
@@ -539,6 +602,17 @@ class LedgerEntry:
             )
         if (
             self.kind is LedgerEntryKind.EXTERNAL
+            and self.boundary_category is None
+        ):
+            fail(
+                "LEDGER_BOUNDARY_CATEGORY_REQUIRED",
+                "external rows require a measured boundary category",
+                "boundary_category",
+            )
+        if self.kind is LedgerEntryKind.EXTERNAL:
+            self._validate_external_direction(amount)
+        if (
+            self.kind is LedgerEntryKind.EXTERNAL
             and self.internal_flux_kind is not None
         ):
             fail(
@@ -564,6 +638,22 @@ class LedgerEntry:
                     "internal_flux_kind",
                 )
 
+        self._validate_internal_water_flow()
+        if (
+            self.kind is LedgerEntryKind.INTERNAL
+            and self.transfer_mode is MaterialTransferMode.ENTITY_ONLY
+            and self.internal_flux_kind is None
+            and not any(
+                value is not None
+                for value in (self.adapter_id, self.adapter_version, self.adapter_hash)
+            )
+        ):
+            fail(
+                "LEDGER_ENTITY_ONLY_PROVENANCE_REQUIRED",
+                "internal entity-only rows require a plant flux or reaction adapter",
+                "transfer_mode",
+            )
+
         self._validate_capping(requested, applied, cap_fraction, amount)
         self._validate_adapter()
         self._validate_treatment_reference()
@@ -587,6 +677,71 @@ class LedgerEntry:
         )
         object.__setattr__(self, field_path, converted)
         return converted
+
+    def _validate_external_direction(self, amount: float) -> None:
+        if self.boundary_category in _INBOUND_BOUNDARY_CATEGORIES and amount < 0.0:
+            fail(
+                "LEDGER_BOUNDARY_DIRECTION_MISMATCH",
+                "inbound boundary categories require a nonnegative amount",
+                "amount",
+            )
+        if self.boundary_category in _OUTPUT_BOUNDARY_CATEGORIES and amount > 0.0:
+            fail(
+                "LEDGER_BOUNDARY_DIRECTION_MISMATCH",
+                "output boundary categories require a nonpositive amount",
+                "amount",
+            )
+
+    def _validate_internal_water_flow(self) -> None:
+        flow_kind = self.internal_water_flow_kind
+        if flow_kind is not None and (
+            self.kind is not LedgerEntryKind.INTERNAL
+            or self.entity is not ConservedEntity.WATER
+        ):
+            fail(
+                "LEDGER_INTERNAL_WATER_FLOW_KIND_MISMATCH",
+                "water-flow metadata belongs only to internal water rows",
+                "internal_water_flow_kind",
+            )
+        if (
+            self.kind is not LedgerEntryKind.INTERNAL
+            or self.entity is not ConservedEntity.WATER
+        ):
+            return
+        if flow_kind is None:
+            fail(
+                "LEDGER_INTERNAL_WATER_FLOW_KIND_REQUIRED",
+                "internal water rows require a physical flow kind",
+                "internal_water_flow_kind",
+            )
+
+        if flow_kind is InternalWaterFlowKind.AQUEOUS_TRANSFER:
+            expected_mode = MaterialTransferMode.ADVECTIVE_AQUEOUS
+            permitted_phases = _AQUEOUS_TRANSFER_PHASES
+        elif flow_kind in {
+            InternalWaterFlowKind.EVAPORATION,
+            InternalWaterFlowKind.TRANSPIRATION,
+        }:
+            expected_mode = MaterialTransferMode.WATER_ONLY
+            permitted_phases = frozenset({OperatorPhase.EVAPORATION_TRANSPIRATION})
+        else:
+            expected_mode = MaterialTransferMode.WATER_ONLY
+            permitted_phases = frozenset(
+                {OperatorPhase.DRAINAGE_CONDENSATE_RETURN}
+            )
+
+        if self.transfer_mode is not expected_mode:
+            fail(
+                "LEDGER_INTERNAL_WATER_MODE_MISMATCH",
+                "internal water flow kind and transfer mode must agree",
+                "transfer_mode",
+            )
+        if self.phase not in permitted_phases:
+            fail(
+                "LEDGER_INTERNAL_WATER_PHASE_MISMATCH",
+                "internal water flow kind is not permitted in this phase",
+                "phase",
+            )
 
     def _validate_capping(
         self,

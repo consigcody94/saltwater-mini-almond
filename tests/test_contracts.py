@@ -276,6 +276,8 @@ def test_ledger_cursor_refuses_to_issue_beyond_fixed_width() -> None:
     last_id, exhausted = LedgerCursor("run", "chain", 999_999_999_999).issue()
 
     assert last_id == "tx:run:chain:999999999999"
+    assert LedgerCursor("run", "chain", 999_999_999_999).exhausted is False
+    assert exhausted.exhausted is True
 
     with pytest.raises(AlmondLabError) as exc_info:
         exhausted.issue()
@@ -298,6 +300,7 @@ def _water_entry(**changes: object) -> LedgerEntry:
         "amount": -19.94,
         "unit": StockUnit.KG,
         "evidence_label": EvidenceLabel.PHYSICS_CONSTRAINED,
+        "internal_water_flow_kind": InternalWaterFlowKind.AQUEOUS_TRANSFER,
         "physical_transfer_id": "pipe-a",
         "carrier_volume_l": 20.0,
         "water_density_kg_l": 0.997,
@@ -327,6 +330,21 @@ def _ion_entry(**changes: object) -> LedgerEntry:
     }
     values.update(changes)
     return LedgerEntry(**values)  # type: ignore[arg-type]
+
+
+def _external_ion_entry(**changes: object) -> LedgerEntry:
+    values: dict[str, object] = {
+        "kind": LedgerEntryKind.EXTERNAL,
+        "phase": OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        "boundary_category": ExternalBoundaryCategory.SOURCE_FEED,
+        "internal_flux_kind": None,
+        "amount": 0.5,
+        "requested_amount": None,
+        "applied_amount": None,
+        "cap_fraction": None,
+    }
+    values.update(changes)
+    return _ion_entry(**values)
 
 
 def test_ledger_entry_is_frozen_typed_and_supports_capped_flux_metadata() -> None:
@@ -392,6 +410,12 @@ def test_ledger_entry_is_frozen_typed_and_supports_capped_flux_metadata() -> Non
         ),
         (
             _ion_entry,
+            {"phase": OperatorPhase.NUMERICAL_CLOSURE},
+            "LEDGER_INTERNAL_FLUX_PHASE_MISMATCH",
+            "phase",
+        ),
+        (
+            _ion_entry,
             {"applied_amount": 1.5},
             "LEDGER_APPLIED_EXCEEDS_REQUESTED",
             "applied_amount",
@@ -433,6 +457,249 @@ def test_ledger_entry_rejects_nonfinite_numeric_metadata(changes: dict[str, obje
     assert exc_info.value.code == "LEDGER_NUMERIC_INVALID"
 
 
+def test_external_rows_require_a_boundary_category() -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        _external_ion_entry(boundary_category=None)
+
+    assert exc_info.value.code == "LEDGER_BOUNDARY_CATEGORY_REQUIRED"
+    assert exc_info.value.field_path == "boundary_category"
+
+
+@pytest.mark.parametrize(
+    ("category", "permitted_amount", "forbidden_amount"),
+    [
+        (ExternalBoundaryCategory.SOURCE_FEED, 0.5, -0.5),
+        (ExternalBoundaryCategory.EXTERNAL_MAKEUP, 0.5, -0.5),
+        (ExternalBoundaryCategory.AMENDMENT, 0.5, -0.5),
+        (ExternalBoundaryCategory.DISPOSED_CONCENTRATE, -0.5, 0.5),
+        (ExternalBoundaryCategory.PURGE_OR_DISCHARGE, -0.5, 0.5),
+        (ExternalBoundaryCategory.SAMPLING, -0.5, 0.5),
+        (ExternalBoundaryCategory.LEAK, -0.5, 0.5),
+        (ExternalBoundaryCategory.VENTED_VAPOR, -0.5, 0.5),
+        (ExternalBoundaryCategory.HARVESTED_TISSUE, -0.5, 0.5),
+        (ExternalBoundaryCategory.REMOVED_SOLID, -0.5, 0.5),
+        (ExternalBoundaryCategory.TREATMENT_LOSS, -0.5, 0.5),
+        (ExternalBoundaryCategory.OTHER_MEASURED_OUTPUT, -0.5, 0.5),
+    ],
+)
+def test_external_boundary_categories_enforce_ledger_direction(
+    category: ExternalBoundaryCategory,
+    permitted_amount: float,
+    forbidden_amount: float,
+) -> None:
+    phase = (
+        OperatorPhase.EXTERNAL_FEED_AMENDMENT
+        if permitted_amount > 0.0
+        else OperatorPhase.PURGE_DISPOSAL
+    )
+
+    entry = _external_ion_entry(
+        phase=phase,
+        boundary_category=category,
+        amount=permitted_amount,
+    )
+    no_event = _external_ion_entry(
+        phase=phase,
+        boundary_category=category,
+        amount=0.0,
+    )
+
+    assert entry.boundary_category is category
+    assert no_event.amount == 0.0
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _external_ion_entry(
+            phase=phase,
+            boundary_category=category,
+            amount=forbidden_amount,
+        )
+
+    assert exc_info.value.code == "LEDGER_BOUNDARY_DIRECTION_MISMATCH"
+    assert exc_info.value.field_path == "amount"
+
+
+@pytest.mark.parametrize(
+    ("amount", "carrier_volume_l"),
+    [
+        (0.0, 1.0e-13),
+        (-9.97e-14, 0.0),
+    ],
+)
+def test_water_rows_require_exact_zero_amount_carrier_equivalence(
+    amount: float, carrier_volume_l: float
+) -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        _water_entry(amount=amount, carrier_volume_l=carrier_volume_l)
+
+    assert exc_info.value.code == "LEDGER_WATER_ZERO_MISMATCH"
+    assert exc_info.value.field_path == "carrier_volume_l"
+
+
+def test_zero_water_row_is_a_coherent_measured_external_no_event() -> None:
+    entry = _water_entry(
+        kind=LedgerEntryKind.EXTERNAL,
+        phase=OperatorPhase.PURGE_DISPOSAL,
+        boundary_category=ExternalBoundaryCategory.PURGE_OR_DISCHARGE,
+        internal_water_flow_kind=None,
+        amount=0.0,
+        carrier_volume_l=0.0,
+    )
+
+    assert entry.amount == 0.0
+    assert entry.carrier_volume_l == 0.0
+
+
+@pytest.mark.parametrize(
+    ("flow_kind", "transfer_mode", "phase"),
+    [
+        (
+            InternalWaterFlowKind.AQUEOUS_TRANSFER,
+            MaterialTransferMode.ADVECTIVE_AQUEOUS,
+            OperatorPhase.IRRIGATION,
+        ),
+        (
+            InternalWaterFlowKind.AQUEOUS_TRANSFER,
+            MaterialTransferMode.ADVECTIVE_AQUEOUS,
+            OperatorPhase.LAYER_DRAINAGE,
+        ),
+        (
+            InternalWaterFlowKind.AQUEOUS_TRANSFER,
+            MaterialTransferMode.ADVECTIVE_AQUEOUS,
+            OperatorPhase.DRAINAGE_CONDENSATE_RETURN,
+        ),
+        (
+            InternalWaterFlowKind.AQUEOUS_TRANSFER,
+            MaterialTransferMode.ADVECTIVE_AQUEOUS,
+            OperatorPhase.TREATMENT_BLENDING,
+        ),
+        (
+            InternalWaterFlowKind.EVAPORATION,
+            MaterialTransferMode.WATER_ONLY,
+            OperatorPhase.EVAPORATION_TRANSPIRATION,
+        ),
+        (
+            InternalWaterFlowKind.TRANSPIRATION,
+            MaterialTransferMode.WATER_ONLY,
+            OperatorPhase.EVAPORATION_TRANSPIRATION,
+        ),
+        (
+            InternalWaterFlowKind.CONDENSATE_RETURN,
+            MaterialTransferMode.WATER_ONLY,
+            OperatorPhase.DRAINAGE_CONDENSATE_RETURN,
+        ),
+    ],
+)
+def test_internal_water_flow_kind_pins_transfer_mode_and_phase(
+    flow_kind: InternalWaterFlowKind,
+    transfer_mode: MaterialTransferMode,
+    phase: OperatorPhase,
+) -> None:
+    entry = _water_entry(
+        internal_water_flow_kind=flow_kind,
+        transfer_mode=transfer_mode,
+        phase=phase,
+    )
+
+    assert entry.internal_water_flow_kind is flow_kind
+
+
+@pytest.mark.parametrize(
+    ("changes", "code", "field_path"),
+    [
+        (
+            {"internal_water_flow_kind": None},
+            "LEDGER_INTERNAL_WATER_FLOW_KIND_REQUIRED",
+            "internal_water_flow_kind",
+        ),
+        (
+            {"internal_water_flow_kind": "aqueous_transfer"},
+            "LEDGER_TYPE_INVALID",
+            "internal_water_flow_kind",
+        ),
+        (
+            {
+                "internal_water_flow_kind": InternalWaterFlowKind.AQUEOUS_TRANSFER,
+                "transfer_mode": MaterialTransferMode.WATER_ONLY,
+            },
+            "LEDGER_INTERNAL_WATER_MODE_MISMATCH",
+            "transfer_mode",
+        ),
+        (
+            {
+                "internal_water_flow_kind": InternalWaterFlowKind.AQUEOUS_TRANSFER,
+                "phase": OperatorPhase.EVAPORATION_TRANSPIRATION,
+            },
+            "LEDGER_INTERNAL_WATER_PHASE_MISMATCH",
+            "phase",
+        ),
+        (
+            {
+                "internal_water_flow_kind": InternalWaterFlowKind.EVAPORATION,
+                "transfer_mode": MaterialTransferMode.ADVECTIVE_AQUEOUS,
+                "phase": OperatorPhase.EVAPORATION_TRANSPIRATION,
+            },
+            "LEDGER_INTERNAL_WATER_MODE_MISMATCH",
+            "transfer_mode",
+        ),
+        (
+            {
+                "internal_water_flow_kind": InternalWaterFlowKind.TRANSPIRATION,
+                "transfer_mode": MaterialTransferMode.WATER_ONLY,
+                "phase": OperatorPhase.LAYER_DRAINAGE,
+            },
+            "LEDGER_INTERNAL_WATER_PHASE_MISMATCH",
+            "phase",
+        ),
+        (
+            {
+                "internal_water_flow_kind": InternalWaterFlowKind.CONDENSATE_RETURN,
+                "transfer_mode": MaterialTransferMode.ADVECTIVE_AQUEOUS,
+                "phase": OperatorPhase.DRAINAGE_CONDENSATE_RETURN,
+            },
+            "LEDGER_INTERNAL_WATER_MODE_MISMATCH",
+            "transfer_mode",
+        ),
+    ],
+)
+def test_internal_water_rows_reject_missing_untyped_or_incoherent_flow_metadata(
+    changes: dict[str, object], code: str, field_path: str
+) -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        _water_entry(**changes)
+
+    assert exc_info.value.code == code
+    assert exc_info.value.field_path == field_path
+
+
+def test_internal_water_flow_kind_is_forbidden_on_external_and_nonwater_rows() -> None:
+    with pytest.raises(AlmondLabError) as external:
+        _water_entry(
+            kind=LedgerEntryKind.EXTERNAL,
+            phase=OperatorPhase.PURGE_DISPOSAL,
+            boundary_category=ExternalBoundaryCategory.PURGE_OR_DISCHARGE,
+        )
+    assert external.value.code == "LEDGER_INTERNAL_WATER_FLOW_KIND_MISMATCH"
+    assert external.value.field_path == "internal_water_flow_kind"
+
+    with pytest.raises(AlmondLabError) as nonwater:
+        _ion_entry(
+            internal_water_flow_kind=InternalWaterFlowKind.AQUEOUS_TRANSFER,
+        )
+    assert nonwater.value.code == "LEDGER_INTERNAL_WATER_FLOW_KIND_MISMATCH"
+    assert nonwater.value.field_path == "internal_water_flow_kind"
+
+
+def test_internal_entity_only_rows_require_flux_or_adapter_provenance() -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        _ion_entry(
+            phase=OperatorPhase.NUMERICAL_CLOSURE,
+            internal_flux_kind=None,
+        )
+
+    assert exc_info.value.code == "LEDGER_ENTITY_ONLY_PROVENANCE_REQUIRED"
+    assert exc_info.value.field_path == "transfer_mode"
+
+
 def test_reaction_adapter_metadata_is_all_or_none_and_sha256_typed() -> None:
     reaction = replace(
         _ion_entry(),
@@ -466,6 +733,7 @@ def test_treatment_metadata_is_a_complete_readable_internal_treatment_reference(
     treatment = replace(
         _ion_entry(),
         phase=OperatorPhase.TREATMENT_BLENDING,
+        transfer_mode=MaterialTransferMode.ADVECTIVE_AQUEOUS,
         internal_flux_kind=None,
         event_id="ro-permeate",
         treatment_model_id="ro-bench",
@@ -482,6 +750,7 @@ def test_treatment_metadata_is_a_complete_readable_internal_treatment_reference(
         (
             {
                 "phase": OperatorPhase.TREATMENT_BLENDING,
+                "transfer_mode": MaterialTransferMode.ADVECTIVE_AQUEOUS,
                 "internal_flux_kind": None,
                 "treatment_model_id": "ro-bench",
             },
@@ -491,6 +760,7 @@ def test_treatment_metadata_is_a_complete_readable_internal_treatment_reference(
         (
             {
                 "phase": OperatorPhase.TREATMENT_BLENDING,
+                "transfer_mode": MaterialTransferMode.ADVECTIVE_AQUEOUS,
                 "internal_flux_kind": None,
                 "treatment_model_id": "ro bench",
                 "treatment_model_version": "1.0.0",
@@ -500,6 +770,7 @@ def test_treatment_metadata_is_a_complete_readable_internal_treatment_reference(
         ),
         (
             {
+                "transfer_mode": MaterialTransferMode.ADVECTIVE_AQUEOUS,
                 "internal_flux_kind": None,
                 "treatment_model_id": "ro-bench",
                 "treatment_model_version": "1.0.0",
@@ -511,7 +782,8 @@ def test_treatment_metadata_is_a_complete_readable_internal_treatment_reference(
             {
                 "kind": LedgerEntryKind.EXTERNAL,
                 "phase": OperatorPhase.TREATMENT_BLENDING,
-                "boundary_category": ExternalBoundaryCategory.AMENDMENT,
+                "transfer_mode": MaterialTransferMode.ADVECTIVE_AQUEOUS,
+                "boundary_category": ExternalBoundaryCategory.REMOVED_SOLID,
                 "internal_flux_kind": None,
                 "treatment_model_id": "ro-bench",
                 "treatment_model_version": "1.0.0",
@@ -560,6 +832,15 @@ def test_finite_float_rejects_non_real_nonfinite_and_overflowing_values(
 
     assert exc_info.value.code == "NUMBER_INVALID"
     assert exc_info.value.field_path == "case.value"
+
+
+def test_finite_float_propagates_unexpected_real_conversion_faults() -> None:
+    class BrokenReal(float):
+        def __float__(self) -> float:
+            raise RuntimeError("broken numerical scalar")
+
+    with pytest.raises(RuntimeError, match="broken numerical scalar"):
+        finite_float(BrokenReal(1.0), code="NUMBER_INVALID", field_path="case.value")
 
 
 def test_finite_float_enforces_requested_bounds() -> None:
