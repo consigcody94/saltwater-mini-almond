@@ -59,20 +59,29 @@ targeted matrix then passed 20/20.
 
 The immutable-snapshot rereview of `778cfd6` passed its 122-test focused suite,
 580-test committed-scope full suite, and 16-class exploit replay, but it found
-two final false-pass/portability regressions: a boolean RO stock could be
+two further false-pass/portability regressions: a boolean RO stock could be
 coerced to numeric zero before validation, and Windows `core.autocrlf=true`
 could change the frozen candidate bytes in a fresh checkout/archive. Both were
 reproduced before the narrow fix. Model metrics are now type-checked before
 arithmetic, and a temporary-repository checkout-index regression proves every
 hash-locked YAML/JSON mirror materializes as the canonical LF bytes under
-`core.autocrlf=true`. The final focused suite contains 124 tests.
+`core.autocrlf=true`.
+
+Later immutable reviews found two final scalar-coercion edges. Matching floats
+for frozen generator `seed`/`max_examples` fields compared equal to integers,
+and falsy non-mappings in `auxiliary_artifacts_sha256s` silently selected the
+empty default. Exact RED matrices of 12/12 and 4/4 reproduced them. Generator
+metadata now passes exact positive-`int` validation before value comparison,
+and only `None` selects the empty auxiliary-hash map. The final focused suite
+contains 140 tests.
 
 ## Implemented authority
 
 - `VerificationRecord.passed` is a read-only derived property and is not a
   dataclass field. JSON numbers are finite primitive `int|float` only (never
   bool/string coercions), `eq` is scalar-kind exact, and mapping keys must be
-  strings.
+  strings. Optional hash maps default only on `None`; falsy non-mappings are
+  rejected rather than erased.
 - Schema-1 policy objects are revalidated against code-owned immutable values:
   all six physical min/max/label triples, numerical stops, ordered registry,
   artifact template, evidence label, and every tolerance. Constructed booleans
@@ -102,6 +111,8 @@ hash-locked YAML/JSON mirror materializes as the canonical LF bytes under
   volume-L errors are recorded separately from water-kg errors. Non-finite or
   malformed injected model output produces the first frozen counterexample;
   boolean model outputs are rejected before Python arithmetic can coerce them.
+  Frozen generator seeds and example counts are exact positive integers before
+  they are compared with the code-owned property settings.
 - Exact-byte YAML and JSON verifier resources have repository-level `eol=lf`
   rules across authoring, packaged, and test mirrors. A clean-index
   materialization test runs with `core.autocrlf=true` and compares all resulting
@@ -137,32 +148,31 @@ configs/verification.yaml                      64876d38c3bd90af141c76adcc2b7dc12
 Focused verification/policy/resource/adversarial suite:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_core_acceptance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-portable-focused
+.\.venv\Scripts\python.exe -m pytest tests/test_core_acceptance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-aux-focused
 ```
 
 ```text
-124 passed in 96.45s
+140 passed in 96.39s
 ```
 
 Required core suite:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_schemas.py tests/test_chemistry.py tests/test_domains.py tests/test_hydraulics.py tests/test_contracts.py tests/test_mass_balance.py tests/test_treatment.py tests/test_core_acceptance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-portable-core
+.\.venv\Scripts\python.exe -m pytest tests/test_schemas.py tests/test_chemistry.py tests/test_domains.py tests/test_hydraulics.py tests/test_contracts.py tests/test_mass_balance.py tests/test_treatment.py tests/test_core_acceptance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-dda-final-core
 ```
 
 ```text
-548 passed in 101.66s
+564 passed in 104.20s
 ```
 
-Committed-scope full repository suite (all committed test modules; the
-concurrent, uncommitted publication-provenance work was explicitly excluded):
+Stable full repository suite after publication provenance commit `38f9631`:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_chemistry.py tests/test_cli.py tests/test_contracts.py tests/test_core_acceptance.py tests/test_domains.py tests/test_hydraulics.py tests/test_mass_balance.py tests/test_paper1_contracts.py tests/test_schemas.py tests/test_treatment.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-portable-full
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-dda-final-all
 ```
 
 ```text
-582 passed in 103.00s
+710 passed in 111.59s
 ```
 
 Before Fix G landed, the same required-core run was `505 passed, 14 failed`;
@@ -174,21 +184,25 @@ not hidden or patched in verification. The final counts above are post-commit.
 The final offline wheel was built as:
 
 ```text
-C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup\saltwater_mini_almond-0.1.0-py3-none-any.whl
-SHA-256 41F06F42973F3F318DF2F158258321B9496FF20ED9D55197E8B030EC51FD7DC6
+C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed\saltwater_mini_almond-0.1.0-py3-none-any.whl
+SHA-256 C2A93F1B4E9AF3DF1F652011DECE9766C745CCE9A154000653770979396AFA0D
 ```
 
 Exact build/install/path-isolation/smoke commands:
 
 ```powershell
 $env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
-& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' build --wheel --offline --clear --out-dir 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup' .
-.\.venv\Scripts\python.exe -m venv 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv'
-& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv\Scripts\python.exe' -m pip install --no-deps --no-index 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup\saltwater_mini_almond-0.1.0-py3-none-any.whl'
+git clone --no-local --no-checkout 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\outputs\saltwater-mini-almond' 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\fix-f-dda-fresh'
+git -C 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\fix-f-dda-fresh' config core.autocrlf true
+git -C 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\fix-f-dda-fresh' checkout --detach dda5490e087aa45ec9d92ee7d2af902f8c091769
+Set-Location 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\fix-f-dda-fresh'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' build --wheel --offline --clear --python 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\outputs\saltwater-mini-almond\.venv\Scripts\python.exe' --out-dir 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed' .
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\outputs\saltwater-mini-almond\.venv\Scripts\python.exe' -m venv 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed-venv'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed-venv\Scripts\python.exe' -m pip install --no-deps --no-index 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed\saltwater_mini_almond-0.1.0-py3-none-any.whl'
 $env:PYTHONPATH='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\outputs\saltwater-mini-almond\.venv\Lib\site-packages'
-& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv\Scripts\python.exe' -c "import almondlab, pathlib; p=pathlib.Path(almondlab.__file__).resolve(); print(p); assert 'wheel-f-portable-followup-venv' in str(p); assert 'saltwater-mini-almond\\src' not in str(p)"
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed-venv\Scripts\python.exe' -c "import almondlab, pathlib; p=pathlib.Path(almondlab.__file__).resolve(); print(p); assert 'wheel-f-dda-committed-venv' in str(p); assert 'saltwater-mini-almond\\src' not in str(p)"
 Set-Location 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work'
-& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv\Scripts\python.exe' 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel_f_smoke.py'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-dda-committed-venv\Scripts\python.exe' 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel_f_smoke.py'
 ```
 
 It was installed with `--no-deps` into a fresh venv outside the checkout; the
@@ -206,5 +220,23 @@ WHEEL_SMOKE_OK 13 8 {'package_version': '0.1.0', 'git_sha': None,
 
 The wheel contains the JSON candidates file plus the 12 YAML fixtures and
 `model_domains.yaml`, `thresholds.yaml`, and `verification.yaml`.
+
+The detached build clone used `core.autocrlf=true`; the candidate bytes kept
+their canonical digest and the manifest loader succeeded. All 16 packaged
+YAML/JSON resources were LF-only. The three unrelated Paper-1 root configs had
+`eol: unspecified`, proving the repository attributes remain verifier-scoped.
+
+## Independent final verdict
+
+The independent reviewer approved exact code SHA
+`dda5490e087aa45ec9d92ee7d2af902f8c091769` with no remaining Critical,
+Important, or Minor Fix-F code issues. Its immutable snapshot independently
+passed focused `140/140`, required core `564/564`, Fix-F-scope full `598/598`,
+and direct adversary `65/65` matrices. It replayed the four auxiliary-map,
+twelve generator-integer, and RO-boolean exploits; all were rejected. Its
+fresh `core.autocrlf=true` clone and Git archive retained canonical bytes, and
+its independently built wheel had the same SHA-256
+`c2a93f1b4e9af3df1f652011dece9766c745cce9a154000653770979396afa0d`.
+The reviewer also confirmed the analytic-only/no-biological-claim boundary.
 
 `git diff --check` was clean before final staging.
