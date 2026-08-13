@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     SkipValidation,
     field_serializer,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -312,6 +313,18 @@ class WaterCondition(StrictPaper1Model):
     chemistry: WaterChemistry
     evidence_label: Literal[EvidenceLabel.SYNTHETIC_ONLY, EvidenceLabel.HYPOTHESIS_PRIOR]
 
+    @field_validator("water_id", mode="before")
+    @classmethod
+    def require_exact_water_id(cls, value: object) -> object:
+        if (
+            type(value) is not str
+            or not value
+            or value != value.strip()
+            or any(ord(character) < 32 for character in value)
+        ):
+            raise ValueError("water_id must be a trim-free nonempty string")
+        return value
+
 
 class Paper1DesignConfig(StrictPaper1Model):
     schema_version: str = Field(min_length=1)
@@ -325,6 +338,40 @@ class Paper1DesignConfig(StrictPaper1Model):
     balanced_transformation_batches: tuple[str, ...] = Field(min_length=2)
     construct_level_unit: Literal["independently_transformed_plant"]
     water_treatment_unit: Literal["reservoir"]
+
+    @field_validator(
+        "reservoirs_per_water_run",
+        "independent_plants_per_group_reservoir",
+        mode="before",
+    )
+    @classmethod
+    def require_exact_integer_counts(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("allocation counts must be exact primitive integers")
+        return value
+
+    @field_validator(
+        "full_allocation_groups",
+        "runs",
+        "balanced_transformation_batches",
+        mode="before",
+    )
+    @classmethod
+    def require_exact_unique_ids(cls, value: object) -> object:
+        if type(value) not in (list, tuple):
+            raise ValueError("design ID collections must be ordinary lists or tuples")
+        items = tuple(value)
+        if any(
+            type(item) is not str
+            or not item
+            or item != item.strip()
+            or any(ord(character) < 32 for character in item)
+            for item in items
+        ):
+            raise ValueError("design IDs must be trim-free nonempty strings")
+        if len(set(items)) != len(items):
+            raise ValueError("design IDs must be unique")
+        return items
 
     @model_validator(mode="after")
     def require_frozen_primary_design_identity(self) -> "Paper1DesignConfig":

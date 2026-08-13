@@ -20,6 +20,8 @@ CANONICAL_FIXTURES = frozenset(
         "no_purge.yaml",
         "perfect_na_exclusion.yaml",
         "ro_remineralization.yaml",
+        "paper1_small.yaml",
+        "shared_reservoir_trap.csv",
         "sufficient_purge.yaml",
         "water_one_day.yaml",
     }
@@ -67,7 +69,7 @@ def test_hash_locked_resources_materialize_lf_under_windows_autocrlf(
             root / "tests" / "fixtures",
         )
         for path in directory.iterdir()
-        if path.is_file() and path.suffix in {".yaml", ".json"}
+        if path.is_file() and path.suffix in {".yaml", ".json", ".csv"}
     )
     expected: dict[Path, bytes] = {}
     for relative in relative_files:

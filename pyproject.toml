@@ -27,6 +27,7 @@ include = [
   "src/almondlab/**/*.py",
   "src/almondlab/resources/**/*.json",
   "src/almondlab/resources/**/*.yaml",
+  "src/almondlab/resources/**/*.csv",
 ]
 
 [tool.pytest.ini_options]

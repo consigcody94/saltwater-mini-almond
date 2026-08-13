@@ -384,6 +384,113 @@ def test_design_matches_independent_registered_identity_oracle() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("reservoirs_per_water_run", True),
+        ("reservoirs_per_water_run", "4"),
+        ("independent_plants_per_group_reservoir", False),
+        ("independent_plants_per_group_reservoir", "5"),
+    ],
+)
+def test_design_rejects_coercive_integer_counts(
+    field_name: str, invalid_value: object
+) -> None:
+    """Catches bool or numeric-string allocation counts at the Task 1 boundary."""
+    payload = load_paper1_design(CONFIGS / "experiment_paper1.yaml").model_dump(
+        mode="json"
+    )
+    payload[field_name] = invalid_value
+
+    with pytest.raises(ValidationError):
+        Paper1DesignConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("runs", [" discovery_run_1", "discovery_run_2"]),
+        ("runs", ["discovery_run_1", "discovery_run_1"]),
+        ("full_allocation_groups", ["C1"] * 9),
+        ("balanced_transformation_batches", ["batch_a", "batch_a"]),
+    ],
+)
+def test_design_rejects_whitespace_and_duplicate_ids(
+    field_name: str, invalid_value: object
+) -> None:
+    """Catches trim-normalized or duplicate design identities."""
+    payload = load_paper1_design(CONFIGS / "experiment_paper1.yaml").model_dump(
+        mode="json"
+    )
+    payload[field_name] = invalid_value
+
+    with pytest.raises(ValidationError):
+        Paper1DesignConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "item_index"),
+    [
+        ("full_allocation_groups", 0),
+        ("runs", 0),
+        ("balanced_transformation_batches", 0),
+    ],
+)
+def test_design_rejects_string_subclasses_before_canonicalization(
+    field_name: str, item_index: int
+) -> None:
+    """Catches hostile string subclasses being normalized into registered IDs."""
+
+    class HostileText(str):
+        pass
+
+    payload = load_paper1_design(CONFIGS / "experiment_paper1.yaml").model_dump(
+        mode="json"
+    )
+    payload[field_name][item_index] = HostileText(payload[field_name][item_index])
+
+    with pytest.raises(ValidationError):
+        Paper1DesignConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("full_allocation_groups", "runs", "balanced_transformation_batches"),
+)
+def test_design_rejects_list_subclasses_before_canonicalization(
+    field_name: str,
+) -> None:
+    """Catches hostile list subclasses being normalized into immutable ID tuples."""
+
+    class HostileList(list):
+        pass
+
+    payload = load_paper1_design(CONFIGS / "experiment_paper1.yaml").model_dump(
+        mode="json"
+    )
+    payload[field_name] = HostileList(payload[field_name])
+
+    with pytest.raises(ValidationError):
+        Paper1DesignConfig.model_validate(payload)
+
+
+def test_design_rejects_water_id_string_subclass_before_canonicalization() -> None:
+    """Catches a hostile water identity subclass at the nested public boundary."""
+
+    class HostileText(str):
+        pass
+
+    payload = load_paper1_design(CONFIGS / "experiment_paper1.yaml").model_dump(
+        mode="json"
+    )
+    payload["water_conditions"][0]["water_id"] = HostileText(
+        payload["water_conditions"][0]["water_id"]
+    )
+
+    with pytest.raises(ValidationError):
+        Paper1DesignConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
     ("field_path", "mutated_value"),
     [
         (
