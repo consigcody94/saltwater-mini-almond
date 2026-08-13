@@ -8,7 +8,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -19,65 +18,20 @@ from pydantic import (
     model_validator,
 )
 
-from almondlab.biology_surrogate import BiologyParameters, PlantState, RootZoneForcing
+from almondlab.biology_surrogate import (
+    BiologyParameters,
+    PlantState,
+    RootZoneForcing,
+    YamlAliasCycleError,
+    YamlDuplicateKeyError,
+    _strict_yaml_load,
+)
 from almondlab.contracts import CompartmentKind, ConservedEntity, EvidenceLabel
 from almondlab.errors import AlmondLabError, fail, finite_float
 from almondlab.evidence_policy import compose_evidence_labels
 from almondlab.hydraulics import HydraulicDomain
 from almondlab.mass_balance import CompartmentState, NetworkState
 from almondlab.schemas import WaterChemistry
-
-
-class _DuplicateYamlKeyError(yaml.YAMLError):
-    def __init__(self, key: object, node: yaml.nodes.Node) -> None:
-        super().__init__(f"duplicate YAML key: {key}")
-        self.key = key
-        self.line = node.start_mark.line + 1
-        self.column = node.start_mark.column + 1
-
-
-class _UniqueKeySafeLoader(yaml.SafeLoader):
-    """Safe loader that checks explicit keys before resolving YAML merges."""
-
-    def __init__(self, stream: object) -> None:
-        super().__init__(stream)
-        self._checked_mapping_nodes: set[int] = set()
-
-    def _check_mapping(self, node: yaml.nodes.MappingNode) -> None:
-        node_identity = id(node)
-        if node_identity not in self._checked_mapping_nodes:
-            seen: set[object] = set()
-            for key_node, _ in node.value:
-                if key_node.tag == "tag:yaml.org,2002:merge":
-                    continue
-                key = self.construct_object(key_node, deep=False)
-                try:
-                    duplicate = key in seen
-                except TypeError as error:
-                    raise yaml.constructor.ConstructorError(
-                        "while constructing a mapping",
-                        node.start_mark,
-                        "found unhashable key",
-                        key_node.start_mark,
-                    ) from error
-                if duplicate:
-                    raise _DuplicateYamlKeyError(key, key_node)
-                seen.add(key)
-            self._checked_mapping_nodes.add(node_identity)
-
-    def construct_mapping(
-        self,
-        node: yaml.nodes.MappingNode,
-        deep: bool = False,
-    ) -> dict[object, object]:
-        self._check_mapping(node)
-        return super().construct_mapping(node, deep=deep)
-
-    def flatten_mapping(self, node: yaml.nodes.MappingNode) -> None:
-        # SafeConstructor recursively flattens merge sources, so validate each
-        # raw mapping node once before that mutation can obscure key provenance.
-        self._check_mapping(node)
-        super().flatten_mapping(node)
 
 
 class StrictPaper1Model(BaseModel):
@@ -857,11 +811,8 @@ def _load_yaml_mapping(
     scenario_boundary: bool = False,
 ) -> dict[str, object]:
     try:
-        payload = yaml.load(
-            Path(path).read_text(encoding="utf-8"),
-            Loader=_UniqueKeySafeLoader,
-        )
-    except _DuplicateYamlKeyError as error:
+        payload = _strict_yaml_load(Path(path).read_text(encoding="utf-8"))
+    except YamlDuplicateKeyError as error:
         if scenario_boundary:
             fail(
                 "SYNTHETIC_SCENARIO_INVALID",
@@ -874,6 +825,19 @@ def _load_yaml_mapping(
                 },
             )
         raise ValueError(f"duplicate YAML key: {error.key}") from error
+    except YamlAliasCycleError as error:
+        if scenario_boundary:
+            fail(
+                "SYNTHETIC_SCENARIO_INVALID",
+                "synthetic scenario YAML contains a cyclic alias graph",
+                "yaml",
+                {
+                    "cause_type": type(error).__name__,
+                    "line": error.line,
+                    "column": error.column,
+                },
+            )
+        raise ValueError("cyclic YAML alias graph") from error
     if not isinstance(payload, dict):
         raise ValueError(f"expected a mapping in {path}")
     return payload

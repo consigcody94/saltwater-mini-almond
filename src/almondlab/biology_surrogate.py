@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
-from math import ceil, exp, fsum, isclose, isfinite
+from fractions import Fraction
+from math import ceil, exp, fsum, inf, isclose, isfinite, nextafter
 from numbers import Real
 from pathlib import Path
 from types import MappingProxyType
@@ -101,6 +102,91 @@ _PRIMARY_EFFECT_KEY: Final[Mapping[str, str]] = MappingProxyType(
         "C6": "sos_efflux_activation_multiplier",
     }
 )
+
+# The canonical core rejects substeps at or below this binary64 duration.  The
+# biology boundary publishes the same open lower bound so accepted forcing and
+# integrator inputs never depend on the core's internal numerical epsilon.
+MIN_CORE_INTEGRABLE_DURATION_HOURS: Final[float] = 1e-14
+# A maximum strictly above twice the core minimum guarantees that every
+# accepted forcing duration has a mathematical partition whose steps all lie
+# in the core-integrable open domain.
+MIN_INTEGRATOR_MAX_STEP_HOURS: Final[float] = (
+    2.0 * MIN_CORE_INTEGRABLE_DURATION_HOURS
+)
+
+
+class YamlDuplicateKeyError(yaml.YAMLError):
+    """A duplicate explicit YAML key, including the merge key ``<<``."""
+
+    def __init__(self, key: object, node: yaml.nodes.Node) -> None:
+        super().__init__(f"duplicate YAML key: {key}")
+        self.key = key
+        self.line = node.start_mark.line + 1
+        self.column = node.start_mark.column + 1
+
+
+class YamlAliasCycleError(yaml.YAMLError):
+    """A YAML alias graph that recursively contains itself."""
+
+    def __init__(self, node: yaml.nodes.Node) -> None:
+        super().__init__("cyclic YAML alias graph")
+        self.line = node.start_mark.line + 1
+        self.column = node.start_mark.column + 1
+
+
+class _StrictSafeLoader(yaml.SafeLoader):
+    """Safe loader with graph-cycle and raw explicit-key validation."""
+
+    def construct_document(self, node: yaml.nodes.Node) -> object:
+        self._validate_graph(node)
+        return super().construct_document(node)
+
+    def _validate_graph(self, root: yaml.nodes.Node) -> None:
+        active: set[int] = set()
+        complete: set[int] = set()
+
+        def visit(node: yaml.nodes.Node) -> None:
+            identity = id(node)
+            if identity in active:
+                raise YamlAliasCycleError(node)
+            if identity in complete:
+                return
+            active.add(identity)
+            if isinstance(node, yaml.nodes.MappingNode):
+                seen: set[object] = set()
+                for key_node, value_node in node.value:
+                    key = (
+                        "<<"
+                        if key_node.tag == "tag:yaml.org,2002:merge"
+                        else self.construct_object(key_node, deep=False)
+                    )
+                    try:
+                        duplicate = key in seen
+                    except TypeError as error:
+                        raise yaml.constructor.ConstructorError(
+                            "while constructing a mapping",
+                            node.start_mark,
+                            "found unhashable key",
+                            key_node.start_mark,
+                        ) from error
+                    if duplicate:
+                        raise YamlDuplicateKeyError(key, key_node)
+                    seen.add(key)
+                    visit(key_node)
+                    visit(value_node)
+            elif isinstance(node, yaml.nodes.SequenceNode):
+                for child in node.value:
+                    visit(child)
+            active.remove(identity)
+            complete.add(identity)
+
+        visit(root)
+
+
+def _strict_yaml_load(stream: str) -> object:
+    """Load YAML safely after rejecting duplicate keys and alias cycles."""
+
+    return yaml.load(stream, Loader=_StrictSafeLoader)
 
 
 def _number(
@@ -530,11 +616,23 @@ class BiologyParameters:
                 "biology integrator maximum step cannot exceed 0.25 hours",
                 "integrator_max_step_hours",
             )
+        if self.integrator_max_step_hours <= MIN_INTEGRATOR_MAX_STEP_HOURS:
+            fail(
+                _PARAMETER_CODE,
+                "biology integrator maximum must exceed the public core timestep minimum",
+                "integrator_max_step_hours",
+                {"exclusive_minimum_hours": MIN_INTEGRATOR_MAX_STEP_HOURS},
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RootZoneForcing:
-    """Measured external forcing and an explicit validated hydraulic domain."""
+    """Measured forcing in the public core-integrable duration domain.
+
+    ``duration_hours`` is finite and strictly greater than
+    :data:`MIN_CORE_INTEGRABLE_DURATION_HOURS`; this open bound prevents an
+    accepted forcing from reaching the canonical core's timestep epsilon.
+    """
 
     measured_osmolality_osmol_kg: float
     temperature_k: float
@@ -586,6 +684,13 @@ class RootZoneForcing:
                 "BIOLOGY_FORCING_VIOLATION",
                 "temperature factor must be in [0, 1]",
                 "temperature_factor",
+            )
+        if self.duration_hours <= MIN_CORE_INTEGRABLE_DURATION_HOURS:
+            fail(
+                "BIOLOGY_FORCING_VIOLATION",
+                "forcing duration must exceed the public core timestep minimum",
+                "duration_hours",
+                {"exclusive_minimum_hours": MIN_CORE_INTEGRABLE_DURATION_HOURS},
             )
         object.__setattr__(
             self, "evidence_label", _weak_label(self.evidence_label, "evidence_label")
@@ -747,7 +852,29 @@ def load_candidate_effects(path: str | Path) -> Mapping[str, CandidateEffects]:
     """Load the exact C1-C6 synthetic-design effect registry."""
 
     try:
-        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        payload = _strict_yaml_load(Path(path).read_text(encoding="utf-8"))
+    except YamlDuplicateKeyError as error:
+        fail(
+            "CANDIDATE_PARAMETER_VIOLATION",
+            "candidate effect fixture contains a duplicate explicit mapping key",
+            "candidate_effects",
+            {
+                "duplicate_key": str(error.key),
+                "line": error.line,
+                "column": error.column,
+            },
+        )
+    except YamlAliasCycleError as error:
+        fail(
+            "CANDIDATE_PARAMETER_VIOLATION",
+            "candidate effect fixture contains a cyclic YAML alias graph",
+            "candidate_effects",
+            {
+                "cause_type": type(error).__name__,
+                "line": error.line,
+                "column": error.column,
+            },
+        )
     except (OSError, TypeError, ValueError, UnicodeError, yaml.YAMLError) as error:
         fail(
             "CANDIDATE_PARAMETER_VIOLATION",
@@ -2082,19 +2209,71 @@ def _substep_partition(
             float(count),
             "forcing.duration_hours.partition_step",
         )
+        uniform = (even_step,) * count
+        if (
+            MIN_CORE_INTEGRABLE_DURATION_HOURS
+            < even_step
+            <= maximum_step_hours
+            and fsum(uniform) == duration_hours
+        ):
+            return uniform
+        upper_step = nextafter(even_step, inf)
+        upper_uniform = (upper_step,) * count
+        if (
+            MIN_CORE_INTEGRABLE_DURATION_HOURS
+            < upper_step
+            <= maximum_step_hours
+            and fsum(upper_uniform) == duration_hours
+        ):
+            return upper_uniform
         prefix = (even_step,) * (count - 1)
-        tail = _sum(
-            (duration_hours, -fsum(prefix)),
+        exact_tail = Fraction.from_float(duration_hours) - (
+            Fraction.from_float(even_step) * (count - 1)
+        )
+        tail = _result(
+            float(exact_tail),
             "forcing.duration_hours.partition_tail",
         )
-        if tail <= 0.0:
+        if tail <= MIN_CORE_INTEGRABLE_DURATION_HOURS:
             fail(
                 _NUMERIC_CODE,
-                "biology duration cannot be represented as positive substeps",
+                "biology duration and maximum have no core-integrable partition",
                 "forcing.duration_hours",
+                {"exclusive_minimum_hours": MIN_CORE_INTEGRABLE_DURATION_HOURS},
             )
         partition = (*prefix, tail)
-        if all(step <= maximum_step_hours for step in partition):
+        if all(
+            MIN_CORE_INTEGRABLE_DURATION_HOURS < step <= maximum_step_hours
+            for step in partition
+        ):
+            integrated = fsum(partition)
+            while integrated != duration_hours:
+                direction = inf if integrated < duration_hours else -inf
+                adjusted = nextafter(tail, direction)
+                if not (
+                    MIN_CORE_INTEGRABLE_DURATION_HOURS
+                    < adjusted
+                    <= maximum_step_hours
+                ):
+                    fail(
+                        _NUMERIC_CODE,
+                        "biology partition cannot preserve exact duration authority",
+                        "forcing.duration_hours",
+                    )
+                candidate = (*prefix, adjusted)
+                candidate_integrated = fsum(candidate)
+                if (
+                    integrated < duration_hours < candidate_integrated
+                    or candidate_integrated < duration_hours < integrated
+                ):
+                    fail(
+                        _NUMERIC_CODE,
+                        "biology partition cannot preserve exact duration authority",
+                        "forcing.duration_hours",
+                    )
+                tail = adjusted
+                partition = candidate
+                integrated = candidate_integrated
             return partition
         count += 1
         if count > 1_000_000:
@@ -2352,18 +2531,35 @@ def canopy_auc(
         fail("CANOPY_AUC_INVALID", "canopy values must be nonnegative", "canopy_area_cm2")
     if any(right <= left for left, right in zip(times, times[1:])):
         fail("CANOPY_AUC_INVALID", "times must be strictly increasing", "times_days")
-    terms: list[float] = []
-    for index in range(len(times) - 1):
-        width = _sum((times[index + 1], -times[index]), f"canopy_auc.{index}.width")
-        normalized_sum = _ratio(
-            _sum((canopy[index], canopy[index + 1]), f"canopy_auc.{index}.canopy_sum"),
-            pretreatment,
-            f"canopy_auc.{index}.normalized_sum",
-        )
-        terms.append(
-            _product(0.5, width, normalized_sum, field_path=f"canopy_auc.{index}.term")
-        )
     try:
+        terms: list[float] = []
+        for index in range(len(times) - 1):
+            width = _sum(
+                (times[index + 1], -times[index]),
+                f"canopy_auc.{index}.width",
+            )
+            left_normalized = _ratio(
+                canopy[index],
+                pretreatment,
+                f"canopy_auc.{index}.left_normalized",
+            )
+            right_normalized = _ratio(
+                canopy[index + 1],
+                pretreatment,
+                f"canopy_auc.{index}.right_normalized",
+            )
+            normalized_sum = _sum(
+                (left_normalized, right_normalized),
+                f"canopy_auc.{index}.normalized_sum",
+            )
+            terms.append(
+                _product(
+                    0.5,
+                    width,
+                    normalized_sum,
+                    field_path=f"canopy_auc.{index}.term",
+                )
+            )
         return _sum(tuple(terms), "canopy_auc")
     except AlmondLabError as error:
         fail(

@@ -271,3 +271,96 @@ the registry repair lands.
 No efficacy, survival, yield, food-safety, calibration, or preferred-candidate
 claim is made. A fresh independent scientific/code rereview is requested for
 the exact final repair commit.
+
+## Final rereview repair H - RED evidence
+
+The next fresh rereview identified five remaining boundary defects: binary64
+partition authority, sub-core-minimum forcing durations, duplicate/cyclic YAML
+graphs, candidate-effect loader strictness, and overflow-safe canopy AUC.
+Behavioral regression tests were added before production changes. The exact RED
+selection was:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_paper1_contracts.py -q -k "adversarial_partition or substep_partition_property or public_core_domain or immediately_above_public_core_minimum or normalizes_endpoints or candidate_effect_yaml_rejects_duplicate or candidate_effect_yaml_rejects_self or duplicate_explicit_merge or self_referential_merge or merge_sequence_with_explicit_override"
+```
+
+Result: exit 1; **13 failed, 2 passed, 122 deselected in 2.53 s**. The two
+passing controls proved that the duration immediately above the intended open
+minimum and a legal one-element merge sequence with explicit override already
+worked. The 13 failures reproduced every defect. In particular, the exact
+reviewer input integrated to `0.03496126797633996` rather than the reported
+`0.03496126797633995`, and Hypothesis independently minimized another drift to
+`maximum_step_hours=0.0010000000000000002`, `factor=13`.
+
+One additional stable-boundary regression was then written before its minimal
+production repair. It reproduced a derived time-width overflow escaping
+`canopy_auc` as `BIOLOGY_NUMERIC_INVALID` (**1 failed, 83 deselected in
+0.96 s**); after the full trapezoid computation was enclosed by the endpoint
+translator, the focused suite verifies `CANOPY_AUC_INVALID` instead.
+
+### Final rereview repair H - implementation
+
+- `_substep_partition` now derives its residual with exact `Fraction` arithmetic
+  over the accepted binary64 values and verifies that `fsum(partition)` is
+  exactly the registered duration before returning. Every returned step is
+  positive, at or below the registered maximum, and above the public core
+  timestep minimum. The exact reviewer counterexample and a 60-example
+  Hypothesis property over near-minimum, small, ordinary, and maximum step
+  magnitudes protect the integrated-dt authority.
+- `RootZoneForcing.duration_hours` now has an explicit public open domain
+  `duration_hours > 1e-14`; `BiologyParameters.integrator_max_step_hours` has
+  the paired open domain `> 2e-14`. The latter guarantees that every accepted
+  forcing interval can be partitioned into core-integrable substeps. Inputs on
+  or below either boundary fail immediately with the appropriate stable
+  biology forcing/parameter code; the next binary64 duration above the forcing
+  boundary advances successfully without cap underflow, division underflow,
+  or hidden `FLOW_EXCEEDS_SOURCE`.
+- One safe YAML graph loader is now shared by the scenario and candidate-effect
+  boundaries. It rejects duplicate explicit keys at every mapping depth,
+  treats repeated explicit `<<` merge keys as duplicates, and rejects cyclic
+  aliases before recursive construction. Standard YAML precedence is retained:
+  an explicit mapping key overrides a merged value, and legal merge sequences
+  remain supported.
+- `load_candidate_effects` now translates duplicate, cyclic, malformed, and
+  unreadable YAML into stable `CANDIDATE_PARAMETER_VIOLATION` errors. Tests
+  cover duplicate root, candidate-ID, and nested-parameter keys plus a nested
+  self-referential merge alias.
+- `canopy_auc` divides each endpoint by pretreatment canopy before endpoint
+  addition. Thus `[1e308, 1e308] / 1e308` over `[0, 1]` returns exactly `1.0`
+  under the registered normalized trapezoid, while genuinely invalid derived
+  arithmetic remains a stable `CANOPY_AUC_INVALID` boundary.
+
+### Final rereview repair H - GREEN and verification evidence
+
+The final exact regression selection passed **17 passed, 122 deselected in
+1.67 s**. Fresh focused verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_paper1_contracts.py -q
+```
+
+Result: exit 0; **140 passed in 2.43 s**.
+
+Fresh expanded biology/core verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_hydraulics.py tests\test_mass_balance.py tests\test_paper1_contracts.py tests\test_contracts.py tests\test_core_acceptance.py tests\test_verification_resources.py -q
+```
+
+Result: exit 0; **514 passed in 102.52 s**.
+
+Fresh complete repository verification after the independently owned registry
+work stabilized:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests -q
+```
+
+Result: exit 0; **988 passed, 3 POSIX-only tests skipped in 119.80 s**.
+
+Static verification also passed: `compileall` over both owned source modules
+and focused test modules, and `git diff --check` over every owned tracked path.
+Only Git's existing Windows line-ending conversion warnings were emitted. No
+registry, public-data, provenance, visualization, core mass, or core hydraulic
+path was changed by this repair. No scientific efficacy, survival, yield,
+food-safety, calibration, or preferred-candidate claim is made.

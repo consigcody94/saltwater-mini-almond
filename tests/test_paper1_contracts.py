@@ -566,6 +566,69 @@ def test_synthetic_scenario_yaml_rejects_duplicate_keys_before_merge_expansion(
     assert exc_info.value.details["duplicate_key"] == duplicate_key
 
 
+def test_synthetic_scenario_yaml_rejects_duplicate_explicit_merge_keys(
+    tmp_path: Path,
+) -> None:
+    """Catches duplicate ``<<`` keys being skipped by unique-key validation."""
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = source.replace(
+        "      <<: *biology_parameters\n",
+        "      <<: *biology_parameters\n      <<: *biology_parameters\n",
+        1,
+    )
+    malformed = tmp_path / "duplicate-merge.yaml"
+    malformed.write_text(source, encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["duplicate_key"] == "<<"
+
+
+def test_synthetic_scenario_yaml_rejects_self_referential_merge_alias(
+    tmp_path: Path,
+) -> None:
+    """Catches an alias cycle at a nested mapping before recursive construction."""
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = source.replace(
+        "biology_parameters: &biology_parameters\n",
+        "biology_parameters: &biology_parameters\n  <<: *biology_parameters\n",
+        1,
+    )
+    malformed = tmp_path / "alias-cycle.yaml"
+    malformed.write_text(source, encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(malformed)
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "yaml"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlAliasCycleError"
+
+
+def test_synthetic_scenario_yaml_accepts_merge_sequence_with_explicit_override(
+    tmp_path: Path,
+) -> None:
+    """Catches rejecting legal YAML precedence: explicit keys override merged keys."""
+    source = (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    source = source.replace(
+        "      <<: *biology_parameters\n",
+        "      <<: [*biology_parameters]\n",
+        1,
+    )
+    legal = tmp_path / "merge-sequence.yaml"
+    legal.write_text(source, encoding="utf-8")
+
+    scenarios = load_synthetic_scenarios(legal)
+
+    assert scenarios[1].parameters.root_na_permeability_l_cm2_h == 0.0
+    assert scenarios[1].parameters.root_cl_permeability_l_cm2_h == 0.02
+
+
 def _scenario_payload() -> dict[str, object]:
     raw = yaml.safe_load((CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8"))
     assert isinstance(raw, dict)

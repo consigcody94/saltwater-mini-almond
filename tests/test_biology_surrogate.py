@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError, fields, replace
 import math
 from pathlib import Path
 
+from hypothesis import given, settings, strategies as st
 import pytest
 import yaml
 
@@ -764,6 +765,98 @@ def test_advance_plant_partitions_float_durations_without_tail_loss(
     assert result.next_cursor.next_ordinal == 19 * expected_substeps
 
 
+def test_advance_plant_uses_the_exact_reported_duration_for_adversarial_partition() -> None:
+    """Catches a bounded substep partition whose integrated dt is one ULP too long."""
+    duration_hours = 0.03496126797633995
+    maximum_step_hours = 0.0010197566398756233
+
+    result = advance_plant(
+        _state(),
+        _parameters(integrator_max_step_hours=maximum_step_hours),
+        _forcing(duration_hours=duration_hours),
+        cursor=_cursor(),
+    )
+
+    integrated_duration = math.fsum(step.duration_hours for step in result.steps)
+    assert integrated_duration == duration_hours
+    assert result.state.time_hours == duration_hours
+    assert all(
+        0.0 < step.duration_hours <= maximum_step_hours for step in result.steps
+    )
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    maximum_step_hours=st.sampled_from(
+        [
+            math.nextafter(2e-14, math.inf),
+            1e-12,
+            math.nextafter(0.001, math.inf),
+            0.1,
+            0.25,
+        ]
+    ),
+    factor=st.integers(min_value=1, max_value=64),
+)
+def test_substep_partition_property_preserves_binary64_duration_authority(
+    maximum_step_hours: float,
+    factor: int,
+) -> None:
+    """Catches ordinary or extreme accepted floats losing exact integrated dt."""
+    import almondlab.biology_surrogate as biology_surrogate
+
+    duration_hours = maximum_step_hours * factor
+    partition = biology_surrogate._substep_partition(
+        duration_hours,
+        maximum_step_hours,
+    )
+
+    assert math.fsum(partition) == duration_hours
+    assert all(0.0 < step <= maximum_step_hours for step in partition)
+
+
+@pytest.mark.parametrize(
+    "duration_hours",
+    [math.nextafter(0.0, 1.0), math.ulp(0.0), 1e-15, 1e-14],
+)
+def test_root_zone_forcing_rejects_durations_outside_public_core_domain(
+    duration_hours: float,
+) -> None:
+    """Catches a public forcing interval accepted only to hit a hidden core epsilon."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        _forcing(duration_hours=duration_hours)
+
+    assert exc_info.value.code == "BIOLOGY_FORCING_VIOLATION"
+    assert exc_info.value.field_path == "duration_hours"
+
+
+def test_duration_immediately_above_public_core_minimum_integrates() -> None:
+    """Catches an explicit minimum-duration contract that rejects its open boundary."""
+    duration_hours = math.nextafter(1e-14, math.inf)
+
+    result = advance_plant(
+        _state(),
+        _parameters(),
+        _forcing(duration_hours=duration_hours),
+        cursor=_cursor(),
+    )
+
+    assert math.fsum(step.duration_hours for step in result.steps) == duration_hours
+    assert result.state.time_hours == duration_hours
+
+
+@pytest.mark.parametrize("maximum_step_hours", [1e-14, 2e-14])
+def test_biology_parameters_reject_core_incompatible_integrator_maximum(
+    maximum_step_hours: float,
+) -> None:
+    """Catches a registered maximum that can only produce core-rejected substeps."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        _parameters(integrator_max_step_hours=maximum_step_hours)
+
+    assert exc_info.value.code == "BIOLOGY_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "integrator_max_step_hours"
+
+
 def test_advance_plant_rejects_unrepresentable_time_progress_before_flux_work() -> None:
     """Catches a positive interval that cannot advance binary64 public time."""
     before = _state(time_hours=1e308)
@@ -1103,6 +1196,20 @@ def test_canopy_auc_matches_exact_normalized_trapezoid_literal() -> None:
     assert canopy_auc([0.0, 1.0, 2.0], [2.0, 4.0, 2.0], 2.0) == 3.0
 
 
+def test_canopy_auc_normalizes_endpoints_before_summing_large_values() -> None:
+    """Catches raw endpoint addition overflowing before valid normalization."""
+    assert canopy_auc([0.0, 1.0], [1e308, 1e308], 1e308) == 1.0
+
+
+def test_canopy_auc_reports_derived_overflow_at_its_stable_public_boundary() -> None:
+    """Catches internal numeric errors escaping the canopy-AUC error contract."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        canopy_auc([-1e308, 1e308], [1.0, 1.0], 1.0)
+
+    assert exc_info.value.code == "CANOPY_AUC_INVALID"
+    assert exc_info.value.field_path == "canopy_auc"
+
+
 def test_simulate_plant_runs_registered_step_halving_convergence_oracle() -> None:
     """Catches a trajectory accepted without its registered half-step comparison."""
     result = simulate_plant(
@@ -1337,6 +1444,73 @@ def test_candidate_fixture_loader_fails_closed_on_top_level_or_candidate_drift(t
         load_candidate_effects(malformed)
 
     assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "duplicate_key"),
+    [
+        ("root", "schema_version"),
+        ("candidate", "C1"),
+        ("nested", "na_efflux_vmax_multiplier"),
+    ],
+)
+def test_candidate_effect_yaml_rejects_duplicate_keys_at_every_mapping_depth(
+    tmp_path: Path,
+    mutation: str,
+    duplicate_key: str,
+) -> None:
+    """Catches root, candidate, or parameter duplicates silently taking last value."""
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    if mutation == "root":
+        source = source.replace(
+            'schema_version: "1.0.0"\n',
+            'schema_version: "1.0.0"\nschema_version: "9.9.9"\n',
+            1,
+        )
+    elif mutation == "candidate":
+        source = source.replace(
+            "  C2:\n",
+            "  C1:\n    na_efflux_vmax_multiplier: 1.10\n"
+            "    atp_cost_per_na: 2.00\n  C2:\n",
+            1,
+        )
+    else:
+        source = source.replace(
+            "    na_efflux_vmax_multiplier: 1.35\n",
+            "    na_efflux_vmax_multiplier: 1.35\n"
+            "    na_efflux_vmax_multiplier: 1.10\n",
+            1,
+        )
+    malformed = tmp_path / f"duplicate-{mutation}.yaml"
+    malformed.write_text(source, encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["duplicate_key"] == duplicate_key
+
+
+def test_candidate_effect_yaml_rejects_self_referential_merge_alias(tmp_path: Path) -> None:
+    """Catches a nested alias cycle reaching recursive merge construction."""
+    source = (FIXTURES / "candidate_effects.yaml").read_text(encoding="utf-8")
+    source = source.replace(
+        "  C1:\n",
+        "  C1: &cycle\n    <<: *cycle\n",
+        1,
+    )
+    malformed = tmp_path / "candidate-cycle.yaml"
+    malformed.write_text(source, encoding="utf-8")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_candidate_effects(malformed)
+
+    assert exc_info.value.code == "CANDIDATE_PARAMETER_VIOLATION"
+    assert exc_info.value.field_path == "candidate_effects"
+    assert exc_info.value.details is not None
+    assert exc_info.value.details["cause_type"] == "YamlAliasCycleError"
 
 
 def test_candidate_mapping_and_loader_reject_non_string_keys_or_path_with_stable_error() -> None:
