@@ -2,4 +2,4 @@
 
 Pre-flight: approved v1.3 specification and cross-plan interfaces already audited; Paper 1 begins with isolated contract/config Task 1 while core Task 4 review fixes proceed. Downstream biology work remains gated on core hydraulics acceptance.
 Task 1: complete (registered C1–C6 identities/H3/mechanisms, composite-root design, closed labeled scenario contracts; implementation and fix through 948bb34, scoped re-review clean)
-Task 2: implementation verified (full Section 8.2.1 surrogate and addendum overrides; biology/Paper 1 102/102, expanded core 476/476, scoped full 804/804; independent scientific/code review pending on the owned commit)
+Task 2: review repair implemented and verified (duration partition, ATP amount dimensions, exact scenario-root/template closure; focused 114/114, expanded core 488/488, concurrent combined full 912 passed with 2 POSIX-only skips; fresh independent rereview pending on the exact repair commit)

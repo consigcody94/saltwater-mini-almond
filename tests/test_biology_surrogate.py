@@ -10,6 +10,7 @@ from almondlab.biology_surrogate import (
     CandidateEffects,
     PlantState,
     RootZoneForcing,
+    StepHalvingConvergence,
     advance_plant,
     apply_candidate_effects,
     canopy_auc,
@@ -203,7 +204,7 @@ def _parameters(**updates: object) -> BiologyParameters:
         "specific_leaf_area_cm2_g": 20.0,
         "leaf_allocation_fraction": 0.4,
         "senescence_h_inv": 0.01,
-        "energy_epsilon_atp_eq_h": 1e-12,
+        "energy_epsilon_atp_eq": 1e-12,
         "integrator_max_step_hours": 0.25,
         "step_halving_absolute_tolerance": 1e-3,
         "step_halving_relative_tolerance": 0.05,
@@ -727,6 +728,88 @@ def test_advance_plant_uses_canonical_core_literal_audit_and_matches_euler_hand_
         )
 
 
+@pytest.mark.parametrize(
+    ("max_step_hours", "duration_hours", "expected_substeps"),
+    [
+        (0.1, 1.0, 10),
+        (0.2, 2 / 10, 1),
+        (0.1, 1.1 / 10, 2),
+    ],
+)
+def test_advance_plant_partitions_float_durations_without_tail_loss(
+    max_step_hours: float,
+    duration_hours: float,
+    expected_substeps: int,
+) -> None:
+    """Catches float-tail rejection, omission, or an oversized biology substep."""
+    before = _state()
+
+    result = advance_plant(
+        before,
+        _parameters(integrator_max_step_hours=max_step_hours),
+        _forcing(duration_hours=duration_hours),
+        cursor=_cursor(),
+    )
+
+    step_durations = [step.duration_hours for step in result.steps]
+    assert result.substeps == expected_substeps
+    assert math.fsum(step_durations) == duration_hours
+    assert all(0.0 < step <= max_step_hours for step in step_durations)
+    assert result.state.time_hours == before.time_hours + duration_hours
+    assert result.state == result.states[-1]
+    assert result.state.biomass_g != before.biomass_g
+    assert len(result.expected_events) == 19 * expected_substeps
+    assert len(result.expected_transactions) == 19 * expected_substeps
+    assert len(result.ledger) == 38 * expected_substeps
+    assert result.next_cursor.next_ordinal == 19 * expected_substeps
+
+
+@pytest.mark.parametrize(
+    ("duration_hours", "expected_fraction", "expected_energy"),
+    [
+        (0.25, 0.1 / (2.0 * 0.2 * 0.25 + 1e-12), 1e-12),
+        (0.125, 1.0, 0.05),
+    ],
+)
+def test_atp_limiting_compares_energy_to_interval_amount_demand(
+    duration_hours: float,
+    expected_fraction: float,
+    expected_energy: float,
+) -> None:
+    """Catches comparing an ATP-equivalent amount directly with an hourly rate."""
+    state = _state(allocatable_energy_atp_eq=0.1)
+    parameters = _parameters(
+        atp_cost_per_na_atp_eq_mmol_inv=2.0,
+        energy_epsilon_atp_eq=1e-12,
+    )
+    forcing = _forcing(duration_hours=duration_hours)
+
+    fluxes = plant_fluxes(state, parameters, forcing)
+    result = advance_plant(state, parameters, forcing, cursor=_cursor())
+    efflux = next(event for event in fluxes.events if event.event_id == "efflux-na")
+
+    assert fluxes.efflux_demand_mmol_h == pytest.approx(0.2)
+    assert fluxes.efflux_atp_fraction == pytest.approx(expected_fraction)
+    assert efflux.rate_per_hour == pytest.approx(expected_fraction * 0.2)
+    assert result.state.allocatable_energy_atp_eq == pytest.approx(
+        expected_energy, abs=2e-12
+    )
+
+
+def test_zero_efflux_demand_has_full_atp_fraction_and_charges_no_energy() -> None:
+    """Catches a zero-demand numerical floor being reported as ATP limitation."""
+    state = _state(allocatable_energy_atp_eq=0.0)
+    parameters = _parameters(na_efflux_vmax_mmol_h=0.0)
+
+    fluxes = plant_fluxes(state, parameters, _forcing())
+    result = advance_plant(state, parameters, _forcing(), cursor=_cursor())
+
+    assert fluxes.efflux_demand_mmol_h == 0.0
+    assert fluxes.efflux_atp_fraction == 1.0
+    assert not any(event.event_id == "efflux-na" for event in fluxes.events)
+    assert result.state.allocatable_energy_atp_eq == 0.0
+
+
 def test_cap_competition_literals_charge_energy_from_applied_not_requested_efflux() -> None:
     """Catches ATP cost based on uncapped efflux when Na outflows compete."""
     state = _state(allocatable_energy_atp_eq=100.0)
@@ -984,6 +1067,23 @@ def test_simulate_plant_runs_registered_step_halving_convergence_oracle() -> Non
     assert result.substeps == 2
     assert len(result.states) == 3
     assert result.evidence_label is EvidenceLabel.SYNTHETIC_ONLY
+
+
+def test_step_halving_metadata_rejects_any_unregistered_half_step_slack() -> None:
+    """Catches an undeclared absolute tolerance in exact step-plan metadata."""
+    with pytest.raises(AlmondLabError) as exc_info:
+        StepHalvingConvergence(
+            converged=True,
+            coarse_step_hours=0.1,
+            fine_step_hours=0.05 + 5e-16,
+            maximum_absolute_difference=0.0,
+            maximum_scaled_difference=0.0,
+            absolute_tolerance=0.1,
+            relative_tolerance=0.1,
+        )
+
+    assert exc_info.value.code == "BIOLOGY_STATE_VIOLATION"
+    assert exc_info.value.field_path == "fine_step_hours"
 
 
 def test_advance_and_simulation_refuse_derived_overflow_and_never_strengthen_labels() -> None:

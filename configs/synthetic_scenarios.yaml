@@ -68,7 +68,7 @@ biology_parameters: &biology_parameters
   specific_leaf_area_cm2_g: 20.0
   leaf_allocation_fraction: 0.40
   senescence_h_inv: 0.01
-  energy_epsilon_atp_eq_h: 1.0e-12
+  energy_epsilon_atp_eq: 1.0e-12
   integrator_max_step_hours: 0.25
   step_halving_absolute_tolerance: 0.10
   step_halving_relative_tolerance: 0.10

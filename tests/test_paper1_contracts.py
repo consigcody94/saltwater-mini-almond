@@ -445,6 +445,85 @@ def test_synthetic_scenarios_expose_full_typed_biology_state_and_forcing() -> No
         scenario.generator_parameters["plant_variance"] = 100.0  # type: ignore[index]
 
 
+def _write_scenario_yaml(tmp_path: Path, payload: object) -> Path:
+    path = tmp_path / "synthetic_scenarios.yaml"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("missing", "INCOMPLETE_SYNTHETIC_SCENARIO"),
+        ("extra", "UNREGISTERED_SYNTHETIC_PARAMETER"),
+        ("non_string", "SYNTHETIC_SCENARIO_INVALID"),
+    ],
+)
+def test_synthetic_scenario_document_rejects_nonexact_root_schema(
+    tmp_path: Path,
+    mutation: str,
+    expected_code: str,
+) -> None:
+    """Catches hidden, omitted, or non-string constants at the document root."""
+    payload = yaml.safe_load(
+        (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(payload, dict)
+    if mutation == "missing":
+        payload.pop("biology_parameters")
+    elif mutation == "extra":
+        payload["hidden_growth_constant"] = 1.25
+    else:
+        payload[7] = "hidden"
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
+
+    assert exc_info.value.code == expected_code
+    assert exc_info.value.field_path == "root"
+
+
+def test_synthetic_scenario_document_validates_detached_template_schema(
+    tmp_path: Path,
+) -> None:
+    """Catches an unregistered template constant hidden from valid expansions."""
+    payload = yaml.safe_load(
+        (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(payload, dict)
+    scenarios = payload["scenarios"]
+    assert isinstance(scenarios, list)
+    for scenario in scenarios:
+        scenario["parameters"] = deepcopy(scenario["parameters"])
+    payload["biology_parameters"]["hidden_growth_constant"] = 1.25
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
+
+    assert exc_info.value.code == "UNREGISTERED_SYNTHETIC_PARAMETER"
+    assert exc_info.value.field_path == "biology_parameters"
+
+
+def test_synthetic_scenario_document_requires_every_template_anchor_to_be_consumed(
+    tmp_path: Path,
+) -> None:
+    """Catches a registered root template that no scenario actually consumes."""
+    payload = yaml.safe_load(
+        (CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(payload, dict)
+    scenarios = payload["scenarios"]
+    assert isinstance(scenarios, list)
+    for scenario in scenarios:
+        scenario["forcing"] = deepcopy(scenario["forcing"])
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        load_synthetic_scenarios(_write_scenario_yaml(tmp_path, payload))
+
+    assert exc_info.value.code == "SYNTHETIC_SCENARIO_INVALID"
+    assert exc_info.value.field_path == "forcing"
+
+
 def _scenario_payload() -> dict[str, object]:
     raw = yaml.safe_load((CONFIGS / "synthetic_scenarios.yaml").read_text(encoding="utf-8"))
     assert isinstance(raw, dict)

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
-from math import exp, fsum, isclose, isfinite
+from math import ceil, exp, fsum, isclose, isfinite
 from numbers import Real
 from pathlib import Path
 from types import MappingProxyType
@@ -433,7 +433,7 @@ class BiologyParameters:
     specific_leaf_area_cm2_g: float
     leaf_allocation_fraction: float
     senescence_h_inv: float
-    energy_epsilon_atp_eq_h: float
+    energy_epsilon_atp_eq: float
     integrator_max_step_hours: float
     step_halving_absolute_tolerance: float
     step_halving_relative_tolerance: float
@@ -465,7 +465,7 @@ class BiologyParameters:
             "root_na_injury_multiplier",
             "ion_weight_sum_tolerance",
             "mannitol_km_dimensionless",
-            "energy_epsilon_atp_eq_h",
+            "energy_epsilon_atp_eq",
             "integrator_max_step_hours",
             "step_halving_absolute_tolerance",
             "step_halving_relative_tolerance",
@@ -1462,21 +1462,30 @@ def plant_fluxes(
         ),
         "efflux_na_demand_mmol_h",
     )
-    atp_demand = _product(
+    atp_demand_rate = _product(
         params.atp_cost_per_na_atp_eq_mmol_inv,
         efflux_demand,
         field_path="efflux_atp_demand_atp_eq_h",
     )
-    atp_fraction = min(
-        1.0,
-        _ratio(
-            current.allocatable_energy_atp_eq,
-            _sum(
-                (atp_demand, params.energy_epsilon_atp_eq_h),
-                "efflux_atp_fraction.denominator",
+    atp_demand_amount = _product(
+        atp_demand_rate,
+        external.duration_hours,
+        field_path="efflux_atp_demand_atp_eq",
+    )
+    atp_fraction = (
+        1.0
+        if efflux_demand == 0.0
+        else min(
+            1.0,
+            _ratio(
+                current.allocatable_energy_atp_eq,
+                _sum(
+                    (atp_demand_amount, params.energy_epsilon_atp_eq),
+                    "efflux_atp_fraction.denominator",
+                ),
+                "efflux_atp_fraction",
             ),
-            "efflux_atp_fraction",
-        ),
+        )
     )
     efflux = _product(
         atp_fraction,
@@ -1652,12 +1661,7 @@ class StepHalvingConvergence:
             object.__setattr__(self, name, _number(getattr(self, name), name, positive=True))
         for name in ("maximum_absolute_difference", "maximum_scaled_difference"):
             object.__setattr__(self, name, _number(getattr(self, name), name, nonnegative=True))
-        if not isclose(
-            self.fine_step_hours,
-            0.5 * self.coarse_step_hours,
-            rel_tol=0.0,
-            abs_tol=1e-15,
-        ):
+        if self.fine_step_hours != 0.5 * self.coarse_step_hours:
             fail(_STATE_CODE, "fine step must equal half the coarse step", "fine_step_hours")
 
 
@@ -2057,6 +2061,50 @@ def _dead_diagnostic(
     )
 
 
+def _substep_partition(
+    duration_hours: float,
+    maximum_step_hours: float,
+) -> tuple[float, ...]:
+    """Plan a deterministic integer partition with no float-tail threshold."""
+
+    count = ceil(
+        _ratio(
+            duration_hours,
+            maximum_step_hours,
+            "forcing.duration_hours.substep_ratio",
+        )
+    )
+    if count > 1_000_000:
+        fail(_NUMERIC_CODE, "biology substep limit exceeded", "forcing.duration_hours")
+    while True:
+        even_step = _ratio(
+            duration_hours,
+            float(count),
+            "forcing.duration_hours.partition_step",
+        )
+        prefix = (even_step,) * (count - 1)
+        tail = _sum(
+            (duration_hours, -fsum(prefix)),
+            "forcing.duration_hours.partition_tail",
+        )
+        if tail <= 0.0:
+            fail(
+                _NUMERIC_CODE,
+                "biology duration cannot be represented as positive substeps",
+                "forcing.duration_hours",
+            )
+        partition = (*prefix, tail)
+        if all(step <= maximum_step_hours for step in partition):
+            return partition
+        count += 1
+        if count > 1_000_000:
+            fail(
+                _NUMERIC_CODE,
+                "biology substep limit exceeded",
+                "forcing.duration_hours",
+            )
+
+
 def advance_plant(
     state: PlantState,
     parameters: BiologyParameters,
@@ -2079,19 +2127,12 @@ def advance_plant(
     expected_transactions: list[LedgerTransactionExpectation] = []
     audits: list[BalanceAudit] = []
     next_cursor = cursor
-    elapsed = 0.0
-    substeps = 0
-    while elapsed < external.duration_hours:
-        remaining = _sum(
-            (external.duration_hours, -elapsed), "forcing.duration_hours.remaining"
-        )
-        duration = min(params.integrator_max_step_hours, remaining)
-        if duration <= max(1e-15, 1e-14 * external.duration_hours):
-            fail(
-                _NUMERIC_CODE,
-                "biology substep could not make finite progress",
-                "forcing.duration_hours",
-            )
+    interval_start_time = current.time_hours
+    durations = _substep_partition(
+        external.duration_hours, params.integrator_max_step_hours
+    )
+    substeps = len(durations)
+    for index, duration in enumerate(durations):
         subforcing = replace(external, duration_hours=duration)
         raw_fluxes = plant_fluxes(current, params, subforcing)
         namespaced = _namespace_events(raw_fluxes.events, next_cursor)
@@ -2157,6 +2198,27 @@ def advance_plant(
                 evidence_label=label,
             )
             diagnostic = _dead_diagnostic(current, duration, fluxes, label)
+        target_elapsed = (
+            external.duration_hours
+            if index == substeps - 1
+            else _product(
+                float(index + 1),
+                durations[0],
+                field_path="forcing.duration_hours.partition_elapsed",
+            )
+        )
+        target_time = _sum(
+            (interval_start_time, target_elapsed),
+            "time_hours",
+        )
+        died_this_step = current.alive and not updated.alive
+        updated = replace(
+            updated,
+            time_hours=target_time,
+            death_time_hours=(
+                target_time if died_this_step else updated.death_time_hours
+            ),
+        )
         ledger.extend(core.ledger)
         outcomes.extend(core.internal_flux_outcomes)
         expected_events.extend(namespaced)
@@ -2166,10 +2228,6 @@ def advance_plant(
         next_cursor = core.next_cursor
         current = updated
         states.append(current)
-        elapsed = _sum((elapsed, duration), "forcing.duration_hours.elapsed")
-        substeps += 1
-        if substeps > 1_000_000:
-            fail(_NUMERIC_CODE, "biology substep limit exceeded", "forcing.duration_hours")
     label = compose_evidence_labels(
         current.evidence_label,
         *(step.evidence_label for step in diagnostics),

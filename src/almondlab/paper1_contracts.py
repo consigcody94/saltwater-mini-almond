@@ -376,6 +376,15 @@ class Paper1DesignConfig(StrictPaper1Model):
 REQUIRED_SYNTHETIC_SCENARIO_SECTIONS = frozenset(
     {"parameters", "initial_state", "forcing", "generator_parameters"}
 )
+REQUIRED_SYNTHETIC_SCENARIO_ROOT_KEYS = frozenset(
+    {
+        "biology_parameters",
+        "initial_state",
+        "forcing",
+        "generator_parameters",
+        "scenarios",
+    }
+)
 REQUIRED_BIOLOGY_PARAMETER_KEYS = frozenset(
     field.name for field in fields(BiologyParameters)
 )
@@ -817,8 +826,60 @@ def load_paper1_design(path: str | Path) -> Paper1DesignConfig:
 
 def load_synthetic_scenarios(path: str | Path) -> tuple[SyntheticScenarioConfig, ...]:
     """Load labeled synthetic scenarios, failing closed on any hidden constant."""
-    payload = _load_yaml_mapping(path)
-    scenarios = payload.get("scenarios")
-    if not isinstance(scenarios, list):
-        raise ValueError("synthetic scenario configuration requires a scenarios list")
-    return tuple(SyntheticScenarioConfig.model_validate(scenario) for scenario in scenarios)
+    payload = _exact_scenario_keys(
+        _load_yaml_mapping(path),
+        REQUIRED_SYNTHETIC_SCENARIO_ROOT_KEYS,
+        "root",
+    )
+    _exact_scenario_keys(
+        payload["biology_parameters"],
+        REQUIRED_BIOLOGY_PARAMETER_KEYS,
+        "biology_parameters",
+    )
+    _biology_parameters(payload["biology_parameters"])
+    _exact_scenario_keys(
+        payload["initial_state"],
+        REQUIRED_INITIAL_STATE_KEYS,
+        "initial_state",
+    )
+    _initial_state(payload["initial_state"])
+    _exact_scenario_keys(
+        payload["forcing"],
+        REQUIRED_FORCING_KEYS,
+        "forcing",
+    )
+    _forcing(payload["forcing"])
+    _exact_scenario_keys(
+        payload["generator_parameters"],
+        REQUIRED_GENERATOR_PARAMETER_KEYS,
+        "generator_parameters",
+    )
+    _generator_parameters(payload["generator_parameters"])
+
+    scenarios = payload["scenarios"]
+    if not isinstance(scenarios, list) or not scenarios:
+        _scenario_invalid(
+            "synthetic scenario configuration requires a nonempty scenarios list",
+            "scenarios",
+        )
+    for index, scenario in enumerate(scenarios):
+        if not isinstance(scenario, Mapping):
+            _scenario_invalid("synthetic scenario must be a mapping", f"scenarios.{index}")
+    template_sections = {
+        "biology_parameters": "parameters",
+        "initial_state": "initial_state",
+        "forcing": "forcing",
+        "generator_parameters": "generator_parameters",
+    }
+    for template_name, section_name in template_sections.items():
+        if not any(
+            scenario.get(section_name) is payload[template_name]
+            for scenario in scenarios
+        ):
+            _scenario_invalid(
+                "registered root template must be consumed by a scenario alias",
+                template_name,
+            )
+    return tuple(
+        SyntheticScenarioConfig.model_validate(scenario) for scenario in scenarios
+    )

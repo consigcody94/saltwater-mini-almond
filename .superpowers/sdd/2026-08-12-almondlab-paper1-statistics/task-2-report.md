@@ -121,3 +121,80 @@ Static and resource checks:
 A fresh independent scientific/code review will target the path-explicit owned
 commit immediately after it is created. Its result and any resulting fix
 evidence will be recorded as a follow-up rather than asserted in advance.
+
+## Review repair for `18724f4`
+
+The first independent review found three blocking correctness issues. The
+repair was implemented test-first without changing any core, verifier,
+registry, provenance, or candidate-identity implementation:
+
+- Biology intervals used repeated floating subtraction plus undeclared
+  `1e-15`/`1e-14` tail thresholds. An ordinary 1.0 h interval with a 0.1 h
+  maximum step was rejected after advancing almost the entire interval. The
+  repair uses an integer `ceil(duration / maximum_step)` plan and a
+  deterministic positive partition whose exact `fsum` is the requested
+  duration; every substep is at or below the registered maximum. Final time,
+  state history, ledger entries, transaction authority, and cursor progression
+  are asserted for 0.1/1.0, 0.2/(2/10), and 0.1/(1.1/10) plans. The remaining
+  undeclared `1e-15` metadata tolerance was separately put through RED/GREEN
+  and removed.
+- **Specification dimensional erratum:** Section 8.2.1 wrote an ATP-equivalent
+  amount `E_available` over a denominator formed from an ATP-equivalent demand
+  rate. For an integration substep of `dt` hours, the dimensionally consistent
+  limiter is
+  `f_ATP = min(1, E_available / (atp_cost_per_na * J_efflux_demand * dt + energy_epsilon_atp_eq))`.
+  The epsilon is now explicitly an ATP-equivalent amount, renamed from
+  `energy_epsilon_atp_eq_h` to `energy_epsilon_atp_eq` throughout the dataclass,
+  scenario fixture, contracts, and tests. Zero demand returns `f_ATP = 1`.
+  Flux calculation consumes the actual substep duration, while energy is still
+  charged once from the core-applied, source-capped efflux amount. Hand oracles
+  cover `E=0.1`, `J=0.2`, cost 2 at 0.25 h and 0.125 h, together with the
+  existing source-competition oracle.
+- The YAML scenario document exposed four anchor templates plus `scenarios`,
+  while the loader inspected only `scenarios`. The loader now requires exactly
+  the five registered string root keys (`biology_parameters`, `initial_state`,
+  `forcing`, `generator_parameters`, `scenarios`), validates every template
+  against its exact typed schema, validates every scenario expansion, requires
+  a nonempty list, and requires every template anchor to be consumed by at
+  least one scenario. Missing, extra, non-string, detached, or drifting root
+  inputs fail closed with structured errors.
+
+### Repair RED/GREEN evidence
+
+The initial exact regression selection failed **11/11** for the expected
+reasons: the renamed amount field was absent and root mutations/templates were
+ignored. A direct pre-repair reproduction also raised
+`BIOLOGY_NUMERIC_INVALID` for 1.0 h at a 0.1 h maximum step. After the minimal
+implementation, the same 11 cases passed. A separate regression for the final
+undeclared `1e-15` half-step slack failed before its removal and passed after.
+
+Fresh focused verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_paper1_contracts.py -q
+```
+
+Result: exit 0; **114 passed in 1.98s**.
+
+Fresh expanded biology/core verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\test_biology_surrogate.py tests\test_hydraulics.py tests\test_mass_balance.py tests\test_paper1_contracts.py tests\test_contracts.py tests\test_core_acceptance.py tests\test_verification_resources.py -q
+```
+
+Result: exit 0; **488 passed in 101.74s**.
+
+The concurrently owned provenance repair agent also ran the complete repository
+suite against the combined working tree after these changes: exit 0;
+**912 passed, 2 POSIX-only tests skipped, 1 pytest cache warning in 115.90s**.
+That full-run evidence is attributed to that agent rather than represented as
+this task's own command.
+
+Static/resource checks passed: `compileall` over the two owned implementation
+modules and focused tests; scoped `git diff --check`; absence of hidden
+`1e-15`/`1e-14` values in owned code/config/tests; and byte-identical,
+LF-only candidate fixture mirrors (574 bytes). No efficacy, survival, yield,
+food-safety, calibration, or preferred-candidate claim is made.
+
+A fresh independent review will target the exact repair commit after it is
+created.
