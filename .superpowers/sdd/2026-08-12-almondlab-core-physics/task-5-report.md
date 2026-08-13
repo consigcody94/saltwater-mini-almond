@@ -99,3 +99,60 @@ $env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
 Result: `147 passed`.
 
 The final placeholder-pattern scan returned no matches in `src`, `tests`, or `configs`; `git diff --check` was clean.
+
+## Fix round 3
+
+Addressed the whole-core verification review test-first. RED cases demonstrated that
+an acceptance caller could claim `passed`, structurally rewritten ledgers could
+self-authorize, Python equality accepted a boolean as a number, runtime resources
+were absent from an installed wheel, policy safety values could be weakened, and
+the property manifest lacked strict provenance/domain validation. Additional RED
+cases covered missing/deleted/duplicated/halved/split/redistributed ledger rows,
+RO recovery endpoints, exactly exhausting flows, hidden Test 5 arithmetic, and
+flat rather than per-quantity property extrema.
+
+The verification record now derives its pass state solely through one strict
+recursive comparison evaluator. Tests 1, 2, and 20 compare complete global and
+compartment audits plus fixture-literal transaction IDs, row counts, and exact
+per-transaction transfers, and write hashed atomic ledger artifacts. Tests 3 and
+4 write hashed full trajectories; Test 3 advances repeatedly from time zero to
+the configured labeled physical stop. Test 5 exposes fixture-driven blend, SAR,
+charge-balance, EC rejection, and provenance inputs/intermediates/oracles. Test 20
+runs deterministic anchors and every strictly validated frozen Hypothesis case,
+recording per-quantity extrema and a null minimized counterexample on pass.
+
+Runtime fixtures and both strict, hashed policies are packaged below
+`almondlab.resources` and loaded with `importlib.resources`. Schema 1.0 locks all
+numerical stops, validates the exact core registry/tolerances, and rejects unsafe
+manifest inputs. Code provenance records package version, Git SHA, dirty state,
+or explicit unavailable fields.
+
+Focused command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'; & 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest -p no:cacheprovider tests/test_hydraulics.py tests/test_core_acceptance.py tests/test_verification_manifest.py -q --basetemp 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-task5-r3-focused-final3'
+```
+
+Result: `47 passed`.
+
+Required core command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'; & 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest -p no:cacheprovider tests/test_contracts.py tests/test_schemas.py tests/test_chemistry.py tests/test_treatment.py tests/test_domains.py tests/test_mass_balance.py tests/test_hydraulics.py tests/test_core_acceptance.py -q --basetemp 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-task5-r3-core-final3'
+```
+
+Result: `141 passed`.
+
+Full-suite command:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'; & 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run pytest -p no:cacheprovider -q --basetemp 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-task5-r3-full-final3'
+```
+
+Result: `176 passed`.
+
+An isolated wheel was built and installed beneath the task work directory. From
+outside the checkout, the installed package enumerated all eight fixture members,
+loaded the two packaged policies, and ran tests `1, 2, 3, 4, 5, 13, 19, 20` with
+all eight derived pass states true. Installed-wheel provenance explicitly reported
+Git SHA and dirty state unavailable. `git diff --check` was clean.

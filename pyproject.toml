@@ -22,6 +22,12 @@ almondlab = "almondlab.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/almondlab"]
 
+[tool.hatch.build]
+include = [
+  "src/almondlab/**/*.py",
+  "src/almondlab/resources/**/*.yaml",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"

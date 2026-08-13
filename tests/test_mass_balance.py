@@ -7,7 +7,7 @@ import yaml
 from hypothesis import given, strategies as st
 
 from almondlab.errors import AlmondLabError
-from almondlab.contracts import EvidenceLabel
+from almondlab.contracts import ConservedEntity, EvidenceLabel
 from almondlab.mass_balance import (
     ExternalFlux,
     Flow,
@@ -111,7 +111,7 @@ def test_every_registered_entity_is_advected_at_source_concentration() -> None:
     for compartment, expected in case["expected_stocks_mmol"].items():
         assert dict(result.state.stocks_mmol[compartment]) == pytest.approx(expected)
     audit = audit_ledger(state, result.state, result.ledger)
-    assert audit.quantities == frozenset({"water", "na", "cl", "b"})
+    assert audit.quantities == frozenset(entity.value for entity in ConservedEntity)
     assert all(audit.relative_residual(item) <= 1e-10 for item in audit.quantities)
 
 

@@ -1,0 +1,60 @@
+schema_version: "1.0"
+generator:
+  name: hypothesis
+  version: "6.165.5"
+  properties:
+    blend: {seed: 20260814, max_examples: 2, database: null, deadline: null}
+    flow: {seed: 20260812, max_examples: 2, database: null, deadline: null}
+    ro: {seed: 20260813, max_examples: 2, database: null, deadline: null}
+cases:
+  flow:
+    - id: flow_seed_20260812_01
+      source_volume_l: 12.0
+      target_volume_l: 3.0
+      source_stocks_mmol: {na: 24.0, cl: 36.0}
+      target_stocks_mmol: {na: 3.0, cl: 6.0}
+      rate_l_per_hour: 2.0
+      duration_hours: 1.0
+      expected:
+        volumes_l: {source: 10.0, target: 5.0}
+        stocks_mmol:
+          source: {na: 20.0, cl: 30.0}
+          target: {na: 7.0, cl: 12.0}
+    - id: flow_seed_20260812_02
+      source_volume_l: 25.0
+      target_volume_l: 5.0
+      source_stocks_mmol: {na: 12.5, cl: 5.0}
+      target_stocks_mmol: {na: 2.5, cl: 1.0}
+      rate_l_per_hour: 1.5
+      duration_hours: 2.0
+      expected:
+        volumes_l: {source: 22.0, target: 8.0}
+        stocks_mmol:
+          source: {na: 11.0, cl: 4.4}
+          target: {na: 4.0, cl: 1.6}
+  ro:
+    - id: ro_seed_20260813_01
+      feed_volume_l: 12.0
+      feed_stocks_mmol: {na: 24.0, cl: 36.0}
+      recovery: 0.25
+      rejection: {na: 0.90, cl: 0.80}
+      expected:
+        volumes_l: {feed: 12.0, permeate: 3.0, concentrate: 9.0}
+        permeate_stocks_mmol: {na: 0.6, cl: 1.8}
+        concentrate_stocks_mmol: {na: 23.4, cl: 34.2}
+    - id: ro_seed_20260813_02
+      feed_volume_l: 40.0
+      feed_stocks_mmol: {na: 10.0, cl: 20.0}
+      recovery: 0.75
+      rejection: {na: 0.25, cl: 1.0}
+      expected:
+        volumes_l: {feed: 40.0, permeate: 30.0, concentrate: 10.0}
+        permeate_stocks_mmol: {na: 5.625, cl: 0.0}
+        concentrate_stocks_mmol: {na: 4.375, cl: 20.0}
+  blend:
+    - id: blend_seed_20260814_01
+      volumes_l: [1.0, 3.0]
+      expected: {alkalinity_mmol_c_l: 5.0, na_mmol_l: 25.0, cl_mmol_l: 30.0, ca_mmol_l: 5.0, mg_mmol_l: 2.5, k_mmol_l: 2.5, total_b_mmol_l: 0.25, sulfate_mmol_l: 2.5, bicarbonate_mmol_l: 5.0, nitrate_mmol_l: 2.5, phosphate_mmol_l: 0.5}
+    - id: blend_seed_20260814_02
+      volumes_l: [4.0, 1.0]
+      expected: {alkalinity_mmol_c_l: 2.8, na_mmol_l: 14.0, cl_mmol_l: 16.8, ca_mmol_l: 2.8, mg_mmol_l: 1.4, k_mmol_l: 1.4, total_b_mmol_l: 0.14, sulfate_mmol_l: 1.4, bicarbonate_mmol_l: 2.8, nitrate_mmol_l: 1.4, phosphate_mmol_l: 0.28}
