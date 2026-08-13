@@ -47,6 +47,116 @@ class H3Rule(StrictPaper1Model):
     min_probability: float = Field(default=0.90, ge=0.0, le=1.0)
 
 
+FROZEN_CANDIDATE_IDENTITIES: dict[str, dict[str, object]] = {
+    "C1": {
+        "construct_name": "PyKPA1",
+        "donor_species": "Pyropia yezoensis (Neopyropia yezoensis)",
+        "sequence_accessions": ("AJ972674",),
+        "sequence_status": "verified",
+        "evidence_tier": "E2",
+        "primary_parameter_id": "na_efflux_vmax_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+        "h3": (
+            "root_surface_outward_na_flux_per_root_dry_mass",
+            "umol Na g_root_dry_mass^-1 h^-1",
+            "log_ratio",
+            "ge",
+            log(1.20),
+            0.90,
+        ),
+    },
+    "C2": {
+        "construct_name": "PyAPX",
+        "donor_species": "Pyropia yezoensis",
+        "sequence_accessions": (),
+        "sequence_status": "pending_audit",
+        "evidence_tier": "E2",
+        "primary_parameter_id": "ros_clearance_multiplier",
+        "gates": {"sequence_build": "blocked", "directional_assay": "required"},
+        "h3": (
+            "root_h2o2_concentration_time_auc",
+            "umol H2O2 g_root_fresh_mass^-1 h",
+            "log_ratio",
+            "le",
+            log(0.80),
+            0.90,
+        ),
+    },
+    "C3": {
+        "construct_name": "EsM1PDH1+EsM1Pase2",
+        "donor_species": "Ectocarpus sp. Ec32",
+        "sequence_accessions": ("Esi0017_0062", "Esi0100_0020"),
+        "sequence_status": "verified",
+        "evidence_tier": "E2",
+        "primary_parameter_id": "mannitol_vmax_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+        "h3": (
+            "root_mannitol_concentration_above_empty_vector",
+            "nmol g_root_fresh_mass^-1",
+            "difference",
+            "ge",
+            10.0,
+            0.90,
+        ),
+    },
+    "C4": {
+        "construct_name": "SbSOS1",
+        "donor_species": "Salicornia brachiata Roxb.",
+        "sequence_accessions": ("EU879059",),
+        "sequence_status": "verified",
+        "evidence_tier": "E2",
+        "primary_parameter_id": "na_efflux_vmax_multiplier",
+        "gates": {
+            "sequence_build": "required",
+            "cortex_localization": "required",
+            "directional_assay": "required",
+        },
+        "h3": (
+            "root_surface_outward_na_flux_per_root_dry_mass",
+            "umol Na g_root_dry_mass^-1 h^-1",
+            "log_ratio",
+            "ge",
+            log(1.20),
+            0.90,
+        ),
+    },
+    "C5": {
+        "construct_name": "PpHKT1",
+        "donor_species": "Prunus persica 'Nemaguard'",
+        "sequence_accessions": ("Prupe.1G067100",),
+        "sequence_status": "verified",
+        "evidence_tier": "E1",
+        "primary_parameter_id": "xylem_na_retrieval_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+        "h3": (
+            "xylem_sap_na_concentration_time_auc",
+            "mmol Na L^-1 h",
+            "log_ratio",
+            "le",
+            log(0.80),
+            0.90,
+        ),
+    },
+    "C6": {
+        "construct_name": "PpSOS2_PpCIPK24",
+        "donor_species": "Prunus persica 'Nemaguard'",
+        "sequence_accessions": ("Prupe.7G244500.1", "XP_020424233.1"),
+        "sequence_status": "verified",
+        "evidence_tier": "E1",
+        "primary_parameter_id": "sos_efflux_activation_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+        "h3": (
+            "root_surface_outward_na_flux_per_root_dry_mass",
+            "umol Na g_root_dry_mass^-1 h^-1",
+            "log_ratio",
+            "ge",
+            log(1.20),
+            0.90,
+        ),
+    },
+}
+
+
 class CandidateSpec(StrictPaper1Model):
     candidate_id: str = Field(pattern=r"^C[1-6]$")
     construct_name: str = Field(min_length=1)
@@ -59,6 +169,40 @@ class CandidateSpec(StrictPaper1Model):
     h3_rule: H3Rule
     gates: dict[str, Literal["required", "blocked"]]
     risk_warning: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_frozen_v13_identity(self) -> "CandidateSpec":
+        expected = FROZEN_CANDIDATE_IDENTITIES[self.candidate_id]
+        actual = {
+            "construct_name": self.construct_name,
+            "donor_species": self.donor_species,
+            "sequence_accessions": self.sequence_accessions,
+            "sequence_status": self.sequence_status,
+            "evidence_tier": self.evidence_tier,
+            "primary_parameter_id": self.primary_parameter_id,
+            "gates": self.gates,
+        }
+        mismatches = [name for name, value in actual.items() if value != expected[name]]
+        expected_h3 = expected["h3"]
+        actual_h3 = (
+            self.h3_rule.endpoint,
+            self.h3_rule.unit,
+            self.h3_rule.scale,
+            self.h3_rule.direction,
+            self.h3_rule.margin,
+            self.h3_rule.min_probability,
+        )
+        if actual_h3[:4] != expected_h3[:4] or any(
+            not isclose(actual_value, expected_value, rel_tol=0.0, abs_tol=1e-12)
+            for actual_value, expected_value in zip(actual_h3[4:], expected_h3[4:])
+        ):
+            mismatches.append("h3_rule")
+        if mismatches:
+            raise ValueError(
+                f"candidate {self.candidate_id} does not match frozen v1.3 fields: "
+                f"{sorted(mismatches)}"
+            )
+        return self
 
     @property
     def h3(self) -> H3Rule:
@@ -150,9 +294,58 @@ class Paper1DesignConfig(StrictPaper1Model):
     water_treatment_unit: Literal["reservoir"]
 
     @model_validator(mode="after")
-    def require_composite_root_design(self) -> "Paper1DesignConfig":
-        if self.population is not AnalysisPopulation.COMPOSITE_ROOT:
-            raise ValueError("Paper 1 primary design population must be composite_root")
+    def require_frozen_primary_design_identity(self) -> "Paper1DesignConfig":
+        expected = {
+            "schema_version": "1.3",
+            "evidence_label": EvidenceLabel.SYNTHETIC_ONLY,
+            "population": AnalysisPopulation.COMPOSITE_ROOT,
+            "full_allocation_groups": (
+                "C1",
+                "C2",
+                "C3",
+                "C4",
+                "C5",
+                "C6",
+                "empty_vector",
+                "sham_transformation",
+                "unmodified_parent",
+            ),
+            "water_ids": (
+                "nonsaline_nutrient_matched_control",
+                "pilot_selected_full_ion_marine_challenge",
+            ),
+            "water_evidence_labels": (
+                EvidenceLabel.HYPOTHESIS_PRIOR,
+                EvidenceLabel.HYPOTHESIS_PRIOR,
+            ),
+            "runs": ("discovery_run_1", "discovery_run_2"),
+            "reservoirs_per_water_run": 4,
+            "independent_plants_per_group_reservoir": 5,
+            "balanced_transformation_batches": ("batch_a", "batch_b"),
+            "construct_level_unit": "independently_transformed_plant",
+            "water_treatment_unit": "reservoir",
+        }
+        actual = {
+            "schema_version": self.schema_version,
+            "evidence_label": self.evidence_label,
+            "population": self.population,
+            "full_allocation_groups": self.full_allocation_groups,
+            "water_ids": tuple(water.water_id for water in self.water_conditions),
+            "water_evidence_labels": tuple(
+                water.evidence_label for water in self.water_conditions
+            ),
+            "runs": self.runs,
+            "reservoirs_per_water_run": self.reservoirs_per_water_run,
+            "independent_plants_per_group_reservoir": (
+                self.independent_plants_per_group_reservoir
+            ),
+            "balanced_transformation_batches": self.balanced_transformation_batches,
+            "construct_level_unit": self.construct_level_unit,
+            "water_treatment_unit": self.water_treatment_unit,
+        }
+        mismatches = [name for name, value in actual.items() if value != expected[name]]
+        if mismatches:
+            raise ValueError(f"Paper 1 design identity is frozen: {sorted(mismatches)}")
         return self
 
 
@@ -210,13 +403,22 @@ class SyntheticScenarioConfig(StrictPaper1Model):
     @classmethod
     def reject_incomplete_scenario(cls, values: object) -> object:
         parameters = values.get("parameters", {}) if isinstance(values, dict) else {}
-        missing = sorted(REQUIRED_SYNTHETIC_SCENARIO_KEYS - set(parameters))
+        parameter_names = set(parameters) if isinstance(parameters, dict) else set()
+        missing = sorted(REQUIRED_SYNTHETIC_SCENARIO_KEYS - parameter_names)
         if missing:
             fail(
                 "INCOMPLETE_SYNTHETIC_SCENARIO",
                 "synthetic scenario omits registered generator inputs",
                 "parameters",
                 {"missing": missing},
+            )
+        extra = sorted(parameter_names - REQUIRED_SYNTHETIC_SCENARIO_KEYS)
+        if extra:
+            fail(
+                "UNREGISTERED_SYNTHETIC_PARAMETER",
+                "synthetic scenario contains unregistered generator inputs",
+                "parameters",
+                {"extra": extra},
             )
         return values
 

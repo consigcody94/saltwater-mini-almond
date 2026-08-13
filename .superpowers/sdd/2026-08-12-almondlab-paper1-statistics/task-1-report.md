@@ -74,3 +74,52 @@ Result: exit 0; 94 passed in 1.79s. `git diff --check` again returned exit 0.
 - No candidate directly targets survival, canopy AUC, kernel yield, or generic
   salt tolerance; serialized contract/config keys exclude `winner` and
   `best_candidate`.
+
+## Fix round 1/5 — addressed pending re-review
+
+Three review findings were addressed without changing core physics or public
+data paths. All values remain virtual-design contracts labeled
+`hypothesis_prior` or `synthetic_only`; this fix does not add biological
+validation.
+
+### RED evidence
+
+1. An independent literal v1.3 candidate oracle failed with 1 failure and 11
+   passes because C1, C2, C4, C5, and C6 used nonregistered mechanism IDs.
+   After correcting only those IDs, the focused suite reported 12 passes.
+2. Candidate-level mutation cases then failed as intended: 9 failures and 12
+   passes showed that fabricated C2 accessions, inconsistent C2 audit/build
+   state, and mutated C1–C6 identity/H3/gates were still accepted.
+3. The extra-key test failed because `unregistered_growth_magic` was accepted
+   in a complete synthetic scenario.
+4. Six design-mutation cases failed with 23 passes because renamed/reordered
+   design identities and changed allocation counts were accepted.
+
+The H3 scale, direction, and probability-bound cases passed immediately as
+characterization coverage of validation that was already present; no
+production change was attributed to those tests.
+
+### GREEN and regression evidence
+
+Candidate validation now freezes the independent v1.3 module, donor,
+accessions, audit status, evidence tier, registered mechanism parameter, H3
+rule, and exact safety gates for each C1–C6 identity. C1 and C4 intentionally
+share `na_efflux_vmax_multiplier` while retaining distinct donor, module,
+evidence, and C4 cortex-localization identity. Synthetic scenarios reject both
+missing and extra parameter names; extras raise structured
+`UNREGISTERED_SYNTHETIC_PARAMETER`. Design validation freezes allocation
+identity without embedding the configurable synthetic water chemistry values
+in code.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/test_paper1_contracts.py -q
+```
+
+Result: exit 0; 33 passed in 0.75s.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider -v
+```
+
+Result: exit 0; 129 passed in 1.97s. `git diff --check` returned exit 0 during
+the focused verification pass.

@@ -1,13 +1,17 @@
 import math
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from almondlab.errors import AlmondLabError
 from almondlab.paper1_contracts import (
     AnalysisPopulation,
+    CandidateSpec,
     CandidateState,
     H3Rule,
+    Paper1DesignConfig,
     ScientificLabel,
     SyntheticScenarioConfig,
     load_candidate_specs,
@@ -17,6 +21,245 @@ from almondlab.paper1_contracts import (
 
 
 CONFIGS = Path(__file__).parents[1] / "configs"
+
+EXPECTED_CANDIDATE_IDENTITIES = {
+    "C1": {
+        "construct_name": "PyKPA1",
+        "donor_species": "Pyropia yezoensis (Neopyropia yezoensis)",
+        "sequence_accessions": ("AJ972674",),
+        "sequence_status": "verified",
+        "evidence_tier": "E2",
+        "evidence_label": "hypothesis_prior",
+        "primary_parameter_id": "na_efflux_vmax_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+    },
+    "C2": {
+        "construct_name": "PyAPX",
+        "donor_species": "Pyropia yezoensis",
+        "sequence_accessions": (),
+        "sequence_status": "pending_audit",
+        "evidence_tier": "E2",
+        "evidence_label": "hypothesis_prior",
+        "primary_parameter_id": "ros_clearance_multiplier",
+        "gates": {"sequence_build": "blocked", "directional_assay": "required"},
+    },
+    "C3": {
+        "construct_name": "EsM1PDH1+EsM1Pase2",
+        "donor_species": "Ectocarpus sp. Ec32",
+        "sequence_accessions": ("Esi0017_0062", "Esi0100_0020"),
+        "sequence_status": "verified",
+        "evidence_tier": "E2",
+        "evidence_label": "hypothesis_prior",
+        "primary_parameter_id": "mannitol_vmax_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+    },
+    "C4": {
+        "construct_name": "SbSOS1",
+        "donor_species": "Salicornia brachiata Roxb.",
+        "sequence_accessions": ("EU879059",),
+        "sequence_status": "verified",
+        "evidence_tier": "E2",
+        "evidence_label": "hypothesis_prior",
+        "primary_parameter_id": "na_efflux_vmax_multiplier",
+        "gates": {
+            "sequence_build": "required",
+            "cortex_localization": "required",
+            "directional_assay": "required",
+        },
+    },
+    "C5": {
+        "construct_name": "PpHKT1",
+        "donor_species": "Prunus persica 'Nemaguard'",
+        "sequence_accessions": ("Prupe.1G067100",),
+        "sequence_status": "verified",
+        "evidence_tier": "E1",
+        "evidence_label": "hypothesis_prior",
+        "primary_parameter_id": "xylem_na_retrieval_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+    },
+    "C6": {
+        "construct_name": "PpSOS2_PpCIPK24",
+        "donor_species": "Prunus persica 'Nemaguard'",
+        "sequence_accessions": ("Prupe.7G244500.1", "XP_020424233.1"),
+        "sequence_status": "verified",
+        "evidence_tier": "E1",
+        "evidence_label": "hypothesis_prior",
+        "primary_parameter_id": "sos_efflux_activation_multiplier",
+        "gates": {"sequence_build": "required", "directional_assay": "required"},
+    },
+}
+
+EXPECTED_H3_RULES = {
+    "C1": (
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "umol Na g_root_dry_mass^-1 h^-1",
+        "log_ratio",
+        "ge",
+        math.log(1.20),
+    ),
+    "C2": (
+        "root_h2o2_concentration_time_auc",
+        "umol H2O2 g_root_fresh_mass^-1 h",
+        "log_ratio",
+        "le",
+        math.log(0.80),
+    ),
+    "C3": (
+        "root_mannitol_concentration_above_empty_vector",
+        "nmol g_root_fresh_mass^-1",
+        "difference",
+        "ge",
+        10.0,
+    ),
+    "C4": (
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "umol Na g_root_dry_mass^-1 h^-1",
+        "log_ratio",
+        "ge",
+        math.log(1.20),
+    ),
+    "C5": (
+        "xylem_sap_na_concentration_time_auc",
+        "mmol Na L^-1 h",
+        "log_ratio",
+        "le",
+        math.log(0.80),
+    ),
+    "C6": (
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "umol Na g_root_dry_mass^-1 h^-1",
+        "log_ratio",
+        "ge",
+        math.log(1.20),
+    ),
+}
+
+
+def test_candidate_registry_matches_independent_v13_identity_oracle() -> None:
+    """Catches a candidate whose donor, sequence, mechanism, or safety gate drifts."""
+    registry = load_candidate_specs(CONFIGS / "candidates.yaml")
+
+    actual = {
+        candidate.candidate_id: {
+            "construct_name": candidate.construct_name,
+            "donor_species": candidate.donor_species,
+            "sequence_accessions": candidate.sequence_accessions,
+            "sequence_status": candidate.sequence_status,
+            "evidence_tier": candidate.evidence_tier,
+            "evidence_label": candidate.evidence_label.value,
+            "primary_parameter_id": candidate.primary_parameter_id,
+            "gates": candidate.gates,
+        }
+        for candidate in registry.candidates
+    }
+
+    assert actual == EXPECTED_CANDIDATE_IDENTITIES
+
+
+@pytest.mark.parametrize("candidate_id", ["C1", "C2", "C3", "C4", "C5", "C6"])
+def test_each_candidate_h3_rule_matches_independent_v13_oracle(candidate_id: str) -> None:
+    """Catches mutation of any registered candidate-specific H3 rule."""
+    candidates = {
+        candidate.candidate_id: candidate
+        for candidate in load_candidate_specs(CONFIGS / "candidates.yaml").candidates
+    }
+    rule = candidates[candidate_id].h3_rule
+    endpoint, unit, scale, direction, margin = EXPECTED_H3_RULES[candidate_id]
+
+    assert (rule.endpoint, rule.unit, rule.scale, rule.direction) == (
+        endpoint,
+        unit,
+        scale,
+        direction,
+    )
+    assert rule.margin == pytest.approx(margin)
+    assert rule.min_probability == pytest.approx(0.90)
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "field_path", "mutated_value"),
+    [
+        ("C1", ("donor_species",), "different donor"),
+        ("C2", ("construct_name",), "different module"),
+        ("C3", ("sequence_accessions",), ["fabricated_accession"]),
+        ("C4", ("primary_parameter_id",), "unregistered_transition"),
+        ("C5", ("h3_rule", "direction"), "ge"),
+        ("C6", ("gates",), {"sequence_build": "required"}),
+    ],
+)
+def test_candidate_model_rejects_v13_identity_or_gate_mutation(
+    candidate_id: str, field_path: tuple[str, ...], mutated_value: object
+) -> None:
+    """Catches acceptance of candidate metadata that no longer identifies v1.3."""
+    candidate = next(
+        item
+        for item in load_candidate_specs(CONFIGS / "candidates.yaml").candidates
+        if item.candidate_id == candidate_id
+    )
+    payload = candidate.model_dump(mode="json")
+    target = payload
+    for field_name in field_path[:-1]:
+        target = target[field_name]
+    target[field_path[-1]] = mutated_value
+
+    with pytest.raises(ValidationError, match=f"candidate {candidate_id}"):
+        CandidateSpec.model_validate(payload)
+
+
+def test_candidate_model_rejects_fabricated_c2_accession() -> None:
+    """Catches fabrication of a sequence while the PyAPX audit is unresolved."""
+    c2 = load_candidate_specs(CONFIGS / "candidates.yaml").candidates[1]
+    payload = deepcopy(c2.model_dump(mode="json"))
+    payload["sequence_accessions"] = ["FABRICATED_C2_ACCESSION"]
+
+    with pytest.raises(ValidationError, match="candidate C2"):
+        CandidateSpec.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "mutated_value"),
+    [
+        ("sequence_status", "verified"),
+        ("gates", {"sequence_build": "required", "directional_assay": "required"}),
+    ],
+)
+def test_candidate_model_rejects_inconsistent_c2_pending_audit_gate(
+    field_name: str, mutated_value: object
+) -> None:
+    """Catches a PyAPX record that bypasses the blocked sequence/build gate."""
+    c2 = load_candidate_specs(CONFIGS / "candidates.yaml").candidates[1]
+    payload = deepcopy(c2.model_dump(mode="json"))
+    payload[field_name] = mutated_value
+
+    with pytest.raises(ValidationError, match="candidate C2"):
+        CandidateSpec.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("scale", "ratio"),
+        ("direction", "gt"),
+        ("min_probability", -0.01),
+        ("min_probability", 1.01),
+    ],
+)
+def test_h3_rule_rejects_unregistered_kind_or_probability_boundary(
+    field_name: str, invalid_value: object
+) -> None:
+    """Catches permissive H3 validation outside the registered vocabulary/range."""
+    payload = {
+        "endpoint": "root_surface_outward_na_flux_per_root_dry_mass",
+        "unit": "umol Na g_root_dry_mass^-1 h^-1",
+        "scale": "log_ratio",
+        "direction": "ge",
+        "margin": math.log(1.20),
+        "min_probability": 0.90,
+    }
+    payload[field_name] = invalid_value
+
+    with pytest.raises(ValidationError):
+        H3Rule.model_validate(payload)
 
 
 def test_candidate_registry_freezes_order_h3_rules_and_decision_thresholds() -> None:
@@ -77,6 +320,73 @@ def test_composite_root_two_water_full_allocation_design_is_frozen() -> None:
     assert design.water_treatment_unit == "reservoir"
 
 
+def test_design_matches_independent_registered_identity_oracle() -> None:
+    """Catches a renamed arm, run, water, batch, or changed allocation count."""
+    design = load_paper1_design(CONFIGS / "experiment_paper1.yaml")
+
+    assert design.schema_version == "1.3"
+    assert design.evidence_label.value == "synthetic_only"
+    assert design.full_allocation_groups == (
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "empty_vector",
+        "sham_transformation",
+        "unmodified_parent",
+    )
+    assert tuple(water.water_id for water in design.water_conditions) == (
+        "nonsaline_nutrient_matched_control",
+        "pilot_selected_full_ion_marine_challenge",
+    )
+    assert design.runs == ("discovery_run_1", "discovery_run_2")
+    assert design.reservoirs_per_water_run == 4
+    assert design.independent_plants_per_group_reservoir == 5
+    assert design.balanced_transformation_batches == ("batch_a", "batch_b")
+
+
+@pytest.mark.parametrize(
+    ("field_path", "mutated_value"),
+    [
+        (
+            ("full_allocation_groups",),
+            [
+                "C2",
+                "C1",
+                "C3",
+                "C4",
+                "C5",
+                "C6",
+                "empty_vector",
+                "sham_transformation",
+                "unmodified_parent",
+            ],
+        ),
+        (("water_conditions", 0, "water_id"), "renamed_control"),
+        (("runs",), ["renamed_run", "discovery_run_2"]),
+        (("reservoirs_per_water_run",), 5),
+        (("independent_plants_per_group_reservoir",), 6),
+        (("balanced_transformation_batches",), ["batch_a", "batch_c"]),
+    ],
+)
+def test_design_model_rejects_frozen_identity_mutation(
+    field_path: tuple[str | int, ...], mutated_value: object
+) -> None:
+    """Catches an internally valid but unregistered primary-design mutation."""
+    payload = load_paper1_design(CONFIGS / "experiment_paper1.yaml").model_dump(
+        mode="json"
+    )
+    target = payload
+    for component in field_path[:-1]:
+        target = target[component]
+    target[field_path[-1]] = mutated_value
+
+    with pytest.raises(ValidationError, match="Paper 1 design identity is frozen"):
+        Paper1DesignConfig.model_validate(payload)
+
+
 def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> None:
     """Catches an implicit biological or measurement default in a scenario."""
     with pytest.raises(AlmondLabError) as exc_info:
@@ -91,6 +401,20 @@ def test_synthetic_scenarios_fail_closed_when_any_required_input_is_absent() -> 
         "synthetic_only",
         "hypothesis_prior",
     }
+
+
+def test_synthetic_scenario_rejects_unregistered_numeric_parameter() -> None:
+    """Catches a hidden generator knob outside the frozen parameter keyspace."""
+    scenario = load_synthetic_scenarios(CONFIGS / "synthetic_scenarios.yaml")[0]
+    payload = deepcopy(scenario.model_dump(mode="json"))
+    payload["parameters"]["unregistered_growth_magic"] = 1.25
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        SyntheticScenarioConfig.model_validate(payload)
+
+    assert exc_info.value.code == "UNREGISTERED_SYNTHETIC_PARAMETER"
+    assert exc_info.value.field_path == "parameters"
+    assert exc_info.value.details == {"extra": ["unregistered_growth_magic"]}
 
 
 def test_public_contracts_have_only_registered_labels_and_no_forbidden_output_keys() -> None:

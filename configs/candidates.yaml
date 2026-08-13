@@ -17,7 +17,7 @@ candidates:
     sequence_status: verified
     evidence_tier: E2
     evidence_label: hypothesis_prior
-    primary_parameter_id: pykpa1_na_efflux_multiplier
+    primary_parameter_id: na_efflux_vmax_multiplier
     h3_rule:
       endpoint: root_surface_outward_na_flux_per_root_dry_mass
       unit: "umol Na g_root_dry_mass^-1 h^-1"
@@ -35,7 +35,7 @@ candidates:
     sequence_status: pending_audit
     evidence_tier: E2
     evidence_label: hypothesis_prior
-    primary_parameter_id: apx_redox_capacity_multiplier
+    primary_parameter_id: ros_clearance_multiplier
     h3_rule:
       endpoint: root_h2o2_concentration_time_auc
       unit: "umol H2O2 g_root_fresh_mass^-1 h"
@@ -71,7 +71,7 @@ candidates:
     sequence_status: verified
     evidence_tier: E2
     evidence_label: hypothesis_prior
-    primary_parameter_id: sbsos1_na_efflux_multiplier
+    primary_parameter_id: na_efflux_vmax_multiplier
     h3_rule:
       endpoint: root_surface_outward_na_flux_per_root_dry_mass
       unit: "umol Na g_root_dry_mass^-1 h^-1"
@@ -90,7 +90,7 @@ candidates:
     sequence_status: verified
     evidence_tier: E1
     evidence_label: hypothesis_prior
-    primary_parameter_id: hkt1_xylem_na_retrieval_multiplier
+    primary_parameter_id: xylem_na_retrieval_multiplier
     h3_rule:
       endpoint: xylem_sap_na_concentration_time_auc
       unit: "mmol Na L^-1 h"
@@ -108,7 +108,7 @@ candidates:
     sequence_status: verified
     evidence_tier: E1
     evidence_label: hypothesis_prior
-    primary_parameter_id: sos2_kinase_activity_multiplier
+    primary_parameter_id: sos_efflux_activation_multiplier
     h3_rule:
       endpoint: root_surface_outward_na_flux_per_root_dry_mass
       unit: "umol Na g_root_dry_mass^-1 h^-1"
