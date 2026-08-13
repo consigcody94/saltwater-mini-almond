@@ -105,3 +105,22 @@ def test_strategy_digest_covers_exact_candidate_payload() -> None:
     assert manifest["generator"]["candidate_set_sha256"] == hashlib.sha256(
         canonical_cases
     ).hexdigest()
+
+
+def test_manifest_rejects_case_not_present_in_frozen_candidate_set(
+    tmp_path: Path,
+) -> None:
+    contents = (
+        resources.files("almondlab.resources")
+        .joinpath("fixtures/conservation_case_manifest.yaml")
+        .read_text()
+    )
+    payload = yaml.safe_load(contents)
+    flow = payload["cases"]["flow"][0]
+    flow["source"]["volume_l"] = 13.0
+    flow["source"]["water_mass_kg"] = 12.961
+    source = tmp_path / "conservation_case_manifest.yaml"
+    source.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(ValueError, match="candidate"):
+        load_conservation_case_manifest(source)

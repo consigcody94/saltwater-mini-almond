@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from fractions import Fraction
 from importlib.metadata import PackageNotFoundError, version
 from math import exp, isclose, isfinite
 from pathlib import Path
@@ -124,6 +125,78 @@ def _json_scalar_kind(value: object) -> str:
     return f"unsupported:{type(value).__qualname__}"
 
 
+def _is_finite_primitive_number(value: object) -> bool:
+    """Return whether ``value`` is an exact JSON numeric primitive and finite."""
+
+    return type(value) is int or (type(value) is float and isfinite(value))
+
+
+def _validate_comparison_schema(
+    oracle: object,
+    tolerance: object,
+    comparison: object,
+    *,
+    field_path: str,
+) -> None:
+    """Eagerly validate the complete oracle tree independently of observations."""
+
+    if isinstance(oracle, Mapping):
+        if isinstance(tolerance, Mapping) and set(tolerance) != set(oracle):
+            raise ValueError(f"{field_path} tolerance mapping shape mismatch")
+        if isinstance(comparison, Mapping) and set(comparison) != set(oracle):
+            raise ValueError(f"{field_path} comparison mapping shape mismatch")
+        for key in oracle:
+            _validate_comparison_schema(
+                oracle[key],
+                _leaf(tolerance, key),
+                _leaf(comparison, key),
+                field_path=f"{field_path}.{key}",
+            )
+        return
+    if isinstance(oracle, (tuple, list)):
+        if isinstance(tolerance, (tuple, list)) and len(tolerance) != len(oracle):
+            raise ValueError(f"{field_path} tolerance sequence shape mismatch")
+        if isinstance(comparison, (tuple, list)) and len(comparison) != len(oracle):
+            raise ValueError(f"{field_path} comparison sequence shape mismatch")
+        for index, expected in enumerate(oracle):
+            _validate_comparison_schema(
+                expected,
+                tolerance[index]
+                if isinstance(tolerance, (tuple, list))
+                else tolerance,
+                comparison[index]
+                if isinstance(comparison, (tuple, list))
+                else comparison,
+                field_path=f"{field_path}.{index}",
+            )
+        return
+    if not isinstance(comparison, str) or comparison not in {
+        "abs_le",
+        "rel_le",
+        "ge",
+        "le",
+        "eq",
+    }:
+        raise ValueError(f"{field_path} has unknown comparison operator")
+    if comparison == "eq":
+        if tolerance is not None and (
+            not _is_finite_primitive_number(tolerance) or tolerance != 0
+        ):
+            raise ValueError(f"{field_path} eq tolerance must be zero")
+        oracle_kind = _json_scalar_kind(oracle)
+        if oracle_kind.startswith("unsupported:") or (
+            type(oracle) is float and not isfinite(oracle)
+        ):
+            raise ValueError(f"{field_path} oracle must be a finite JSON scalar")
+        return
+    if not _is_finite_primitive_number(oracle):
+        raise ValueError(f"{field_path} oracle must be a finite primitive number")
+    if not _is_finite_primitive_number(tolerance):
+        raise ValueError(f"{field_path} tolerance must be a finite primitive number")
+    if tolerance < 0.0:
+        raise ValueError(f"{field_path} tolerance must be nonnegative")
+
+
 def _evaluate_comparison(
     observed: object,
     oracle: object,
@@ -133,6 +206,12 @@ def _evaluate_comparison(
     field_path: str = "comparison",
 ) -> bool:
     """Evaluate one complete oracle tree; no acceptance owns a separate pass gate."""
+    _validate_comparison_schema(
+        oracle,
+        tolerance,
+        comparison,
+        field_path=field_path,
+    )
     if isinstance(oracle, Mapping):
         if not isinstance(observed, Mapping) or set(observed) != set(oracle):
             return False
@@ -179,8 +258,7 @@ def _evaluate_comparison(
         raise ValueError(f"{field_path} has unknown comparison operator")
     if comparison == "eq":
         if tolerance is not None and (
-            type(tolerance) not in (int, float)
-            or not isfinite(tolerance)
+            not _is_finite_primitive_number(tolerance)
             or tolerance != 0
         ):
             raise ValueError(f"{field_path} eq tolerance must be zero")
@@ -198,22 +276,22 @@ def _evaluate_comparison(
             observed_kind == oracle_kind
             and observed == oracle
         )
-    if type(oracle) not in (int, float) or not isfinite(oracle):
+    if not _is_finite_primitive_number(oracle):
         raise ValueError(f"{field_path} oracle must be a finite primitive number")
-    if type(tolerance) not in (int, float) or not isfinite(tolerance):
+    if not _is_finite_primitive_number(tolerance):
         raise ValueError(f"{field_path} tolerance must be a finite primitive number")
     if tolerance < 0.0:
         raise ValueError(f"{field_path} tolerance must be nonnegative")
-    if type(observed) not in (int, float) or not isfinite(observed):
+    if not _is_finite_primitive_number(observed):
         return False
-    observed_number = observed
-    oracle_number = oracle
-    tolerance_number = tolerance
+    observed_number = Fraction(observed)
+    oracle_number = Fraction(oracle)
+    tolerance_number = Fraction(tolerance)
     if comparison == "abs_le":
         return abs(observed_number - oracle_number) <= tolerance_number
     if comparison == "rel_le":
-        scale = max(abs(oracle_number), 1e-30)
-        return abs(observed_number - oracle_number) / scale <= tolerance_number
+        scale = max(abs(oracle_number), Fraction(1e-30))
+        return abs(observed_number - oracle_number) <= tolerance_number * scale
     if comparison == "ge":
         return observed_number + tolerance_number >= oracle_number
     return observed_number - tolerance_number <= oracle_number
@@ -249,16 +327,25 @@ class VerificationRecord:
         object.__setattr__(self, "oracle", oracle)
         object.__setattr__(self, "tolerance", tolerance)
         object.__setattr__(self, "comparison", comparison)
-        hashes = (
+        hashes_source = (
             {"primary": self.fixture_sha256}
             if self.fixture_sha256s is None
-            else dict(self.fixture_sha256s)
+            else self.fixture_sha256s
         )
-        object.__setattr__(self, "fixture_sha256s", MappingProxyType(hashes))
+        hashes = _freeze_json(hashes_source, "fixture_sha256s")
+        if not isinstance(hashes, Mapping):
+            raise ValueError("fixture_sha256s must be a mapping")
+        object.__setattr__(self, "fixture_sha256s", hashes)
+        auxiliary_hashes = _freeze_json(
+            self.auxiliary_artifacts_sha256s or {},
+            "auxiliary_artifacts_sha256s",
+        )
+        if not isinstance(auxiliary_hashes, Mapping):
+            raise ValueError("auxiliary_artifacts_sha256s must be a mapping")
         object.__setattr__(
             self,
             "auxiliary_artifacts_sha256s",
-            MappingProxyType(dict(self.auxiliary_artifacts_sha256s or {})),
+            auxiliary_hashes,
         )
         frozen_provenance = _freeze_json(self.code_provenance, "code_provenance")
         assert isinstance(frozen_provenance, Mapping)
@@ -279,16 +366,38 @@ class VerificationRecord:
         )
 
     def validate(self) -> None:
-        if self.acceptance_test not in range(1, 23):
+        if type(self.acceptance_test) is not int or self.acceptance_test not in range(1, 23):
             raise ValueError("acceptance_test must be in [1, 22]")
-        all_hashes = {
-            "primary": self.fixture_sha256,
-            **dict(self.fixture_sha256s),
-            **dict(self.auxiliary_artifacts_sha256s),
-        }
-        for name, digest in all_hashes.items():
-            if not name or len(digest) != 64 or any(
+        if (
+            not isinstance(self.fixture_sha256, str)
+            or len(self.fixture_sha256) != 64
+            or any(
+                character not in "0123456789abcdefABCDEF"
+                for character in self.fixture_sha256
+            )
+        ):
+            raise ValueError("fixture_sha256 must be an exact SHA-256 hex digest")
+        if (
+            "primary" in self.fixture_sha256s
+            and self.fixture_sha256s["primary"] != self.fixture_sha256
+        ):
+            raise ValueError("fixture_sha256s.primary must equal fixture_sha256")
+        if "primary" in self.auxiliary_artifacts_sha256s:
+            raise ValueError("auxiliary artifact hashes cannot use reserved name primary")
+        if set(self.fixture_sha256s) & set(self.auxiliary_artifacts_sha256s):
+            raise ValueError("resource hash names must be unique across artifact maps")
+        all_hashes = tuple(self.fixture_sha256s.items()) + tuple(
+            self.auxiliary_artifacts_sha256s.items()
+        )
+        for name, digest in all_hashes:
+            if (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(
                 character not in "0123456789abcdefABCDEF" for character in digest
+                )
             ):
                 raise ValueError("resource hashes must contain exact named SHA-256 hex digests")
         if not isinstance(self.code_version, str) or not self.code_version.strip():
@@ -571,12 +680,12 @@ def code_version_from_provenance(provenance: Mapping[str, object]) -> str:
         evidence_label=EvidenceLabel.SYNTHETIC_ONLY,
     )
     probe.validate()
-    parts = [f"package:{provenance['package_version'] or 'unavailable'}"]
-    parts.append(f"git:{provenance['git_sha'] or 'unavailable'}")
+    parts = [f"package:{frozen['package_version'] or 'unavailable'}"]
+    parts.append(f"git:{frozen['git_sha'] or 'unavailable'}")
     parts.append(
         "dirty:unavailable"
-        if provenance["git_dirty"] is None
-        else f"dirty:{str(provenance['git_dirty']).lower()}"
+        if frozen["git_dirty"] is None
+        else f"dirty:{str(frozen['git_dirty']).lower()}"
     )
     return ";".join(parts)
 
@@ -669,6 +778,46 @@ def _cursor(fixture: Mapping[str, object]) -> LedgerCursor:
 
 def _fixture(name: str) -> tuple[dict[str, object], str]:
     return load_fixture(name)
+
+
+_WATER_ONLY_QUANTITIES = (ConservedEntity.WATER,)
+_ALL_CONSERVED_QUANTITIES = tuple(ConservedEntity)
+_FLOW_ACCEPTANCE_COMPARTMENTS = ("source", "target")
+
+
+def _validate_acceptance_quantity_scope(
+    fixture: Mapping[str, object],
+    required_quantities: Sequence[ConservedEntity],
+) -> None:
+    """Bind a conservation fixture to a code-owned quantity/compartment scope."""
+
+    required_stocks = tuple(
+        entity.value
+        for entity in required_quantities
+        if entity is not ConservedEntity.WATER
+    )
+    raw_entities = fixture.get("tracked_entities")
+    if not isinstance(raw_entities, list) or tuple(raw_entities) != required_stocks:
+        raise ValueError("fixture tracked entities do not match the canonical registry")
+    for section_name in ("initial", "expected"):
+        section = fixture.get(section_name)
+        if (
+            not isinstance(section, Mapping)
+            or tuple(section) != _FLOW_ACCEPTANCE_COMPARTMENTS
+        ):
+            raise ValueError(
+                f"fixture {section_name} compartments do not match the canonical registry"
+            )
+        for compartment_id in _FLOW_ACCEPTANCE_COMPARTMENTS:
+            compartment = section[compartment_id]
+            if not isinstance(compartment, Mapping):
+                raise ValueError(f"fixture {section_name}.{compartment_id} must be a mapping")
+            stocks = compartment.get("stocks")
+            if not isinstance(stocks, Mapping) or tuple(stocks) != required_stocks:
+                raise ValueError(
+                    f"fixture {section_name}.{compartment_id}.stocks do not match "
+                    "the canonical registry"
+                )
 
 
 def _tree_constant(template: object, value: object) -> object:
@@ -996,10 +1145,14 @@ def _expected_transaction_ids(expected_ledger: Mapping[str, object]) -> list[str
 
 def _ledger_transaction_expectations(
     expected_ledger: Mapping[str, object],
+    *,
+    required_quantities: Sequence[ConservedEntity] | None = None,
 ) -> tuple[LedgerTransactionExpectation, ...]:
     """Map fixture literals into mass-audit authority without consulting rows."""
 
-    _validate_expected_ledger(expected_ledger)
+    _validate_expected_ledger(
+        expected_ledger, required_quantities=required_quantities
+    )
     raw_amounts = expected_ledger["per_transaction_amounts"]
     raw_duration = expected_ledger["transaction_duration_hours"]
     assert isinstance(raw_amounts, Mapping)
@@ -1030,12 +1183,17 @@ def _ledger_transaction_expectations(
 
 
 def _validate_flow_authority_fixture(
-    fixture: Mapping[str, object], event: InternalWaterFlow
+    fixture: Mapping[str, object],
+    event: InternalWaterFlow,
+    *,
+    required_quantities: Sequence[ConservedEntity] | None = None,
 ) -> None:
     expected_ledger = fixture.get("expected_ledger")
     if not isinstance(expected_ledger, Mapping):
         raise ValueError("fixture.expected_ledger must be a mapping")
-    _validate_expected_ledger(expected_ledger)
+    _validate_expected_ledger(
+        expected_ledger, required_quantities=required_quantities
+    )
     duration = _strict_fixture_number(
         fixture.get("duration_hours"), "fixture.duration_hours", positive=True
     )
@@ -1251,11 +1409,20 @@ def _conservation_acceptance_bundle(
 ) -> tuple[VerificationRecord, object]:
     fixture, digest = _fixture(fixture_name)
     policy = load_verification_policy()
+    required = (
+        _WATER_ONLY_QUANTITIES
+        if test_number == 1
+        else _ALL_CONSERVED_QUANTITIES
+    )
+    _validate_acceptance_quantity_scope(fixture, required)
     before = _state(fixture)
     event = _water_flow(fixture)
-    _validate_flow_authority_fixture(fixture, event)
+    _validate_flow_authority_fixture(
+        fixture, event, required_quantities=required
+    )
     expected_transactions = _ledger_transaction_expectations(
-        fixture["expected_ledger"]  # type: ignore[arg-type]
+        fixture["expected_ledger"],  # type: ignore[arg-type]
+        required_quantities=required,
     )
     result = step_state(
         before,
@@ -1295,16 +1462,10 @@ def _conservation_acceptance_bundle(
             expected_events=(event,),
             transform_error=f"{error.code}:{error.field_path}",
         )
-    required = tuple(
-        sorted(
-            {ConservedEntity.WATER, *before.tracked_entities},
-            key=lambda item: item.value,
-        )
-    )
     ledger_oracle = _ledger_oracle(
         fixture["expected_ledger"],  # type: ignore[arg-type]
         required_quantities=required,
-        expected_compartments=tuple(before.compartments),
+        expected_compartments=_FLOW_ACCEPTANCE_COMPARTMENTS,
     )
     observed = {
         "post_state": _state_payload(result.state),
@@ -1805,6 +1966,38 @@ def _acceptance_05() -> VerificationRecord:
     )
 
 
+_T13_DOMAIN_POLICY_ORACLE = MappingProxyType(
+    {
+        "model_id": "core_v1.acceptance_13",
+        "version": "1.0.0",
+        "purpose": "analytic_verification",
+        "scope": "numerical_oracle_not_almond_applicability",
+        "sha256": "97a748c131791b89fe1e37034473b041df91c35ad0771ce66199c79ff21cc974",
+    }
+)
+_T13_DOMAIN_DECISION_ORACLE = MappingProxyType(
+    {
+        "model_id": "core_v1.acceptance_13",
+        "version": "1.0.0",
+        "purpose": "analytic_verification",
+        "domain_sha256": "97a748c131791b89fe1e37034473b041df91c35ad0771ce66199c79ff21cc974",
+        "permitted_evidence_label": "physics_constrained",
+        "requested_label": "physics_constrained",
+        "resolved_label": "physics_constrained",
+        "extrapolated": False,
+        "violations": (),
+    }
+)
+
+
+def _hydraulic_domain_decision_payload(result: object) -> dict[str, object]:
+    decision = result.domain_decision  # type: ignore[attr-defined]
+    payload = decision.model_dump(mode="json")
+    if not isinstance(payload, dict):
+        raise ValueError("hydraulic domain decision must serialize to a mapping")
+    return payload
+
+
 def _acceptance_13() -> VerificationRecord:
     fixture, digest = _fixture("perfect_na_exclusion.yaml")
     tolerance = load_verification_policy().tolerances[13]["absolute"]
@@ -1833,7 +2026,7 @@ def _acceptance_13() -> VerificationRecord:
         ),
         domain=domain,
     )
-    domain_policy = {
+    observed_domain_policy = {
         "model_id": domain.model_id,
         "version": domain.version,
         "purpose": domain.purpose,
@@ -1844,25 +2037,35 @@ def _acceptance_13() -> VerificationRecord:
         "fresh_l_day": fresh.actual_l_day,
         "saline_l_day": saline.actual_l_day,
         "ratio": saline.actual_l_day / fresh.actual_l_day,
-        "domain_policy": domain_policy,
+        "domain_policy": observed_domain_policy,
+        "domain_decisions": {
+            "fresh": _hydraulic_domain_decision_payload(fresh),
+            "saline": _hydraulic_domain_decision_payload(saline),
+        },
     }
     oracle = {
         "fresh_l_day": 0.888212,
         "saline_l_day": 0.455696,
         "ratio": 0.513049,
-        "domain_policy": domain_policy,
+        "domain_policy": dict(_T13_DOMAIN_POLICY_ORACLE),
+        "domain_decisions": {
+            "fresh": dict(_T13_DOMAIN_DECISION_ORACLE),
+            "saline": dict(_T13_DOMAIN_DECISION_ORACLE),
+        },
     }
     tolerances = {
         "fresh_l_day": tolerance,
         "saline_l_day": tolerance,
         "ratio": tolerance,
-        "domain_policy": _tree_constant(domain_policy, 0.0),
+        "domain_policy": _tree_constant(_T13_DOMAIN_POLICY_ORACLE, 0.0),
+        "domain_decisions": _tree_constant(oracle["domain_decisions"], 0.0),
     }
     comparison = {
         "fresh_l_day": "abs_le",
         "saline_l_day": "abs_le",
         "ratio": "abs_le",
-        "domain_policy": _tree_constant(domain_policy, "eq"),
+        "domain_policy": _tree_constant(_T13_DOMAIN_POLICY_ORACLE, "eq"),
+        "domain_decisions": _tree_constant(oracle["domain_decisions"], "eq"),
     }
     return _record(
         13,
@@ -1898,14 +2101,24 @@ EC_DIRECTIONAL_MISMATCH_ORACLE = (
 
 
 def _acceptance_19(
-    *, cases: Sequence[tuple[str, str]] = EC_DIRECTIONAL_MISMATCH_ORACLE
+    *, cases: Sequence[tuple[str, str]] | None = None
 ) -> VerificationRecord:
     fixture, digest = _fixture("chemistry_handcheck.yaml")
     policy_tolerance = load_verification_policy().tolerances[19]["absolute"]
     source_payload = fixture["blend"]["source_a"]  # type: ignore[index]
     boundary = AnalysisBoundary()
     observed_cases: list[dict[str, object]] = []
-    for source_kind_id, measurement_kind_id in cases:
+    execution_cases = (
+        tuple(
+            (source_kind.value, measurement_kind.value)
+            for source_kind in ECKind
+            for measurement_kind in ECKind
+            if source_kind is not measurement_kind
+        )
+        if cases is None
+        else tuple(cases)
+    )
+    for source_kind_id, measurement_kind_id in execution_cases:
             source_kind = ECKind(source_kind_id)
             measurement_kind = ECKind(measurement_kind_id)
             payload = dict(source_payload)
@@ -2161,6 +2374,9 @@ def _t20_extrema_oracle() -> dict[str, object]:
             "literal_absolute_error": {
                 name: 0.0 for name in _T20_FLOW_QUANTITIES
             },
+            "volume_literal_absolute_error": {
+                name: 0.0 for name in ("source", "target")
+            },
         },
         "ro": {
             "conservation_absolute_residual": {
@@ -2168,6 +2384,9 @@ def _t20_extrema_oracle() -> dict[str, object]:
             },
             "literal_absolute_error": {
                 name: 0.0 for name in _T20_RO_QUANTITIES
+            },
+            "volume_literal_absolute_error": {
+                name: 0.0 for name in ("feed", "permeate", "concentrate")
             },
         },
         "blend": {
@@ -2214,8 +2433,17 @@ def _run_case_manifest(
     extrema = _t20_extrema_oracle()
     counterexample: dict[str, object] | None = None
 
-    def maximum(branch: dict[str, float], name: str, value: float) -> None:
-        branch[name] = max(branch[name], abs(value))
+    def maximum(branch: dict[str, float], name: str, value: object) -> float:
+        if not _is_finite_primitive_number(value):
+            raise ValueError(f"{name} model metric must be a finite primitive number")
+        try:
+            magnitude = abs(float(value))
+        except OverflowError as error:
+            raise ValueError(f"{name} model metric must be finite") from error
+        if not isfinite(magnitude):
+            raise ValueError(f"{name} model metric must be finite")
+        branch[name] = max(branch[name], magnitude)
+        return magnitude
 
     def fail_case(
         property_id: str,
@@ -2248,46 +2476,51 @@ def _run_case_manifest(
                     post = output["post"]
                     if not all(isinstance(value, Mapping) for value in (residuals, compartment, post)):
                         raise ValueError("flow model output shape is invalid")
-                    literal = {name: 0.0 for name in _T20_FLOW_QUANTITIES}
+                    case_errors: list[float] = []
                     for location in ("source", "target"):
-                        literal["water"] = max(
-                            literal["water"],
-                            abs(
+                        case_errors.append(
+                            maximum(
+                                extrema["flow"]["volume_literal_absolute_error"],  # type: ignore[index]
+                                location,
+                                post[location]["volume_l"]
+                                - expected[location]["volume_l"],
+                            )
+                        )
+                        case_errors.append(
+                            maximum(
+                                extrema["flow"]["literal_absolute_error"],  # type: ignore[index]
+                                "water",
                                 post[location]["water_mass_kg"]
-                                - expected[location]["water_mass_kg"]
-                            ),
+                                - expected[location]["water_mass_kg"],
+                            )
                         )
                         for name in ("na", "cl"):
-                            literal[name] = max(
-                                literal[name],
-                                abs(
+                            case_errors.append(
+                                maximum(
+                                    extrema["flow"]["literal_absolute_error"],  # type: ignore[index]
+                                    name,
                                     post[location]["stocks"][name]
-                                    - expected[location]["stocks"][name]
-                                ),
+                                    - expected[location]["stocks"][name],
+                                )
                             )
                     for name in _T20_FLOW_QUANTITIES:
-                        maximum(
-                            extrema["flow"]["global_relative_residual"],  # type: ignore[index]
-                            name,
-                            residuals[name],
+                        case_errors.append(
+                            maximum(
+                                extrema["flow"]["global_relative_residual"],  # type: ignore[index]
+                                name,
+                                residuals[name],
+                            )
                         )
-                        maximum(
-                            extrema["flow"]["compartment_relative_residual"],  # type: ignore[index]
-                            name,
-                            compartment[name],
-                        )
-                        maximum(
-                            extrema["flow"]["literal_absolute_error"],  # type: ignore[index]
-                            name,
-                            literal[name],
+                        case_errors.append(
+                            maximum(
+                                extrema["flow"]["compartment_relative_residual"],  # type: ignore[index]
+                                name,
+                                compartment[name],
+                            )
                         )
                     failing = {
                         "balanced": output.get("balanced") is not True,
-                        "maximum_error": max(
-                            *(abs(residuals[name]) for name in _T20_FLOW_QUANTITIES),
-                            *(abs(compartment[name]) for name in _T20_FLOW_QUANTITIES),
-                            *literal.values(),
-                        ),
+                        "maximum_error": max(case_errors),
                     }
                 elif property_id == "ro":
                     output = ro_model(case)
@@ -2297,18 +2530,19 @@ def _run_case_manifest(
                     permeate = output["permeate"]
                     concentrate = output["concentrate"]
                     expected = case["expected"]
-                    assert all(
+                    if not all(
                         isinstance(value, Mapping)
                         for value in (feed, permeate, concentrate, expected)
-                    )
+                    ):
+                        raise ValueError("RO model output shape is invalid")
                     conservation = {
-                        "water": abs(
+                        "water": (
                             permeate["water_mass_kg"]
                             + concentrate["water_mass_kg"]
                             - feed["water_mass_kg"]
                         ),
                         **{
-                            name: abs(
+                            name: (
                                 permeate["stocks"][name]
                                 + concentrate["stocks"][name]
                                 - feed["stocks"][name]
@@ -2316,60 +2550,68 @@ def _run_case_manifest(
                             for name in ("na", "cl")
                         },
                     }
-                    literal = {
-                        "water": max(
-                            abs(
-                                permeate["water_mass_kg"]
-                                - expected["permeate"]["water_mass_kg"]
-                            ),
-                            abs(
-                                concentrate["water_mass_kg"]
-                                - expected["concentrate"]["water_mass_kg"]
-                            ),
-                        ),
-                        **{
-                            name: max(
-                                abs(
-                                    permeate["stocks"][name]
-                                    - expected["permeate"]["stocks"][name]
-                                ),
-                                abs(
-                                    concentrate["stocks"][name]
-                                    - expected["concentrate"]["stocks"][name]
-                                ),
-                            )
-                            for name in ("na", "cl")
-                        },
-                    }
+                    case_errors = []
                     for name in _T20_RO_QUANTITIES:
-                        maximum(
-                            extrema["ro"]["conservation_absolute_residual"],  # type: ignore[index]
-                            name,
-                            conservation[name],
+                        case_errors.append(
+                            maximum(
+                                extrema["ro"]["conservation_absolute_residual"],  # type: ignore[index]
+                                name,
+                                conservation[name],
+                            )
                         )
+                    case_errors.append(
                         maximum(
-                            extrema["ro"]["literal_absolute_error"],  # type: ignore[index]
-                            name,
-                            literal[name],
+                            extrema["ro"]["volume_literal_absolute_error"],  # type: ignore[index]
+                            "feed",
+                            feed["volume_l"] - case["feed"]["volume_l"],  # type: ignore[index]
                         )
-                    failing = {"maximum_error": max(*conservation.values(), *literal.values())}
+                    )
+                    for branch_name, branch in (
+                        ("permeate", permeate),
+                        ("concentrate", concentrate),
+                    ):
+                        case_errors.append(
+                            maximum(
+                                extrema["ro"]["volume_literal_absolute_error"],  # type: ignore[index]
+                                branch_name,
+                                branch["volume_l"]
+                                - expected[branch_name]["volume_l"],
+                            )
+                        )
+                        case_errors.append(
+                            maximum(
+                                extrema["ro"]["literal_absolute_error"],  # type: ignore[index]
+                                "water",
+                                branch["water_mass_kg"]
+                                - expected[branch_name]["water_mass_kg"],
+                            )
+                        )
+                        for name in ("na", "cl"):
+                            case_errors.append(
+                                maximum(
+                                    extrema["ro"]["literal_absolute_error"],  # type: ignore[index]
+                                    name,
+                                    branch["stocks"][name]
+                                    - expected[branch_name]["stocks"][name],
+                                )
+                            )
+                    failing = {"maximum_error": max(case_errors)}
                 else:
                     output = blend_model(case, chemistry_fixture)
                     if not isinstance(output, Mapping):
                         raise ValueError("blend model output must be a mapping")
                     expected = case["expected"]
                     assert isinstance(expected, Mapping)
-                    literal = {
-                        name: abs(output[name] - expected[name])
-                        for name in _T20_BLEND_FIELDS
-                    }
-                    for name, value in literal.items():
-                        maximum(
-                            extrema["blend"]["literal_absolute_error"],  # type: ignore[index]
-                            name,
-                            value,
+                    case_errors = []
+                    for name in _T20_BLEND_FIELDS:
+                        case_errors.append(
+                            maximum(
+                                extrema["blend"]["literal_absolute_error"],  # type: ignore[index]
+                                name,
+                                output[name] - expected[name],
+                            )
                         )
-                    failing = {"maximum_error": max(literal.values())}
+                    failing = {"maximum_error": max(case_errors)}
                 if failing["maximum_error"] > absolute_tolerance or failing.get("balanced"):
                     fail_case(property_id, case, failing)
             except (AlmondLabError, KeyError, TypeError, ValueError, ArithmeticError) as error:
@@ -2544,11 +2786,16 @@ def _acceptance_20_bundle(
     policy = load_verification_policy()
     absolute = policy.tolerances[20]["absolute"]
 
+    required = _ALL_CONSERVED_QUANTITIES
+    _validate_acceptance_quantity_scope(fixture, required)
     before = _state(fixture)
     event = _water_flow(fixture)
-    _validate_flow_authority_fixture(fixture, event)
+    _validate_flow_authority_fixture(
+        fixture, event, required_quantities=required
+    )
     expected_transactions = _ledger_transaction_expectations(
-        fixture["expected_ledger"]  # type: ignore[arg-type]
+        fixture["expected_ledger"],  # type: ignore[arg-type]
+        required_quantities=required,
     )
     result = stepper(
         before,
@@ -2587,16 +2834,10 @@ def _acceptance_20_bundle(
             expected_events=(event,),
             transform_error=f"{error.code}:{error.field_path}",
         )
-    required = tuple(
-        sorted(
-            {ConservedEntity.WATER, *before.tracked_entities},
-            key=lambda entity: entity.value,
-        )
-    )
     transfer_oracle = _ledger_oracle(
         fixture["expected_ledger"],
         required_quantities=required,
-        expected_compartments=tuple(before.compartments),
+        expected_compartments=_FLOW_ACCEPTANCE_COMPARTMENTS,
     )
     transfer_observed = {
         "post_state": _state_payload(result.state),

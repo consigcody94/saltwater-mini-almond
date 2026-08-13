@@ -15,9 +15,11 @@ extrema_schema:
     global_relative_residual: [water, na, cl]
     compartment_relative_residual: [water, na, cl]
     literal_absolute_error: [water, na, cl]
+    volume_literal_absolute_error: [source, target]
   ro:
     conservation_absolute_residual: [water, na, cl]
     literal_absolute_error: [water, na, cl]
+    volume_literal_absolute_error: [feed, permeate, concentrate]
   blend:
     literal_absolute_error: [alkalinity_mmol_c_l, na_mmol_l, cl_mmol_l, ca_mmol_l, mg_mmol_l, k_mmol_l, total_b_mmol_l, sulfate_mmol_l, bicarbonate_mmol_l, nitrate_mmol_l, phosphate_mmol_l]
 cases:

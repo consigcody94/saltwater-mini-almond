@@ -10,6 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pytest
+import yaml
 
 from almondlab import verification
 from almondlab.contracts import ConservedEntity, EvidenceLabel, StockUnit
@@ -124,6 +125,70 @@ def test_record_rejects_non_string_and_colliding_mapping_keys(
 ) -> None:
     with pytest.raises(ValueError, match="string keys"):
         _record(observed_value=bad_mapping, oracle=bad_mapping)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("fixture_sha256s", "auxiliary_artifacts_sha256s"),
+)
+def test_record_rejects_non_string_resource_hash_keys(field_name: str) -> None:
+    with pytest.raises(ValueError, match="string keys"):
+        _record(**{field_name: {1: "b" * 64}})
+
+
+def test_record_validates_primary_digest_independently_of_hash_map_collision() -> None:
+    with pytest.raises(ValueError, match="SHA-256"):
+        _record(
+            fixture_sha256="not-a-digest",
+            fixture_sha256s={"primary": "b" * 64},
+        ).validate()
+
+
+def test_record_reserves_primary_name_from_auxiliary_artifacts() -> None:
+    with pytest.raises(ValueError, match="primary"):
+        _record(auxiliary_artifacts_sha256s={"primary": "b" * 64}).validate()
+
+
+def test_record_rejects_boolean_acceptance_test() -> None:
+    with pytest.raises(ValueError, match="acceptance_test"):
+        _record(acceptance_test=True).validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_pass"),
+    [
+        ({"observed_value": {"value": 10**400}}, False),
+        (
+            {
+                "observed_value": {"value": 10**400},
+                "oracle": {"value": 10**400},
+                "tolerance": {"value": 0},
+            },
+            True,
+        ),
+    ],
+)
+def test_numeric_comparison_handles_finite_arbitrary_precision_integers(
+    overrides: dict[str, object], expected_pass: bool
+) -> None:
+    record = _record(**overrides)
+
+    assert record.passed is expected_pass
+
+
+def test_invalid_oracle_schema_is_validated_even_when_observed_shape_differs() -> None:
+    with pytest.raises(ValueError, match="tolerance.*shape"):
+        _record(observed_value={}, oracle={"a": 0}, tolerance={})
+
+
+def test_invalid_later_oracle_branch_is_not_hidden_by_earlier_failure() -> None:
+    with pytest.raises(ValueError, match="unknown comparison"):
+        _record(
+            observed_value={"a": 1, "b": 0},
+            oracle={"a": 0, "b": 0},
+            tolerance={"a": 0, "b": 0},
+            comparison={"a": "eq", "b": "invented"},
+        )
 
 
 def test_record_deep_freezes_provenance_and_nested_unavailable() -> None:
@@ -398,6 +463,38 @@ def test_every_schema_1_verification_tolerance_is_locked_exactly(
         validate_verification_policy(replace(policy, tolerances=tolerances))
 
 
+def test_verification_policy_rejects_huge_numeric_scalar_as_value_error(
+    tmp_path: Path,
+) -> None:
+    source = Path(verification.__file__).parent / "resources" / "configs" / "verification.yaml"
+    payload = yaml.safe_load(source.read_text())
+    payload["tolerances"][1]["absolute"] = 10**400
+    corrupted = tmp_path / "verification.yaml"
+    corrupted.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(ValueError, match="finite"):
+        load_verification_policy(corrupted)
+
+
+def test_constructed_policies_reject_boolean_numeric_aliases() -> None:
+    threshold = load_threshold_policy()
+    stops = dict(threshold.physical_stops)
+    stops["injury"] = replace(stops["injury"], maximum=True)
+    with pytest.raises(ValueError, match="locked"):
+        validate_threshold_policy(replace(threshold, physical_stops=stops))
+
+    verification_policy = load_verification_policy()
+    tolerances = {
+        test_id: dict(values)
+        for test_id, values in verification_policy.tolerances.items()
+    }
+    tolerances[19]["absolute"] = False
+    with pytest.raises(ValueError, match="locked"):
+        validate_verification_policy(
+            replace(verification_policy, tolerances=tolerances)
+        )
+
+
 def test_verification_source_has_unique_top_level_acceptance_helpers() -> None:
     source_path = Path(verification.__file__)
     module = ast.parse(source_path.read_text())
@@ -444,6 +541,80 @@ def test_acceptance_19_uses_code_owned_six_case_oracle() -> None:
         cases=verification.EC_DIRECTIONAL_MISMATCH_ORACLE[:-1]
     )
     assert record.passed is False
+
+
+def test_acceptance_19_default_execution_is_enum_derived_not_oracle_derived(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verification,
+        "EC_DIRECTIONAL_MISMATCH_ORACLE",
+        verification.EC_DIRECTIONAL_MISMATCH_ORACLE[:-1],
+    )
+
+    record = verification._acceptance_19()
+
+    assert len(record.observed_value["cases"]) == 6
+    assert len(record.oracle["cases"]) == 5
+    assert record.passed is False
+
+
+def test_acceptance_13_oracle_owns_exact_analytic_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_fixture = verification._fixture
+
+    def corrupted_fixture(name: str) -> tuple[dict[str, object], str]:
+        fixture, digest = original_fixture(name)
+        if name == "perfect_na_exclusion.yaml":
+            fixture = dict(fixture)
+            domain = dict(fixture["hydraulic_domain"])
+            domain.update(
+                {
+                    "model_id": "not-core-v1.acceptance-13",
+                    "version": "99.0.0",
+                    "purpose": "model_applicability",
+                }
+            )
+            fixture["hydraulic_domain"] = domain
+        return fixture, digest
+
+    monkeypatch.setattr(verification, "_fixture", corrupted_fixture)
+
+    record = verification._acceptance_13()
+
+    assert record.observed_value["domain_policy"]["model_id"] == (
+        "not-core-v1.acceptance-13"
+    )
+    assert record.oracle["domain_policy"]["model_id"] == "core_v1.acceptance_13"
+    assert record.passed is False
+
+
+@pytest.mark.parametrize("acceptance", (2, 20))
+def test_all_entity_acceptances_use_code_owned_exact_quantity_scope(
+    acceptance: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_fixture = verification._fixture
+
+    def shrunk_fixture(name: str) -> tuple[dict[str, object], str]:
+        fixture, digest = original_fixture(name)
+        if name not in {"ions_conservative.yaml", "all_conserved_entities.yaml"}:
+            return fixture, digest
+        fixture = json.loads(json.dumps(fixture))
+        fixture["tracked_entities"].remove("alkalinity")
+        for branch_name in ("initial", "expected"):
+            for branch in fixture[branch_name].values():
+                branch["stocks"].pop("alkalinity")
+        fixture["expected_ledger"]["per_transaction_amounts"].pop("alkalinity")
+        fixture["expected_ledger"]["row_count"] -= (
+            fixture["expected_ledger"]["transaction_count"] * 2
+        )
+        return fixture, digest
+
+    monkeypatch.setattr(verification, "_fixture", shrunk_fixture)
+
+    with pytest.raises(ValueError, match="canonical registry|tracked entities"):
+        (verification._acceptance_02 if acceptance == 2 else verification._acceptance_20)()
 
 
 def test_core_acceptance_runs_exact_registry_and_schema_v2_ledgers(tmp_path: Path) -> None:
@@ -700,3 +871,78 @@ def test_manifest_runner_reports_first_frozen_failure_without_shrinking() -> Non
     assert result["counterexample"]["case_id"] == "flow_seed_20260812_01"
     assert result["counterexample"]["input"]
     assert result["counterexample"]["failing_metrics"]
+
+
+@pytest.mark.parametrize("model_name", ("flow", "ro", "blend"))
+def test_manifest_runner_rejects_nonfinite_injected_model_output(
+    model_name: str,
+) -> None:
+    def nonfinite_flow(case: object) -> object:
+        output = verification._flow_case_default(case)  # type: ignore[arg-type]
+        output["global_relative_residual"]["water"] = float("nan")
+        return output
+
+    def nonfinite_ro(case: object) -> object:
+        output = verification._ro_case_default(case)  # type: ignore[arg-type]
+        output["permeate"]["water_mass_kg"] = float("nan")
+        return output
+
+    def nonfinite_blend(case: object, chemistry: object) -> object:
+        output = verification._blend_case_default(case, chemistry)  # type: ignore[arg-type]
+        output["alkalinity_mmol_c_l"] = float("nan")
+        return output
+
+    keyword = {
+        "flow": {"flow_case_model": nonfinite_flow},
+        "ro": {"ro_case_model": nonfinite_ro},
+        "blend": {"blend_case_model": nonfinite_blend},
+    }[model_name]
+    record = verification._acceptance_20(**keyword)
+    result = record.observed_value["case_manifest"]
+
+    assert record.passed is False
+    assert result["counterexample"]["property_id"] == model_name
+    assert result["counterexample"]["case_id"].endswith("_01")
+
+
+def test_manifest_runner_turns_malformed_ro_output_into_frozen_counterexample() -> None:
+    def malformed_ro(case: object) -> object:
+        output = verification._ro_case_default(case)  # type: ignore[arg-type]
+        output["feed"] = None
+        return output
+
+    record = verification._acceptance_20(ro_case_model=malformed_ro)
+    result = record.observed_value["case_manifest"]
+
+    assert record.passed is False
+    assert result["counterexample"]["property_id"] == "ro"
+    assert result["counterexample"]["failing_metrics"]["error_type"] == "ValueError"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "branch"),
+    (("flow", "source"), ("ro", "feed"), ("ro", "permeate")),
+)
+def test_manifest_runner_compares_explicit_volume_l_literals(
+    model_name: str, branch: str
+) -> None:
+    def wrong_flow_volume(case: object) -> object:
+        output = verification._flow_case_default(case)  # type: ignore[arg-type]
+        output["post"][branch]["volume_l"] += 1.0
+        return output
+
+    def wrong_ro_volume(case: object) -> object:
+        output = verification._ro_case_default(case)  # type: ignore[arg-type]
+        output[branch]["volume_l"] += 1.0
+        return output
+
+    keyword = (
+        {"flow_case_model": wrong_flow_volume}
+        if model_name == "flow"
+        else {"ro_case_model": wrong_ro_volume}
+    )
+    record = verification._acceptance_20(**keyword)
+    result = record.observed_value["case_manifest"]
+
+    assert record.passed is False
+    assert result["counterexample"]["property_id"] == model_name

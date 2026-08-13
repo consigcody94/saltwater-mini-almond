@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import resources
@@ -127,9 +128,12 @@ def _exact_keys(
 
 
 def _strict_number(value: object, field_path: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         raise ValueError(f"{field_path} must be a numeric YAML scalar")
-    converted = float(value)
+    try:
+        converted = float(value)
+    except OverflowError as error:
+        raise ValueError(f"{field_path} must be finite") from error
     if not isfinite(converted):
         raise ValueError(f"{field_path} must be finite")
     return converted
@@ -226,12 +230,18 @@ _MANIFEST_EXTREMA_SCHEMA = MappingProxyType(
                 "global_relative_residual": _MANIFEST_ENTITY_IDS,
                 "compartment_relative_residual": _MANIFEST_ENTITY_IDS,
                 "literal_absolute_error": _MANIFEST_ENTITY_IDS,
+                "volume_literal_absolute_error": ("source", "target"),
             }
         ),
         "ro": MappingProxyType(
             {
                 "conservation_absolute_residual": _MANIFEST_ENTITY_IDS,
                 "literal_absolute_error": _MANIFEST_ENTITY_IDS,
+                "volume_literal_absolute_error": (
+                    "feed",
+                    "permeate",
+                    "concentrate",
+                ),
             }
         ),
         "blend": MappingProxyType(
@@ -253,6 +263,75 @@ _MANIFEST_EXTREMA_SCHEMA = MappingProxyType(
         ),
     }
 )
+
+
+def _candidate_signatures(contents: bytes) -> Mapping[str, frozenset[tuple[float, ...]]]:
+    try:
+        payload = json.loads(contents)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("manifest candidate set is not valid JSON") from error
+    if not isinstance(payload, dict):
+        raise ValueError("manifest candidate set must be a mapping")
+    _exact_keys(payload, {"flow", "ro", "blend"}, "manifest candidates")
+    result: dict[str, frozenset[tuple[float, ...]]] = {}
+    for property_id, width in (("flow", 4), ("ro", 4), ("blend", 2)):
+        rows = payload[property_id]
+        if not isinstance(rows, list) or len(rows) != 4:
+            raise ValueError(f"manifest candidates.{property_id} must contain four rows")
+        signatures: list[tuple[float, ...]] = []
+        for row_index, row in enumerate(rows):
+            if not isinstance(row, list) or len(row) != width:
+                raise ValueError(
+                    f"manifest candidates.{property_id}.{row_index} has invalid shape"
+                )
+            signatures.append(
+                tuple(
+                    _strict_number(
+                        value,
+                        f"manifest candidates.{property_id}.{row_index}.{column_index}",
+                    )
+                    for column_index, value in enumerate(row)
+                )
+            )
+        if len(set(signatures)) != len(signatures):
+            raise ValueError(f"manifest candidates.{property_id} contains duplicates")
+        result[property_id] = frozenset(signatures)
+    return MappingProxyType(result)
+
+
+def _manifest_case_signature(
+    property_id: str, case: Mapping[str, object], path: str
+) -> tuple[float, ...]:
+    if property_id == "flow":
+        source = case["source"]
+        target = case["target"]
+        assert isinstance(source, Mapping) and isinstance(target, Mapping)
+        raw = (
+            source["volume_l"],
+            target["volume_l"],
+            case["rate_l_per_hour"],
+            case["duration_hours"],
+        )
+    elif property_id == "ro":
+        feed = case["feed"]
+        parameters = case["parameters"]
+        assert isinstance(feed, Mapping) and isinstance(parameters, Mapping)
+        rejection = parameters["rejection"]
+        assert isinstance(rejection, Mapping)
+        raw = (
+            feed["volume_l"],
+            parameters["recovery"],
+            rejection["na"],
+            rejection["cl"],
+        )
+    else:
+        volumes = case["volumes_l"]
+        assert isinstance(volumes, list)
+        raw = tuple(volumes)
+    return tuple(
+        _strict_number(value, f"{path}.candidate_signature.{index}")
+        for index, value in enumerate(raw)
+    )
 
 
 def _schema2_stock_record(
@@ -391,6 +470,7 @@ def load_conservation_case_manifest(
     candidate_digest = hashlib.sha256(candidate_bytes).hexdigest()
     if candidate_digest != CONSERVATION_CANDIDATE_SET_SHA256:
         raise ValueError("manifest frozen candidate-set bytes are not canonical")
+    candidate_signatures = _candidate_signatures(candidate_bytes)
     if (
         generator["name"] != "hypothesis"
         or generator["version"] != "6.165.5"
@@ -458,6 +538,11 @@ def load_conservation_case_manifest(
                 _validate_schema2_ro_case(case, path)
             else:
                 _validate_blend_case(case, path)
+            if (
+                _manifest_case_signature(property_id, case, path)
+                not in candidate_signatures[property_id]
+            ):
+                raise ValueError(f"{path} is not present in the frozen candidate set")
     frozen = _freeze_resource(payload)
     assert isinstance(frozen, Mapping)
     return frozen, hashlib.sha256(contents).hexdigest()
@@ -495,6 +580,10 @@ class VerificationPolicy:
     sha256: str
 
 
+def _exact_optional_float(value: object, expected: float | None) -> bool:
+    return value is None if expected is None else type(value) is float and value == expected
+
+
 def validate_threshold_policy(policy: ThresholdPolicy) -> None:
     """Revalidate a complete schema-1 object against code-owned authority."""
 
@@ -504,18 +593,22 @@ def validate_threshold_policy(policy: ThresholdPolicy) -> None:
         raise ValueError("threshold physical-stop registry is not canonical")
     for stop_id, expected in CANONICAL_PHYSICAL_STOPS.items():
         stop = policy.physical_stops.get(stop_id)
-        if not isinstance(stop, PhysicalStopPolicy) or (
-            stop.minimum,
-            stop.maximum,
-            stop.evidence_label,
-        ) != expected:
+        if (
+            not isinstance(stop, PhysicalStopPolicy)
+            or not _exact_optional_float(stop.minimum, expected[0])
+            or not _exact_optional_float(stop.maximum, expected[1])
+            or stop.evidence_label is not expected[2]
+        ):
             raise ValueError(f"physical stop {stop_id} is not locked to schema 1.0")
     numerical = policy.numerical_stops
-    if not isinstance(numerical, NumericalStops) or (
-        numerical.require_finite_state,
-        numerical.minimum_stock,
-        numerical.maximum_relative_ledger_residual,
-    ) != CANONICAL_NUMERICAL_STOPS:
+    if (
+        not isinstance(numerical, NumericalStops)
+        or numerical.require_finite_state is not True
+        or type(numerical.minimum_stock) is not float
+        or numerical.minimum_stock != CANONICAL_NUMERICAL_STOPS[1]
+        or type(numerical.maximum_relative_ledger_residual) is not float
+        or numerical.maximum_relative_ledger_residual != CANONICAL_NUMERICAL_STOPS[2]
+    ):
         raise ValueError("schema 1.0 numerical stops are not locked")
     if (
         not isinstance(policy.sha256, str)
@@ -532,14 +625,29 @@ def validate_verification_policy(policy: VerificationPolicy) -> None:
         raise ValueError("verification policy must be canonical schema 1.0")
     if policy.artifact_path_template != "verification/test_<NN>.json":
         raise ValueError("verification artifact template is not canonical")
-    if policy.core_acceptance_tests != CORE_ACCEPTANCE_TESTS:
+    if (
+        policy.core_acceptance_tests != CORE_ACCEPTANCE_TESTS
+        or any(type(test_number) is not int for test_number in policy.core_acceptance_tests)
+    ):
         raise ValueError("verification registry is not canonical")
     if policy.evidence_label is not EvidenceLabel.PHYSICS_CONSTRAINED:
         raise ValueError("verification evidence label is not canonical")
-    if tuple(policy.tolerances) != CORE_ACCEPTANCE_TESTS:
+    if (
+        tuple(policy.tolerances) != CORE_ACCEPTANCE_TESTS
+        or any(type(test_number) is not int for test_number in policy.tolerances)
+    ):
         raise ValueError("verification tolerance registry is not canonical")
     for test_number, expected in CANONICAL_VERIFICATION_TOLERANCES.items():
-        if dict(policy.tolerances.get(test_number, {})) != dict(expected):
+        received = policy.tolerances.get(test_number, {})
+        if (
+            not isinstance(received, Mapping)
+            or tuple(received) != tuple(expected)
+            or any(type(name) is not str for name in received)
+            or any(
+                type(received[name]) is not float or received[name] != value
+                for name, value in expected.items()
+            )
+        ):
             raise ValueError(
                 f"verification tolerance {test_number} is not locked to schema 1.0"
             )
