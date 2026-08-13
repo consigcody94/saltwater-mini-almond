@@ -2082,6 +2082,256 @@ def test_atomic_create_temp_cleanup_failure_is_explicitly_postcommit(
     assert list(tmp_path.iterdir()) == [destination]
 
 
+class _PosixAtomicSyscallHarness:
+    """Run the POSIX atomic state machine against a real Windows temp directory."""
+
+    name = "posix"
+
+    def __init__(
+        self,
+        parent: Path,
+        *,
+        rename_error: BaseException | None = None,
+    ) -> None:
+        self.parent = parent.absolute()
+        self.rename_error = rename_error
+        self._next_directory_descriptor = 90_000
+        self._directory_descriptors: dict[int, Path] = {}
+        self.rename_calls: list[tuple[str, str]] = []
+        self.link_calls: list[tuple[str, str]] = []
+        self.cleanup_calls: list[str] = []
+        self.directory_syncs: list[Path] = []
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(os, name)
+
+    def open_directory(self, path: Path, *, create: bool = False) -> int:
+        directory = Path(path).absolute()
+        if create:
+            directory.mkdir(parents=True, exist_ok=True)
+        assert directory == self.parent
+        descriptor = self._next_directory_descriptor
+        self._next_directory_descriptor += 1
+        self._directory_descriptors[descriptor] = directory
+        return descriptor
+
+    def open(
+        self,
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if dir_fd in self._directory_descriptors:
+            directory = self._directory_descriptors[dir_fd]
+            return os.open(directory / os.fsdecode(path), flags, mode)
+        return os.open(path, flags, mode)
+
+    def close(self, descriptor: int) -> None:
+        if descriptor in self._directory_descriptors:
+            del self._directory_descriptors[descriptor]
+            return
+        os.close(descriptor)
+
+    def link(
+        self,
+        source_name: str,
+        target_name: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+        follow_symlinks: bool,
+    ) -> None:
+        assert follow_symlinks is False
+        source_parent = self._directory_descriptors[src_dir_fd]
+        target_parent = self._directory_descriptors[dst_dir_fd]
+        self.link_calls.append((source_name, target_name))
+        os.link(source_parent / source_name, target_parent / target_name)
+
+    def rename_noreplace(
+        self, parent_descriptor: int, source_name: str, target_name: str
+    ) -> None:
+        assert self._directory_descriptors[parent_descriptor] == self.parent
+        self.rename_calls.append((source_name, target_name))
+        if self.rename_error is not None:
+            raise self.rename_error
+        source = self.parent / source_name
+        target = self.parent / target_name
+        if target.exists():
+            raise FileExistsError(target)
+        source.rename(target)
+
+    def require_path_matches_descriptor(
+        self,
+        path: Path,
+        descriptor: int,
+        expected_identity: tuple[int, int] | None,
+    ) -> tuple[int, int]:
+        directory = Path(path).absolute()
+        assert self._directory_descriptors[descriptor] == directory
+        metadata = directory.stat(follow_symlinks=False)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if expected_identity is not None:
+            assert identity == expected_identity
+        return identity
+
+    def cleanup_retained(
+        self,
+        parent_descriptor: int,
+        name: str,
+        expected_identity: tuple[int, int],
+    ) -> bool:
+        del parent_descriptor, expected_identity
+        self.cleanup_calls.append(name)
+        raise provenance._RetainedCleanupIdentityError(name)
+
+    def install(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        fake_retained_cleanup: bool = True,
+    ) -> None:
+        monkeypatch.setattr(provenance, "os", self)
+        monkeypatch.setattr(provenance, "_open_directory_descriptor", self.open_directory)
+        monkeypatch.setattr(
+            provenance,
+            "_require_path_matches_descriptor",
+            self.require_path_matches_descriptor,
+        )
+        monkeypatch.setattr(provenance, "_rename_name_noreplace", self.rename_noreplace)
+        monkeypatch.setattr(
+            provenance,
+            "_directory_identity",
+            lambda path: (
+                Path(path).stat(follow_symlinks=False).st_dev,
+                Path(path).stat(follow_symlinks=False).st_ino,
+            ),
+        )
+        monkeypatch.setattr(
+            provenance,
+            "_fsync_directory",
+            lambda directory, expected_identity: self.directory_syncs.append(
+                Path(directory)
+            ),
+        )
+        if fake_retained_cleanup:
+            monkeypatch.setattr(
+                provenance, "_unlink_name_if_identity", self.cleanup_retained
+            )
+
+
+def test_posix_atomic_create_renames_temp_without_hardlink_or_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "result.json"
+    harness = _PosixAtomicSyscallHarness(tmp_path)
+    harness.install(monkeypatch)
+    validation_states: list[tuple[bool, tuple[str, ...]]] = []
+    committed_identity: list[tuple[int, int]] = []
+
+    def validate() -> None:
+        validation_states.append(
+            (
+                destination.exists(),
+                tuple(
+                    sorted(
+                        path.name
+                        for path in tmp_path.iterdir()
+                        if path != destination
+                    )
+                ),
+            )
+        )
+
+    result = provenance.atomic_create_bytes(
+        destination,
+        b"created",
+        _validator=validate,
+        _committed_identity=committed_identity,
+    )
+
+    assert result == destination
+    assert destination.read_bytes() == b"created"
+    assert validation_states[0][0] is False
+    assert len(validation_states[0][1]) == 1
+    assert validation_states[0][1][0].startswith(".result.json.")
+    assert validation_states[0][1][0].endswith(".tmp")
+    assert validation_states[1] == (True, ())
+    assert harness.rename_calls == [(validation_states[0][1][0], "result.json")]
+    assert harness.link_calls == []
+    assert harness.cleanup_calls == []
+    assert list(tmp_path.iterdir()) == [destination]
+    metadata = destination.stat(follow_symlinks=False)
+    assert committed_identity == [(metadata.st_dev, metadata.st_ino)]
+
+
+def test_finalize_manifest_succeeds_through_posix_noreplace_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = provenance.RunDirectory.create(
+        tmp_path / "outputs" / "runs",
+        config_sha256="1" * 64,
+        root_seed=42,
+        deterministic_run_id="SYN_posix_finalize",
+    )
+    manifest = _manifest(
+        run_id="SYN_posix_finalize",
+        deterministic_demo_id=True,
+        ended_at=None,
+        artifact_hashes={},
+    )
+    destination = run.path / "run_manifest.json"
+    harness = _PosixAtomicSyscallHarness(run.path)
+    harness.install(monkeypatch)
+
+    finalized = provenance.finalize_manifest(
+        manifest,
+        run,
+        ended_at=datetime(2026, 8, 12, 15, tzinfo=timezone.utc),
+    )
+
+    assert finalized.ended_at == datetime(2026, 8, 12, 15, tzinfo=timezone.utc)
+    assert json.loads(destination.read_text(encoding="utf-8")) == finalized.to_dict()
+    assert len(harness.rename_calls) == 1
+    assert harness.rename_calls[0][0].startswith(".run_manifest.json.")
+    assert harness.rename_calls[0][0].endswith(".tmp")
+    assert harness.rename_calls[0][1] == "run_manifest.json"
+    assert harness.link_calls == []
+    assert harness.cleanup_calls == []
+    assert list(run.path.iterdir()) == [destination]
+
+
+def test_posix_atomic_create_unavailable_noreplace_fails_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "result.json"
+    harness = _PosixAtomicSyscallHarness(
+        tmp_path,
+        rename_error=RuntimeError("secure no-replace publication is unavailable"),
+    )
+    harness.install(monkeypatch, fake_retained_cleanup=False)
+    validation_calls = 0
+
+    def validate() -> None:
+        nonlocal validation_calls
+        validation_calls += 1
+
+    with pytest.raises(provenance.AtomicCleanupRetainedError) as captured:
+        provenance.atomic_create_bytes(destination, b"created", _validator=validate)
+
+    assert captured.value.committed is False
+    assert destination.exists() is False
+    assert captured.value.retained_path is not None
+    assert captured.value.retained_path.exists()
+    assert captured.value.retained_path.read_bytes() == b"created"
+    assert validation_calls == 1
+    assert harness.link_calls == []
+    assert len(harness.rename_calls) == 2
+    assert harness.rename_calls[0][1] == "result.json"
+    assert harness.rename_calls[1][1].startswith(".almondlab-quarantine-")
+
+
 @pytest.mark.parametrize("exclusive", [False, True])
 def test_posix_atomic_precommit_cleanup_retention_fails_safely(
     monkeypatch: pytest.MonkeyPatch, exclusive: bool
@@ -2188,7 +2438,7 @@ def test_posix_atomic_identity_capture_failure_reports_retained_temp(
     assert cleanup_called is False
 
 
-def test_posix_atomic_postcommit_retention_reports_every_recovery_path(
+def test_posix_atomic_postcommit_retention_reports_consumed_temp_only_as_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cleanup_names: list[str] = []
@@ -2239,7 +2489,9 @@ def test_posix_atomic_postcommit_retention_reports_every_recovery_path(
     monkeypatch.setattr(provenance, "_descriptor_identity", lambda descriptor: (3, 4))
     monkeypatch.setattr(provenance.os, "fdopen", lambda descriptor, mode: FakeHandle())
     monkeypatch.setattr(provenance.os, "fsync", lambda descriptor: None)
-    monkeypatch.setattr(provenance.os, "link", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        provenance, "_rename_name_noreplace", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr(provenance.os, "close", lambda descriptor: None)
     monkeypatch.setattr(provenance, "_unlink_name_if_identity", retain_cleanup)
 
@@ -2255,12 +2507,8 @@ def test_posix_atomic_postcommit_retention_reports_every_recovery_path(
     assert captured.value.committed is True
     assert captured.value.retained_paths == (
         Path("/sandbox/.almondlab-quarantine-retained-target"),
-        Path("/sandbox/.almondlab-quarantine-retained-temp"),
     )
-    assert cleanup_names[0] == "result.json"
-    assert len(cleanup_names) == 2
-    assert cleanup_names[1].startswith(".result.json.")
-    assert cleanup_names[1].endswith(".tmp")
+    assert cleanup_names == ["result.json"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows handle-relative cleanup")

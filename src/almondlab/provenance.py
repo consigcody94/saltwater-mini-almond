@@ -1930,7 +1930,7 @@ def _rename_directory_noreplace(
 def _rename_name_noreplace(
     parent_descriptor: int, source_name: str, target_name: str
 ) -> None:
-    """Generic same-directory no-replace rename used by private cleanup."""
+    """Rename a same-directory file or directory without replacing its target."""
 
     _rename_directory_noreplace(parent_descriptor, source_name, target_name)
 
@@ -3104,14 +3104,13 @@ def _atomic_commit_posix(
             if exclusive:
                 if validator is not None:
                     validator()
-                os.link(
+                _rename_name_noreplace(
+                    parent_descriptor,
                     temporary_name,
                     target.name,
-                    src_dir_fd=parent_descriptor,
-                    dst_dir_fd=parent_descriptor,
-                    follow_symlinks=False,
                 )
                 published = True
+                temporary_present = False
                 try:
                     if validator is not None:
                         validator()
@@ -3120,10 +3119,6 @@ def _atomic_commit_posix(
                     raise
                 if committed_identity is not None:
                     committed_identity.append(temporary_identity)
-                if not cleanup_temporary():
-                    raise AtomicCommitUncertainError(
-                        target, retained_paths=retained_paths
-                    )
             else:
                 os.replace(
                     temporary_name,

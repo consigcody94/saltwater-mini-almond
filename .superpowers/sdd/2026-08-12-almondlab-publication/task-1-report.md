@@ -50,7 +50,7 @@ repair: replacement of a verified POSIX quarantine name after its handle
 schema paths. File and directory race regressions fail if a pathname delete is
 attempted after verification.
 
-The final focused suite has 169 passing cases on this Windows host. Boundary
+The final focused suite has 172 passing cases on this Windows host. Boundary
 tests reject boolean or string numeric coercion, nonfinite numbers, non-string
 keys, path traversal, links/reparse points, collisions, inconsistent seed
 trees, unavailable-state inventions, hash corruption, unsafe finalization,
@@ -98,10 +98,16 @@ and every case-insensitive reserved-manifest artifact component.
   explicit `creation_config_sha256` to match the claim.
 - Manifest finalization validates the complete emitted schema/cross-field/hash
   document, keeps artifact handles open, revalidates inside exclusive create,
-  revalidates after link publication, and recaptures the manifest plus every
-  held artifact after commit. A detected post-commit mismatch removes only the
-  exact committed manifest identity; if safe removal cannot be established it
-  raises `AtomicCommitUncertainError` with the retained path.
+  publishes the temporary manifest with the platform's secure atomic
+  no-replace rename (`renameat2(RENAME_NOREPLACE)` on Linux or
+  `renameatx_np(RENAME_EXCL)` on macOS), revalidates after publication, and
+  recaptures the manifest plus every held artifact after commit. Successful
+  publication consumes the temporary name, so the normal path neither creates
+  a hardlink nor invokes identity-safe quarantine cleanup. If the secure
+  no-replace primitive is unavailable, publication fails in the pre-commit
+  phase. A detected post-commit mismatch removes only the exact committed
+  manifest identity; if safe removal cannot be established it raises
+  `AtomicCommitUncertainError` with the retained path.
 - `artifact_paths` is observed exactly once at the public boundary. Its one
   `items()` result is materialized into a sorted immutable plain-string
   mapping; malformed pairs, non-string keys, non-string/`Path` values,
@@ -171,7 +177,7 @@ pre-existing `.pytest_cache` permission warning:
 ```
 
 ```text
-169 passed, 3 skipped in 10.18s
+172 passed, 3 skipped in 10.64s
 ```
 
 The three skips are real-filesystem POSIX integration cases for replacement
@@ -181,26 +187,31 @@ new file and directory post-`fstat`/pre-delete regressions execute on Windows
 through deterministic syscall emulation and passed; they assert that neither
 pathname `unlink` nor `rmdir` is invoked. Phase-aware retained cleanup for both
 files and run directories also executed through the real state machines with
-controlled syscall boundaries. WSL, Docker, and another POSIX runtime are not
-available here, so the three integration cases remain explicitly scheduled for
-the fresh independent POSIX rereview.
+controlled syscall boundaries. Deterministic syscall emulation additionally
+exercised normal POSIX `atomic_create_bytes` and `finalize_manifest` publication:
+both consumed the temporary name through no-replace rename, performed both
+validation phases, made no hardlink call, retained no temporary, and returned
+success. The unavailable-native-primitive schedule failed before publication
+with `committed=False`. WSL, Docker, and another POSIX runtime are not available
+here, so the three integration cases remain explicitly scheduled for the fresh
+independent POSIX rereview.
 
 The combined repository suite was also run against the then-current concurrent
-registry worktree:
+biology-repair worktree:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 ```
 
 ```text
-938 passed, 25 failed, 3 skipped in 116.58s
+972 passed, 13 failed, 3 skipped in 117.12s
 ```
 
-All 25 failures were in `tests/test_registries.py` against concurrent uncommitted
-registry inputs: placeholder audited hashes, an unresolved candidate identity,
-and stale public PyAPX absence prose. The provenance suite remained green in
-the same tree. This is not reported as a stable full-suite pass; a fresh full
-run is required after the registry repair is committed.
+All 13 failures were in concurrent uncommitted biology-surrogate and Paper 1
+contract repair tests (duration partition/domain boundaries, large-value canopy
+AUC, and duplicate/recursive YAML mappings). The provenance suite remained
+green in the same tree. This is not reported as a stable full-suite pass; a
+fresh full run is required after the biology repair is committed.
 
 Dependency-free Draft 2020-12 schema coverage is included in the focused suite.
 The optional external gate remains unavailable:
