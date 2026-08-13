@@ -2,8 +2,9 @@
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum, StrEnum
+from importlib import resources
 from math import fsum, isclose, isfinite, log
 from pathlib import Path
 from types import MappingProxyType
@@ -15,6 +16,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SkipValidation,
+    ValidationInfo,
     field_serializer,
     field_validator,
     model_serializer,
@@ -40,7 +42,12 @@ from almondlab.provenance import canonical_json_bytes
 from almondlab.schemas import ModelDomain, WaterChemistry
 
 if TYPE_CHECKING:
-    from almondlab.design import PositionMap, RandomizationManifest
+    from almondlab.design import (
+        BaselineRoster,
+        ConfirmationDesignConfig,
+        PositionMap,
+        RandomizationManifest,
+    )
 
 
 _MAPPING_PROXY_TYPE = type(MappingProxyType({}))
@@ -1788,8 +1795,20 @@ class Paper1WaterRecipeRegistry(StrictPaper1Model):
     active_recipes: tuple[ActiveWaterRecipe, ...] = Field(min_length=2, max_length=2)
 
     @model_validator(mode="after")
-    def require_registered_authority(self) -> "Paper1WaterRecipeRegistry":
-        _validate_water_recipe_registry_authority(self)
+    def require_registered_authority(
+        self, info: ValidationInfo
+    ) -> "Paper1WaterRecipeRegistry":
+        expected_tolerance = 1.0
+        if info.context is not None:
+            contextual = info.context.get(
+                "registered_sensitivity_charge_balance_tolerance_percent"
+            )
+            if type(contextual) is float and contextual in {0.1, 0.5, 2.0}:
+                expected_tolerance = contextual
+        _validate_water_recipe_registry_authority(
+            self,
+            expected_charge_balance_tolerance_percent=expected_tolerance,
+        )
         return self
 
     @model_serializer(mode="plain")
@@ -1821,6 +1840,8 @@ def _amendment_signature(
 
 def _validate_water_recipe_registry_authority(
     registry: Paper1WaterRecipeRegistry,
+    *,
+    expected_charge_balance_tolerance_percent: float = 1.0,
 ) -> None:
     if tuple(anchor.water_id for anchor in registry.historical_anchors) != REGISTERED_WATER_IDS:
         raise ValueError("historical anchors must use the registered water order")
@@ -1908,8 +1929,13 @@ def _validate_water_recipe_registry_authority(
         error = charge_balance_error(recipe.chemistry)
         if error != 0.0 or abs(error) > recipe.charge_balance_tolerance_percent.value:
             raise ValueError("active chemistry fails the registered charge oracle")
-        if recipe.charge_balance_tolerance_percent.value != 1.0:
-            raise ValueError("active charge-balance tolerance must remain 1.0 percent")
+        if (
+            recipe.charge_balance_tolerance_percent.value
+            != expected_charge_balance_tolerance_percent
+        ):
+            raise ValueError(
+                "active charge-balance tolerance differs from its registered context"
+            )
 
 
 class Task4ConcentrationStopRule(StrictPaper1Model):
@@ -2248,9 +2274,35 @@ _TASK4_DISCOVERY_GROUP_IDS = frozenset(
 _TASK4_CONFIRMATION_CANDIDATE_IDS = frozenset(
     {"C1", "C2", "C3", "C4", "C5", "C6"}
 )
+_TASK3_DISCOVERY_SOURCE_RAW_SHA256 = (
+    "beecb5f2a3637aee52bcd74b5b717ff59f4d9bfe9a57a11429cf00950ee6a4b6"
+)
+_TASK3_DISCOVERY_ROOT_SEED = 20260812
+# Task 4 prospectively migrated only the water chemistry in the active design;
+# the registered physical Task 3 draw and its allocation identity are unchanged.
+_TASK4_ACTIVE_DISCOVERY_CONFIG_SHA256 = (
+    "f5911a6a63d7444575c2013d9737b9219ef21fb1f5c58dcc5fd633bcde38f5c9"
+)
+_TASK3_DISCOVERY_ALLOCATION_SHA256 = (
+    "bd4cb366ac9c3144ab881af29615311839f1fc0a9a881645ba4995dcab7b7c3f"
+)
+_TASK3_DISCOVERY_INPUT_SHA256S = MappingProxyType(
+    {
+        "baseline_roster_canonical": (
+            "f34dc944bf951fc8c2f752d981433482d475a4c4f3091e6d8d8f2e7d0df719d8"
+        ),
+        "position_map_canonical": (
+            "fed49c40785388661b46a0ee5c174617e39230fac80171677cfdcca9b9d9cbea"
+        ),
+    }
+)
 
 
-def _canonical_task4_water_loop(water_loop: object) -> WaterLoopGeneratorConfig:
+def _canonical_task4_water_loop(
+    water_loop: object,
+    *,
+    registered_sensitivity_binding: tuple[str, str, float] | None = None,
+) -> WaterLoopGeneratorConfig:
     if type(water_loop) is not WaterLoopGeneratorConfig:
         fail(
             "WATER_BATCH_GENERATOR_INVALID",
@@ -2269,6 +2321,14 @@ def _canonical_task4_water_loop(water_loop: object) -> WaterLoopGeneratorConfig:
             "water_loop",
             {"cause_type": type(error).__name__},
         )
+    expected_values = {
+        name: value for name, value, _ in _TASK4_WATER_LOOP_AUTHORITY
+    }
+    if registered_sensitivity_binding is not None:
+        name, value = _canonical_task4_capacity_sensitivity_binding(
+            registered_sensitivity_binding
+        )
+        expected_values[name] = value
     observed = tuple(
         (
             name,
@@ -2279,8 +2339,8 @@ def _canonical_task4_water_loop(water_loop: object) -> WaterLoopGeneratorConfig:
         for name, _, _ in _TASK4_WATER_LOOP_AUTHORITY
     )
     expected = tuple(
-        (name, value, unit, EvidenceLabel.HYPOTHESIS_PRIOR)
-        for name, value, unit in _TASK4_WATER_LOOP_AUTHORITY
+        (name, expected_values[name], unit, EvidenceLabel.HYPOTHESIS_PRIOR)
+        for name, _, unit in _TASK4_WATER_LOOP_AUTHORITY
     )
     observed_events = tuple(
         (item.value, item.unit, item.evidence_label)
@@ -2320,17 +2380,97 @@ def _task3_position_payload(slot: object) -> dict[str, object]:
 
 
 def _canonical_task3_capacity_authorities(
+    config: object,
+    baseline_roster: object,
     position_map: object,
     manifest: object,
 ) -> tuple["PositionMap", "RandomizationManifest"]:
     # design imports this module, so these runtime-only imports must remain local.
     from almondlab.design import (
+        ConfirmationDesignConfig,
+        cohort_identity_set,
+        randomize,
+        revalidate_baseline_roster,
+        revalidate_confirmation_design,
         revalidate_position_map,
         revalidate_randomization_manifest,
     )
 
+    discovery_config = type(config) is Paper1DesignConfig
+    if discovery_config:
+        try:
+            checked_config = Paper1DesignConfig.model_validate(
+                _registered_json_value(config)
+            )
+        except Exception as error:
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "discovery design failed complete authority revalidation",
+                "config",
+                {"cause_type": type(error).__name__},
+            )
+    elif type(config) is ConfirmationDesignConfig:
+        checked_config = revalidate_confirmation_design(config)
+    else:
+        fail(
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "capacity preflight requires an exact Task 3 design config",
+            "config",
+            {"received_type": type(config).__name__},
+        )
+    checked_roster = revalidate_baseline_roster(baseline_roster)
     checked_map = revalidate_position_map(position_map)
     checked_manifest = revalidate_randomization_manifest(manifest)
+    cohort_identity_set(
+        checked_manifest,
+        baseline_roster=checked_roster,
+        position_map=checked_map,
+    )
+    regenerated_manifest = randomize(
+        checked_config,
+        checked_manifest.root_seed,
+        position_map=checked_map,
+        baseline_roster=checked_roster,
+    )
+    if (
+        regenerated_manifest.canonical_json_bytes()
+        != checked_manifest.canonical_json_bytes()
+    ):
+        fail(
+            "WATER_BATCH_AUTHORITY_INVALID",
+            "manifest is not the exact canonical Task 3 allocation for its inputs",
+            "manifest",
+        )
+    if discovery_config:
+        try:
+            source_bytes = (
+                resources.files("almondlab.resources")
+                .joinpath("fixtures/paper1_small.yaml")
+                .read_bytes()
+            )
+        except Exception as error:
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "registered Task 3 discovery source is unavailable",
+                "position_map",
+                {"cause_type": type(error).__name__},
+            )
+        if (
+            hashlib.sha256(source_bytes).hexdigest()
+            != _TASK3_DISCOVERY_SOURCE_RAW_SHA256
+            or checked_manifest.root_seed != _TASK3_DISCOVERY_ROOT_SEED
+            or checked_manifest.config_sha256
+            != _TASK4_ACTIVE_DISCOVERY_CONFIG_SHA256
+            or checked_manifest.allocation_sha256
+            != _TASK3_DISCOVERY_ALLOCATION_SHA256
+            or dict(checked_manifest.input_sha256s)
+            != dict(_TASK3_DISCOVERY_INPUT_SHA256S)
+        ):
+            fail(
+                "WATER_BATCH_AUTHORITY_INVALID",
+                "discovery inputs differ from the approved Task 3 registration",
+                "manifest.input_sha256s",
+            )
     position_payload = [
         _task3_position_payload(slot)
         for slot in sorted(checked_map.slots, key=lambda item: item.position_id)
@@ -2465,20 +2605,28 @@ def _task4_expected_loop_debit(
 def preflight_shared_source_batch_capacity(
     policy: Task4StopPolicy,
     *,
+    config: "Paper1DesignConfig | ConfirmationDesignConfig",
+    baseline_roster: "BaselineRoster",
     position_map: "PositionMap",
     manifest: "RandomizationManifest",
     recipe_registry: Paper1WaterRecipeRegistry,
     water_loop: WaterLoopGeneratorConfig,
+    registered_sensitivity_binding: tuple[str, str, float] | None = None,
 ) -> tuple[SharedSourceBatchCapacityAudit, ...]:
     """Derive exact Task 3 shared-batch debits before RNG, output, or execution."""
 
     canonical_policy = _canonical_task4_stop_policy(policy)
     _, canonical_manifest = _canonical_task3_capacity_authorities(
+        config,
+        baseline_roster,
         position_map,
         manifest,
     )
     canonical_registry = _canonical_water_recipe_registry(recipe_registry)
-    canonical_loop = _canonical_task4_water_loop(water_loop)
+    canonical_loop = _canonical_task4_water_loop(
+        water_loop,
+        registered_sensitivity_binding=registered_sensitivity_binding,
+    )
     cohort_ids = {record.cohort_id for record in canonical_manifest.records}
     if len(cohort_ids) != 1 or not cohort_ids <= {"discovery", "confirmation"}:
         fail(
@@ -2487,6 +2635,15 @@ def preflight_shared_source_batch_capacity(
             "manifest.records.cohort_id",
         )
     cohort_id = next(iter(cohort_ids))
+    if cohort_id == "confirmation":
+        fail(
+            "WATER_BATCH_CONFIRMATION_AUTHORITY_UNAVAILABLE",
+            "confirmation capacity preflight requires a registered CohortDesignBundle",
+            "config",
+            {
+                "required_authority": "task4_registered_confirmation_cohort_bundle",
+            },
+        )
     loop_records: dict[tuple[str, str, str, str], list[object]] = {}
     for record in canonical_manifest.records:
         loop_key = (
@@ -3404,11 +3561,446 @@ class SyntheticScenarioConfig(StrictPaper1Model):
         return _registered_json_value(self)  # type: ignore[return-value]
 
 
+_TASK4_SENSITIVITY_SCENARIO_PREFIX = (
+    "configs/synthetic_scenarios.yaml::anchor.generator."
+)
+_TASK4_SENSITIVITY_RECIPE_PREFIX = "configs/paper1_water_recipes.yaml::"
+_TASK4_SENSITIVITY_SCENARIO_SELECTOR_PREFIX = (
+    "configs/synthetic_scenarios.yaml::scenarios[scenario_id="
+)
+
+
+def _task4_sensitivity_authority() -> tuple[
+    tuple[
+        str,
+        str,
+        tuple[str, ...],
+        tuple[int | float, ...],
+        tuple[int | float, ...],
+    ],
+    ...,
+]:
+    """Return the immutable prospective 36-record sensitivity authority."""
+
+    scenario = _TASK4_SENSITIVITY_SCENARIO_PREFIX
+    recipe = _TASK4_SENSITIVITY_RECIPE_PREFIX
+    selected = _TASK4_SENSITIVITY_SCENARIO_SELECTOR_PREFIX
+    limits = (
+        "root_zone_na_concentration",
+        "root_zone_cl_concentration",
+        "root_zone_k_concentration",
+        "xylem_sap_na_concentration",
+        "drainage_total_b_concentration",
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "root_h2o2_concentration_time_auc",
+        "xylem_sap_na_concentration_time_auc",
+    )
+    endpoints = (
+        "green_canopy_area",
+        "root_zone_na_concentration",
+        "root_zone_cl_concentration",
+        "root_zone_k_concentration",
+        "xylem_sap_na_concentration",
+        "drainage_total_b_concentration",
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "root_h2o2_concentration_time_auc",
+        "root_mannitol_concentration_above_empty_vector",
+        "xylem_sap_na_concentration_time_auc",
+    )
+
+    def paths(*suffixes: str) -> tuple[str, ...]:
+        return tuple(scenario + suffix for suffix in suffixes)
+
+    return (
+        (
+            "S001_charge_tolerance",
+            "percent",
+            (
+                scenario + "chemistry.charge_balance_tolerance_percent",
+                recipe
+                + "active_recipes[water_id=nonsaline_nutrient_matched_control]."
+                "charge_balance_tolerance_percent",
+                recipe
+                + "active_recipes[water_id=pilot_selected_full_ion_marine_challenge]."
+                "charge_balance_tolerance_percent",
+            ),
+            (0.1, 0.5, 2.0),
+            (1.0, 1.0, 1.0),
+        ),
+        ("S002_temperature_phi", "dimensionless", paths("climate.temperature_ar1_phi"), (0.4, 0.9), (0.7,)),
+        ("S003_apar_phi", "dimensionless", paths("climate.apar_ar1_phi"), (0.4, 0.9), (0.6,)),
+        ("S004_matric_phi", "dimensionless", paths("climate.matric_potential_ar1_phi"), (0.4, 0.9), (0.8,)),
+        ("S005_temperature_sd", "K", paths("climate.temperature_innovation_sd_k"), (0.175, 0.7), (0.35,)),
+        ("S006_apar_sd", "log-ratio", paths("climate.apar_log_innovation_sd"), (0.05, 0.2), (0.1,)),
+        ("S007_matric_sd", "MPa", paths("climate.matric_potential_innovation_sd_mpa"), (0.003, 0.012), (0.006,)),
+        ("S008_transpiration_sd", "log-ratio", paths("climate.potential_transpiration_log_innovation_sd"), (0.04, 0.16), (0.08,)),
+        ("S009_burnin", "count", paths("climate.climate_initialization_burnin_steps"), (32, 128), (64,)),
+        ("S010_common_ion_sd", "log-ratio", paths("chemistry.common_ion_log_sd"), (0.015, 0.06), (0.03,)),
+        ("S011_boron_sd", "log-ratio", paths("chemistry.boron_log_sd"), (0.04, 0.16), (0.08,)),
+        (
+            "S012_chemistry_measurement_sd",
+            "multiplier",
+            paths(
+                "chemistry.ec_measurement_sd_ds_m",
+                "chemistry.osmolality_measurement_sd_osmol_kg",
+                "chemistry.ph_measurement_sd",
+                "chemistry.temperature_measurement_sd_k",
+            ),
+            (0.5, 2.0),
+            (0.05, 0.002, 0.03, 0.2),
+        ),
+        ("S013_initial_volume", "L", paths("water_loop.reservoir_initial_volume_l"), (100.0, 140.0), (120.0,)),
+        ("S014_return_fraction", "dimensionless", paths("water_loop.drainage_return_fraction"), (0.5, 0.9), (0.7,)),
+        ("S015_irrigation", "L plant^-1 day^-1", paths("water_loop.irrigation_volume_l_per_plant_day"), (0.4, 0.8), (0.6,)),
+        ("S016_anchor_purge", "L day^-1", paths("water_loop.purge_volume_l_day"), (0.6, 2.4), (1.2,)),
+        ("S017_sample_volume", "L sample^-1", paths("water_loop.sampling_volume_l_per_sample"), (0.025, 0.1), (0.05,)),
+        ("S018_canopy_error", "log-ratio", paths("observation.canopy_observation_error_sd"), (0.025, 0.1), (0.05,)),
+        ("S019_ion_error", "log-ratio", paths("observation.ion_observation_error_sd"), (0.02, 0.08), (0.04,)),
+        (
+            "S020_heteroscedasticity",
+            "multiplier",
+            paths(
+                "observation.canopy_heteroscedastic_log_slope",
+                "observation.ion_heteroscedastic_log_slope",
+            ),
+            (0.5, 2.0),
+            (0.1, 0.08),
+        ),
+        (
+            "S021_limits",
+            "multiplier",
+            tuple(
+                scenario + f"censoring.{map_name}.{endpoint_id}"
+                for map_name in ("lod_by_endpoint", "loq_by_endpoint")
+                for endpoint_id in limits
+            ),
+            (0.5, 2.0),
+            (
+                0.01,
+                0.01,
+                0.01,
+                0.005,
+                0.0005,
+                0.005,
+                0.1,
+                0.1,
+                0.03,
+                0.03,
+                0.03,
+                0.015,
+                0.0015,
+                0.015,
+                0.3,
+                0.3,
+            ),
+        ),
+        (
+            "S022_limit_variation",
+            "log-ratio",
+            tuple(
+                scenario + f"censoring.{map_name}.{endpoint_id}"
+                for map_name in (
+                    "lod_log_sd_by_endpoint",
+                    "loq_log_sd_by_endpoint",
+                )
+                for endpoint_id in limits
+            ),
+            (0.0, 0.025, 0.1),
+            (0.05,) * 16,
+        ),
+        ("S023_calibration_interval", "day", paths("drift.calibration_interval_days"), (3.5, 14.0), (7.0,)),
+        (
+            "S024_drift_residuals",
+            "multiplier",
+            tuple(
+                scenario
+                + "drift.post_calibration_residual_sd_by_endpoint."
+                + endpoint_id
+                for endpoint_id in endpoints
+            ),
+            (0.5, 2.0),
+            (0.005, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.25, 0.01),
+        ),
+        (
+            "S025_death_heterogeneity",
+            "log-ratio",
+            paths(
+                "death.biomass_death_threshold_log_sd",
+                "death.injury_death_threshold_log_sd",
+                "death.sustained_injury_duration_log_sd",
+            ),
+            (0.0, 0.05, 0.2, 0.3),
+            (0.1, 0.1, 0.1),
+        ),
+        ("S026_missingness_intercept", "logit", paths("missingness.missingness_intercept"), (-4.0, -2.0), (-3.0,)),
+        ("S027_mar_slope", "logit/SD", paths("missingness.missingness_stress_slope"), (0.0, 0.4, 0.8), (0.2,)),
+        ("S028_mnar_delta", "logit/SD", paths("missingness.mnar_tipping_delta"), (-0.2, -0.1, 0.0, 0.2), (0.1,)),
+        ("S029_parameter_xtol", "dimensionless", paths("calibration.parameter_xtol"), (1e-8, 1e-4), (1e-6,)),
+        ("S030_parameter_rtol", "dimensionless", paths("calibration.parameter_rtol"), (1e-8, 1e-4), (1e-6,)),
+        (
+            "S031_panel_size",
+            "count",
+            paths("calibration.fit_panel_size", "calibration.holdout_panel_size"),
+            (32, 128),
+            (64, 64),
+        ),
+        ("S032_holdout_tolerance", "log-ratio", paths("calibration.holdout_tolerance_log_ratio"), (0.01, 0.05), (0.02,)),
+        ("S033_confirmation_cell", "count", paths("design.confirmation_plants_per_group_reservoir"), (5,), (6,)),
+        (
+            "S034_chassis_modifier",
+            "dimensionless",
+            (
+                selected
+                + "chassis_interaction].mechanism."
+                "candidate_chassis_mechanism_modifiers.C5."
+                "xylem_na_retrieval_multiplier.factor",
+            ),
+            (0.6, 1.0),
+            (0.8,),
+        ),
+        (
+            "S035_delayed_onset",
+            "day",
+            (selected + "delayed_toxicity].mechanism.onset_time_days",),
+            (28.0, 56.0),
+            (42.0,),
+        ),
+        (
+            "S036_insufficient_purge",
+            "L day^-1",
+            (
+                selected
+                + "insufficient_purge].generator.water_loop.purge_volume_l_day",
+            ),
+            (0.0, 0.3),
+            (0.12,),
+        ),
+    )
+
+
+_REGISTERED_TASK4_SENSITIVITY_AUTHORITY = _task4_sensitivity_authority()
+_REGISTERED_TASK4_SENSITIVITY_BY_ID = MappingProxyType(
+    {row[0]: row for row in _REGISTERED_TASK4_SENSITIVITY_AUTHORITY}
+)
+
+
+def _task4_capacity_sensitivity_bindings() -> Mapping[
+    str,
+    tuple[str, str, str | None, tuple[float, ...]],
+]:
+    """Derive the frozen capacity set from exact registered water-loop paths."""
+
+    anchor_prefix = _TASK4_SENSITIVITY_SCENARIO_PREFIX + "water_loop."
+    scenario_marker = "].generator.water_loop."
+    water_loop_fields = frozenset(
+        name for name, _, _ in _TASK4_WATER_LOOP_AUTHORITY
+    )
+    bindings: dict[
+        str,
+        tuple[str, str, str | None, tuple[float, ...]],
+    ] = {}
+    for sensitivity_id, _, paths, values, _ in (
+        _REGISTERED_TASK4_SENSITIVITY_AUTHORITY
+    ):
+        if len(paths) != 1:
+            continue
+        path = paths[0]
+        target_scenario_id: str | None
+        if path.startswith(anchor_prefix):
+            field_name = path[len(anchor_prefix) :]
+            target_scenario_id = None
+        elif path.startswith(_TASK4_SENSITIVITY_SCENARIO_SELECTOR_PREFIX):
+            selector = path[len(_TASK4_SENSITIVITY_SCENARIO_SELECTOR_PREFIX) :]
+            target_scenario_id, marker, field_name = selector.partition(
+                scenario_marker
+            )
+            if not marker or not target_scenario_id:
+                continue
+        else:
+            continue
+        if field_name not in water_loop_fields:
+            continue
+        if any(type(value) is not float for value in values):
+            raise AssertionError("water-loop sensitivity values must be floats")
+        bindings[sensitivity_id] = (
+            path,
+            field_name,
+            target_scenario_id,
+            values,  # type: ignore[arg-type]
+        )
+    if tuple(bindings) != (
+        "S013_initial_volume",
+        "S014_return_fraction",
+        "S015_irrigation",
+        "S016_anchor_purge",
+        "S017_sample_volume",
+        "S036_insufficient_purge",
+    ):
+        raise AssertionError("registered water-loop sensitivity set changed")
+    return MappingProxyType(bindings)
+
+
+_TASK4_CAPACITY_SENSITIVITY_BINDINGS = _task4_capacity_sensitivity_bindings()
+
+
+def _canonical_task4_capacity_sensitivity_binding(
+    binding: object,
+) -> tuple[str, float]:
+    if (
+        type(binding) is not tuple
+        or len(binding) != 3
+        or type(binding[0]) is not str
+        or type(binding[1]) is not str
+        or type(binding[2]) is not float
+    ):
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "capacity sensitivity binding must be an exact ID/path/value tuple",
+            "registered_sensitivity_binding",
+        )
+    sensitivity_id, path, value = binding
+    registered = _TASK4_CAPACITY_SENSITIVITY_BINDINGS.get(sensitivity_id)
+    if registered is None:
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "capacity sensitivity ID is not a registered water-loop sensitivity",
+            "registered_sensitivity_binding",
+        )
+    registered_path, field_name, _, registered_values = registered
+    if path != registered_path or not any(
+        _same_registered_number(value, candidate)
+        for candidate in registered_values
+    ):
+        fail(
+            "WATER_BATCH_GENERATOR_INVALID",
+            "capacity sensitivity path or value differs from the registration",
+            "registered_sensitivity_binding",
+        )
+    return field_name, value
+
+
+REGISTERED_TASK4_SCENARIO_REGISTRY_SHA256 = (
+    "36033d8d58b65cc5647c0139ba4bebf92250cf9d8a7c08eba81f54b89ea10e51"
+)
+REGISTERED_TASK4_SCENARIO_MODEL_SHA256 = (
+    "4229e855bcf783d994ce24f6dc98d1dc8eded92f5134f854880cb44204f6150a"
+)
+
+
+class SensitivityRecord(StrictPaper1Model):
+    """One exact, prospective, one-at-a-time Task 4 sensitivity record."""
+
+    sensitivity_id: str
+    mode: Literal["one_at_a_time"]
+    paths: tuple[str, ...]
+    values: tuple[int | float, ...]
+    unit: str
+    anchor_value: tuple[int | float, ...]
+    evidence_label: Literal[EvidenceLabel.HYPOTHESIS_PRIOR]
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_primitive_registration(cls, value: object) -> object:
+        if type(value) not in (dict, _MAPPING_PROXY_TYPE):
+            raise ValueError("sensitivity record requires a primitive mapping")
+        required = tuple(cls.model_fields)
+        if tuple(value) != required:
+            raise ValueError("sensitivity record fields and order are frozen")
+        sensitivity_id = value.get("sensitivity_id")
+        mode = value.get("mode")
+        unit = value.get("unit")
+        evidence_label = value.get("evidence_label")
+        paths = value.get("paths")
+        values = value.get("values")
+        anchors = value.get("anchor_value")
+        if (
+            type(sensitivity_id) is not str
+            or sensitivity_id not in _REGISTERED_TASK4_SENSITIVITY_BY_ID
+            or type(mode) is not str
+            or mode != "one_at_a_time"
+            or type(unit) is not str
+            or type(evidence_label) not in (str, EvidenceLabel)
+            or evidence_label != EvidenceLabel.HYPOTHESIS_PRIOR
+            or type(paths) not in (list, tuple)
+            or type(values) not in (list, tuple)
+            or type(anchors) not in (list, tuple)
+        ):
+            raise ValueError("sensitivity registration has invalid primitive types")
+        numeric_type = int if unit == "count" else float
+        for collection in (values, anchors):
+            if not collection or any(type(item) is not numeric_type for item in collection):
+                raise ValueError("sensitivity numeric types must be exact")
+            if numeric_type is int:
+                if any(item < 0 or item > MAX_INTEROPERABLE_JSON_INTEGER for item in collection):
+                    raise ValueError("sensitivity counts exceed the safe integer domain")
+            elif any(not isfinite(item) for item in collection):
+                raise ValueError("sensitivity values must be finite")
+        if (
+            not paths
+            or any(
+                type(path) is not str
+                or not path
+                or path != path.strip()
+                or "::" not in path
+                or "*" in path
+                or "..." in path
+                for path in paths
+            )
+            or len(set(paths)) != len(paths)
+        ):
+            raise ValueError("sensitivity paths must be unique literal document paths")
+        return value
+
+    @model_validator(mode="after")
+    def require_exact_registered_record(self) -> "SensitivityRecord":
+        expected = _REGISTERED_TASK4_SENSITIVITY_BY_ID[self.sensitivity_id]
+        observed = (
+            self.sensitivity_id,
+            self.unit,
+            self.paths,
+            self.values,
+            self.anchor_value,
+        )
+        if observed != expected:
+            raise ValueError("sensitivity record differs from prospective authority")
+        if len(self.anchor_value) != len(self.paths):
+            raise ValueError("sensitivity anchors must align one-for-one with paths")
+        return self
+
+
+def _sensitivity_record_signature(record: SensitivityRecord) -> tuple[object, ...]:
+    return (
+        record.sensitivity_id,
+        record.unit,
+        record.paths,
+        record.values,
+        record.anchor_value,
+    )
+
+
+class SensitivityRegistry(StrictPaper1Model):
+    """The complete prospective Task 4 sensitivity authority."""
+
+    schema_version: Literal["1.0.0"]
+    records: tuple[SensitivityRecord, ...]
+
+    @model_validator(mode="after")
+    def require_complete_authority(self) -> "SensitivityRegistry":
+        observed = tuple(_sensitivity_record_signature(record) for record in self.records)
+        if observed != _REGISTERED_TASK4_SENSITIVITY_AUTHORITY:
+            raise ValueError("sensitivity registry must equal all 36 registered records")
+        paths = tuple(path for record in self.records for path in record.paths)
+        if len(paths) != 84 or len(set(paths)) != 84:
+            raise ValueError("sensitivity registry must contain 84 unique literal paths")
+        return self
+
+
 class SyntheticScenarioRegistry(StrictPaper1Model):
     schema_version: Literal["1.4.0"]
     water_recipe_registry_sha256: str
     anchor: SyntheticScenarioConfig
     scenarios: tuple[SyntheticScenarioConfig, ...]
+    sensitivities: tuple[SensitivityRecord, ...] = ()
 
     @field_validator("water_recipe_registry_sha256", mode="before")
     @classmethod
@@ -3459,6 +4051,13 @@ class SyntheticScenarioRegistry(StrictPaper1Model):
                 > scenario.generator.design.duration_days.value
             ):
                 raise ValueError("scenario onset must fall within the design")
+        if self.sensitivities:
+            observed_sensitivities = tuple(
+                _sensitivity_record_signature(record)
+                for record in self.sensitivities
+            )
+            if observed_sensitivities != _REGISTERED_TASK4_SENSITIVITY_AUTHORITY:
+                raise ValueError("scenario sensitivities differ from the registration")
         return self
 
     @property
@@ -3468,6 +4067,354 @@ class SyntheticScenarioRegistry(StrictPaper1Model):
     @model_serializer(mode="plain")
     def serialize_registered_registry(self) -> dict[str, object]:
         return _registered_json_value(self)  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class AppliedSensitivity:
+    """Detached, validated authority pair for one registered sensitivity run."""
+
+    run_id: str
+    sensitivity_id: str
+    value_index: int
+    selected_value: int | float
+    scenario_registry: SyntheticScenarioRegistry
+    recipe_registry: Paper1WaterRecipeRegistry
+    applied_paths: tuple[str, ...]
+    applied_values: tuple[int | float, ...]
+    calibration_panel_sha256s: Mapping[str, str]
+    capacity_audits: tuple[SharedSourceBatchCapacityAudit, ...]
+
+
+_TASK4_SENSITIVITY_PANEL_SHA256S = MappingProxyType(
+    {
+        32: MappingProxyType(
+            {
+                "fit": "8b042b703b1c5148886182b344317986776fef8d68e795688741f74d54d790e3",
+                "holdout": "80224dfe438556e8caa0ae561d79649acf465d8c09218bd429edb7d1bbc5f41a",
+            }
+        ),
+        128: MappingProxyType(
+            {
+                "fit": "91b9c4d937b0417097f6e4b7272eff4efcf4a6dfdc23e76c73876a7e5ae02cc9",
+                "holdout": "3df1fde7553bd5942a195e67eb7438f501e6ce6df3bd22f08397b623f5b97f11",
+            }
+        ),
+    }
+)
+
+
+def _sensitivity_invalid(
+    message: str,
+    field_path: str = "registry",
+    details: dict[str, object] | None = None,
+) -> None:
+    fail("SENSITIVITY_REGISTRY_INVALID", message, field_path, details)
+
+
+def _canonical_sensitivity_registry(authority: object) -> SensitivityRegistry:
+    if type(authority) is not SensitivityRegistry:
+        _sensitivity_invalid(
+            "sensitivity authority must be an exact SensitivityRegistry",
+            details={"received_type": type(authority).__name__},
+        )
+    try:
+        return SensitivityRegistry.model_validate(_registered_json_value(authority))
+    except Exception as error:
+        _sensitivity_invalid(
+            "sensitivity authority failed complete reconstruction",
+            details={"cause_type": type(error).__name__},
+        )
+
+
+def _canonical_sensitivity_scenarios(
+    registry: object,
+) -> SyntheticScenarioRegistry:
+    if type(registry) is not SyntheticScenarioRegistry:
+        _sensitivity_invalid(
+            "scenario authority must be an exact SyntheticScenarioRegistry",
+            "scenario_registry",
+            {"received_type": type(registry).__name__},
+        )
+    try:
+        checked = SyntheticScenarioRegistry.model_validate(
+            _registered_json_value(registry)
+        )
+    except Exception as error:
+        _sensitivity_invalid(
+            "scenario authority failed complete reconstruction",
+            "scenario_registry",
+            {"cause_type": type(error).__name__},
+        )
+    if len(checked.sensitivities) != 36:
+        _sensitivity_invalid(
+            "scenario authority omits the complete sensitivity registry",
+            "scenario_registry.sensitivities",
+        )
+    digest = hashlib.sha256(
+        canonical_json_bytes(_registered_json_value(checked))
+    ).hexdigest()
+    if digest != REGISTERED_TASK4_SCENARIO_MODEL_SHA256:
+        _sensitivity_invalid(
+            "scenario authority differs from the canonical nominal registry",
+            "scenario_registry",
+            {"received_sha256": digest},
+        )
+    return checked
+
+
+def _sensitivity_target(
+    documents: Mapping[str, dict[str, object]], path: str
+) -> tuple[dict[str, object], str]:
+    try:
+        document_id, expression = path.split("::", 1)
+        current: object = documents[document_id]
+        segments = expression.split(".")
+        for segment in segments[:-1]:
+            if "[" in segment:
+                collection_id, selector = segment.split("[", 1)
+                selector = selector.removesuffix("]")
+                selector_field, selector_value = selector.split("=", 1)
+                if type(current) is not dict:
+                    raise TypeError("selector parent is not a mapping")
+                collection = current[collection_id]
+                if type(collection) is not list:
+                    raise TypeError("selector target is not a list")
+                matches = [
+                    row
+                    for row in collection
+                    if type(row) is dict and row.get(selector_field) == selector_value
+                ]
+                if len(matches) != 1:
+                    raise KeyError("selector does not identify exactly one row")
+                current = matches[0]
+            else:
+                if type(current) is not dict:
+                    raise TypeError("path parent is not a mapping")
+                current = current[segment]
+        if type(current) is not dict:
+            raise TypeError("leaf parent is not a mapping")
+        leaf = segments[-1]
+        if leaf not in current:
+            raise KeyError(leaf)
+        target = current[leaf]
+        if type(target) is dict and tuple(target) == (
+            "value",
+            "unit",
+            "evidence_label",
+        ):
+            return target, "value"
+        return current, leaf
+    except (KeyError, TypeError, ValueError) as error:
+        _sensitivity_invalid(
+            "registered sensitivity path could not be resolved literally",
+            path,
+            {"cause_type": type(error).__name__},
+        )
+
+
+def _same_registered_number(left: object, right: int | float) -> bool:
+    if type(left) is not type(right):
+        return False
+    if type(right) is float:
+        return left.hex() == right.hex()  # type: ignore[union-attr]
+    return left == right
+
+
+def apply_registered_sensitivity(
+    authority: SensitivityRegistry,
+    *,
+    scenario_registry: SyntheticScenarioRegistry,
+    recipe_registry: Paper1WaterRecipeRegistry,
+    selections: tuple[tuple[str, int], ...],
+    occupied_run_ids: frozenset[str] = frozenset(),
+    capacity_authorities: tuple[
+        tuple[object, object, object, object], ...
+    ] = (),
+    stop_policy: Task4StopPolicy,
+) -> AppliedSensitivity:
+    """Apply exactly one registered scalar to its complete literal path bundle."""
+
+    checked_authority = _canonical_sensitivity_registry(authority)
+    checked_scenarios = _canonical_sensitivity_scenarios(scenario_registry)
+    try:
+        checked_recipes = _canonical_water_recipe_registry(recipe_registry)
+    except AlmondLabError as error:
+        _sensitivity_invalid(
+            "recipe authority failed complete reconstruction",
+            "recipe_registry",
+            {"cause_code": error.code},
+        )
+    try:
+        checked_policy = _canonical_task4_stop_policy(stop_policy)
+    except AlmondLabError as error:
+        _sensitivity_invalid(
+            "stop authority failed complete reconstruction",
+            "stop_policy",
+            {"cause_code": error.code},
+        )
+    if (
+        type(selections) is not tuple
+        or len(selections) != 1
+        or type(selections[0]) is not tuple
+        or len(selections[0]) != 2
+        or type(selections[0][0]) is not str
+        or type(selections[0][1]) is not int
+    ):
+        _sensitivity_invalid(
+            "one run must select exactly one registered ID and one value index",
+            "selections",
+        )
+    sensitivity_id, value_index = selections[0]
+    records = {
+        record.sensitivity_id: record for record in checked_authority.records
+    }
+    if sensitivity_id not in records:
+        _sensitivity_invalid("selected sensitivity ID is not registered", "selections")
+    record = records[sensitivity_id]
+    if value_index < 0 or value_index >= len(record.values):
+        _sensitivity_invalid("selected sensitivity index is out of range", "selections")
+    if type(occupied_run_ids) is not frozenset or any(
+        type(run_id) is not str for run_id in occupied_run_ids
+    ):
+        _sensitivity_invalid("occupied run IDs must be an exact string frozenset", "occupied_run_ids")
+    run_id = f"{sensitivity_id}__value_{value_index}"
+    if run_id in occupied_run_ids:
+        _sensitivity_invalid("derived sensitivity run ID already exists", "run_id")
+    if type(capacity_authorities) is not tuple or any(
+        type(item) is not tuple or len(item) != 4
+        for item in capacity_authorities
+    ):
+        _sensitivity_invalid(
+            "capacity authorities must be exact four-authority tuples",
+            "capacity_authorities",
+        )
+    capacity_binding = _TASK4_CAPACITY_SENSITIVITY_BINDINGS.get(
+        sensitivity_id
+    )
+    if capacity_binding is not None and not capacity_authorities:
+        _sensitivity_invalid(
+            "registered water-loop sensitivity requires capacity authority",
+            "capacity_authorities",
+        )
+
+    scenario_payload = _registered_json_value(checked_scenarios)
+    recipe_payload = _registered_json_value(checked_recipes)
+    if type(scenario_payload) is not dict or type(recipe_payload) is not dict:
+        raise AssertionError("registered sensitivity documents must serialize to maps")
+    documents = {
+        "configs/synthetic_scenarios.yaml": scenario_payload,
+        "configs/paper1_water_recipes.yaml": recipe_payload,
+    }
+
+    # Revalidate every registered anchor, not merely the selected record, before
+    # writing any detached output tree.
+    for authority_record in checked_authority.records:
+        for path, expected_anchor in zip(
+            authority_record.paths, authority_record.anchor_value, strict=True
+        ):
+            container, key = _sensitivity_target(documents, path)
+            if not _same_registered_number(container[key], expected_anchor):
+                _sensitivity_invalid(
+                    "current target differs bit-exactly from its registered anchor",
+                    path,
+                )
+
+    selected_value = record.values[value_index]
+    applied_values: list[int | float] = []
+    for path, anchor in zip(record.paths, record.anchor_value, strict=True):
+        replacement: int | float
+        if record.unit == "multiplier":
+            replacement = anchor * selected_value
+            if type(anchor) is float:
+                replacement = float(replacement)
+        else:
+            replacement = selected_value
+        container, key = _sensitivity_target(documents, path)
+        container[key] = replacement
+        applied_values.append(replacement)
+
+    try:
+        applied_scenarios = SyntheticScenarioRegistry.model_validate(
+            scenario_payload
+        )
+        recipe_context = None
+        if sensitivity_id == "S001_charge_tolerance":
+            recipe_context = {
+                "registered_sensitivity_charge_balance_tolerance_percent": float(
+                    selected_value
+                )
+            }
+        applied_recipes = Paper1WaterRecipeRegistry.model_validate(
+            recipe_payload,
+            context=recipe_context,
+        )
+    except Exception as error:
+        _sensitivity_invalid(
+            "registered sensitivity produced an invalid detached authority",
+            "application",
+            {"cause_type": type(error).__name__},
+        )
+
+    capacity_audits: tuple[SharedSourceBatchCapacityAudit, ...] = ()
+    if capacity_authorities:
+        capacity_water_loop = applied_scenarios.anchor.generator.water_loop
+        registered_capacity_binding = None
+        if capacity_binding is not None:
+            registered_path, _, target_scenario_id, registered_values = (
+                capacity_binding
+            )
+            if record.paths != (registered_path,) or not any(
+                _same_registered_number(selected_value, candidate)
+                for candidate in registered_values
+            ):
+                _sensitivity_invalid(
+                    "capacity sensitivity selection differs from its literal registration",
+                    "selections",
+                )
+            if target_scenario_id is not None:
+                targets = tuple(
+                    scenario
+                    for scenario in applied_scenarios.scenarios
+                    if scenario.scenario_id.value == target_scenario_id
+                )
+                if len(targets) != 1:
+                    _sensitivity_invalid(
+                        "capacity sensitivity target scenario is unavailable",
+                        registered_path,
+                    )
+                capacity_water_loop = targets[0].generator.water_loop
+            registered_capacity_binding = (
+                sensitivity_id,
+                registered_path,
+                float(selected_value),
+            )
+        for config, baseline_roster, position_map, manifest in capacity_authorities:
+            capacity_audits += preflight_shared_source_batch_capacity(
+                checked_policy,
+                config=config,  # type: ignore[arg-type]
+                baseline_roster=baseline_roster,  # type: ignore[arg-type]
+                position_map=position_map,  # type: ignore[arg-type]
+                manifest=manifest,  # type: ignore[arg-type]
+                recipe_registry=checked_recipes,
+                water_loop=capacity_water_loop,
+                registered_sensitivity_binding=registered_capacity_binding,
+            )
+
+    panel_sha256s: Mapping[str, str] = MappingProxyType({})
+    if sensitivity_id == "S031_panel_size":
+        panel_sha256s = _TASK4_SENSITIVITY_PANEL_SHA256S[int(selected_value)]
+    return AppliedSensitivity(
+        run_id=run_id,
+        sensitivity_id=sensitivity_id,
+        value_index=value_index,
+        selected_value=selected_value,
+        scenario_registry=applied_scenarios,
+        recipe_registry=applied_recipes,
+        applied_paths=record.paths,
+        applied_values=tuple(applied_values),
+        calibration_panel_sha256s=panel_sha256s,
+        capacity_audits=capacity_audits,
+    )
 
 
 class MigrationDisposition(StrEnum):
@@ -4089,6 +5036,290 @@ def _load_yaml_mapping(
     return payload
 
 
+TASK4_MAX_YAML_DEPTH = 64
+TASK4_MAX_YAML_NODES = 175_000
+TASK4_MAX_YAML_BYTES = 3_500_000
+
+
+class YamlMergeKeyError(yaml.YAMLError):
+    """A Task 4 authority attempted to use YAML merge semantics."""
+
+
+class YamlAliasReferenceError(yaml.YAMLError):
+    """A Task 4 authority attempted to use a YAML alias."""
+
+
+class YamlAnchorDefinitionError(yaml.YAMLError):
+    """A Task 4 authority attempted to define hidden YAML identity."""
+
+
+class YamlResourceLimitError(yaml.YAMLError):
+    """A Task 4 YAML stream exceeds its narrowly registered resource budget."""
+
+    def __init__(self, resource: str, limit: int, observed: int) -> None:
+        super().__init__(f"Task 4 YAML {resource} exceeds {limit}")
+        self.resource = resource
+        self.limit = limit
+        self.observed = observed
+
+
+def _task4_yaml_graph_has_cycle(root: yaml.nodes.Node) -> bool:
+    active: set[int] = set()
+    complete: set[int] = set()
+    stack: list[tuple[yaml.nodes.Node, bool]] = [(root, False)]
+    while stack:
+        node, exiting = stack.pop()
+        identity = id(node)
+        if exiting:
+            active.remove(identity)
+            complete.add(identity)
+            continue
+        if identity in active:
+            return True
+        if identity in complete:
+            continue
+        active.add(identity)
+        stack.append((node, True))
+        if isinstance(node, yaml.nodes.MappingNode):
+            children = tuple(
+                child for pair in node.value for child in pair
+            )
+        elif isinstance(node, yaml.nodes.SequenceNode):
+            children = tuple(node.value)
+        else:
+            children = ()
+        for child in reversed(children):
+            stack.append((child, False))
+    return False
+
+
+class _Task4SafeLoader(yaml.SafeLoader):
+    """Alias-free loader with exact primitive string keys and duplicates denied."""
+
+    def construct_mapping(
+        self, node: yaml.nodes.MappingNode, deep: bool = False
+    ) -> dict[str, object]:
+        if not isinstance(node, yaml.nodes.MappingNode):
+            raise yaml.constructor.ConstructorError(
+                None,
+                None,
+                "expected a mapping node",
+                node.start_mark,
+            )
+        mapping: dict[str, object] = {}
+        for key_node, value_node in node.value:
+            if (
+                not isinstance(key_node, yaml.nodes.ScalarNode)
+                or key_node.tag != "tag:yaml.org,2002:str"
+            ):
+                raise yaml.YAMLError("Task 4 YAML keys must be primitive strings")
+            key = key_node.value
+            if key in mapping:
+                raise YamlDuplicateKeyError(key, key_node)
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
+
+
+def _task4_strict_yaml_load(stream: str) -> object:
+    """Load the explicit v1.4 authority under its separate 175k-node cap."""
+
+    byte_count = len(stream.encode("utf-8"))
+    if byte_count > TASK4_MAX_YAML_BYTES:
+        raise YamlResourceLimitError(
+            "bytes", TASK4_MAX_YAML_BYTES, byte_count
+        )
+
+    _, anchors, aliases, merges = _scan_task4_yaml_stream(stream)
+    if merges:
+        raise YamlMergeKeyError("Task 4 YAML merge keys are forbidden")
+    if aliases:
+        # The scanner has already bounded depth/nodes. Compose only the small
+        # rejected graph so a cycle receives its stable specific error.
+        root = yaml.compose(stream, Loader=yaml.SafeLoader)
+        if root is not None and _task4_yaml_graph_has_cycle(root):
+            raise YamlAliasCycleError(root)
+        raise YamlAliasReferenceError("Task 4 YAML aliases are forbidden")
+    if anchors:
+        raise YamlAnchorDefinitionError("Task 4 YAML anchors are forbidden")
+    return yaml.load(stream, Loader=_Task4SafeLoader)
+
+
+def _scan_task4_yaml_stream(stream: str) -> tuple[tuple[yaml.Token, ...], int, int, int]:
+    """Scan once under the Task 4 node/depth budget before composition."""
+
+    depth = 0
+    nodes = 0
+    maximum_depth = 0
+    anchors = 0
+    aliases = 0
+    merges = 0
+    tokens: list[yaml.Token] = []
+    start_tokens = (
+        yaml.tokens.BlockMappingStartToken,
+        yaml.tokens.BlockSequenceStartToken,
+        yaml.tokens.FlowMappingStartToken,
+        yaml.tokens.FlowSequenceStartToken,
+    )
+    end_tokens = (
+        yaml.tokens.BlockEndToken,
+        yaml.tokens.FlowMappingEndToken,
+        yaml.tokens.FlowSequenceEndToken,
+    )
+    for token in yaml.scan(stream, Loader=yaml.SafeLoader):
+        tokens.append(token)
+        if isinstance(token, start_tokens):
+            depth += 1
+            maximum_depth = max(maximum_depth, depth)
+            nodes += 1
+        elif isinstance(token, end_tokens):
+            depth -= 1
+        elif isinstance(token, (yaml.tokens.ScalarToken, yaml.tokens.AliasToken)):
+            nodes += 1
+        anchors += int(isinstance(token, yaml.tokens.AnchorToken))
+        aliases += int(isinstance(token, yaml.tokens.AliasToken))
+        merges += int(
+            isinstance(token, yaml.tokens.ScalarToken) and token.value == "<<"
+        )
+        if maximum_depth > TASK4_MAX_YAML_DEPTH:
+            raise YamlResourceLimitError(
+                "depth", TASK4_MAX_YAML_DEPTH, maximum_depth
+            )
+        if nodes > TASK4_MAX_YAML_NODES:
+            raise YamlResourceLimitError(
+                "nodes", TASK4_MAX_YAML_NODES, nodes
+            )
+    return tuple(tokens), anchors, aliases, merges
+
+
+def _load_task4_yaml_mapping(path: str | Path) -> dict[str, object]:
+    try:
+        stream = _read_task4_yaml_stream(path)
+        payload = _task4_strict_yaml_load(stream)
+    except YamlDuplicateKeyError as error:
+        fail(
+            "SYNTHETIC_SCENARIO_INVALID",
+            "synthetic scenario YAML contains a duplicate explicit mapping key",
+            "yaml",
+            {
+                "duplicate_key": str(error.key),
+                "line": error.line,
+                "column": error.column,
+            },
+        )
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        yaml.YAMLError,
+        RecursionError,
+        MemoryError,
+    ) as error:
+        _scenario_invalid(
+            "synthetic scenario YAML could not be safely loaded",
+            "yaml",
+            cause=error,
+        )
+    if type(payload) is not dict:
+        _scenario_invalid("synthetic scenario YAML must be a mapping", "yaml")
+    return payload
+
+
+def _read_task4_yaml_stream(path: str | Path) -> str:
+    """Reject an oversized Task 4 authority before allocating or decoding it."""
+
+    source = Path(path)
+    try:
+        observed_bytes = source.stat().st_size
+    except OSError as error:
+        _scenario_invalid(
+            "synthetic scenario YAML could not be inspected",
+            "yaml",
+            cause=error,
+        )
+    if observed_bytes > TASK4_MAX_YAML_BYTES:
+        _scenario_invalid(
+            "synthetic scenario YAML exceeds its registered byte budget",
+            "yaml",
+            cause=YamlResourceLimitError(
+                "bytes", TASK4_MAX_YAML_BYTES, observed_bytes
+            ),
+        )
+    try:
+        with source.open("rb") as handle:
+            raw = handle.read(TASK4_MAX_YAML_BYTES + 1)
+        if len(raw) > TASK4_MAX_YAML_BYTES:
+            raise YamlResourceLimitError(
+                "bytes", TASK4_MAX_YAML_BYTES, len(raw)
+            )
+        return raw.decode("utf-8")
+    except (OSError, UnicodeError, YamlResourceLimitError) as error:
+        _scenario_invalid(
+            "synthetic scenario YAML could not be safely read",
+            "yaml",
+            cause=error,
+        )
+
+
+def _declared_scenario_schema_version(stream: str) -> str | None:
+    """Read only an explicit root mapping key after bounded token scanning."""
+
+    tokens, _, _, _ = _scan_task4_yaml_stream(stream)
+    root_depth = 0
+    root_mapping_started = False
+    expecting_root_key = False
+    pending_schema_value = False
+    values: list[tuple[str, yaml.Token]] = []
+    start_tokens = (
+        yaml.tokens.BlockMappingStartToken,
+        yaml.tokens.BlockSequenceStartToken,
+        yaml.tokens.FlowMappingStartToken,
+        yaml.tokens.FlowSequenceStartToken,
+    )
+    end_tokens = (
+        yaml.tokens.BlockEndToken,
+        yaml.tokens.FlowMappingEndToken,
+        yaml.tokens.FlowSequenceEndToken,
+    )
+    for token in tokens:
+        if isinstance(token, start_tokens):
+            root_depth += 1
+            if not root_mapping_started:
+                root_mapping_started = isinstance(
+                    token,
+                    (yaml.tokens.BlockMappingStartToken, yaml.tokens.FlowMappingStartToken),
+                )
+            continue
+        if isinstance(token, end_tokens):
+            root_depth -= 1
+            continue
+        if not root_mapping_started or root_depth != 1:
+            continue
+        if isinstance(token, yaml.tokens.KeyToken):
+            expecting_root_key = True
+            pending_schema_value = False
+            continue
+        if expecting_root_key and isinstance(token, yaml.tokens.ScalarToken):
+            pending_schema_value = token.value == "schema_version"
+            expecting_root_key = False
+            continue
+        if pending_schema_value and isinstance(token, yaml.tokens.ValueToken):
+            continue
+        if pending_schema_value and isinstance(token, yaml.tokens.ScalarToken):
+            values.append((token.value, token))
+            pending_schema_value = False
+    if len(values) > 1:
+        duplicate = values[1][1]
+        node = yaml.nodes.ScalarNode(
+            "tag:yaml.org,2002:str",
+            "schema_version",
+            start_mark=duplicate.start_mark,
+            end_mark=duplicate.end_mark,
+        )
+        raise YamlDuplicateKeyError("schema_version", node)
+    return values[0][0] if values else None
+
+
 def load_candidate_specs(path: str | Path) -> CandidateRegistry:
     """Load the complete ordered Paper 1 candidate registry."""
     return CandidateRegistry.model_validate(_load_yaml_mapping(path))
@@ -4431,14 +5662,51 @@ def validate_active_paper1_water_recipes(
 
 def load_synthetic_scenarios(path: str | Path) -> SyntheticScenarioRegistry:
     """Load the active v1.4 registry; legacy documents require migration."""
-    raw = _load_yaml_mapping(path, scenario_boundary=True)
-    if "schema_version" not in raw:
+    try:
+        stream = _read_task4_yaml_stream(path)
+        if (
+            hashlib.sha256(stream.encode("utf-8")).hexdigest()
+            == REGISTERED_V13_SCENARIO_RAW_SHA256
+        ):
+            fail(
+                "SCENARIO_SCHEMA_MIGRATION_REQUIRED",
+                "active generation accepts only the v1.4 scenario registry",
+                "schema_version",
+                {"received": "1.3.0"},
+            )
+        declared_version = _declared_scenario_schema_version(stream)
+    except AlmondLabError:
+        raise
+    except YamlDuplicateKeyError as error:
+        fail(
+            "SYNTHETIC_SCENARIO_INVALID",
+            "synthetic scenario YAML contains a duplicate explicit mapping key",
+            "yaml",
+            {
+                "duplicate_key": str(error.key),
+                "line": error.line,
+                "column": error.column,
+            },
+        )
+    except yaml.YAMLError as error:
+        _scenario_invalid(
+            "synthetic scenario YAML could not be safely inspected",
+            "yaml",
+            cause=error,
+        )
+    if declared_version is None:
+        # Validate alternate YAML syntax before reporting a missing/legacy
+        # schema. This preserves explicit v1.3 migration precedence while
+        # still rejecting a merge-only attempt to synthesize v1.4 authority.
+        _load_task4_yaml_mapping(path)
+    if declared_version != "1.4.0":
         fail(
             "SCENARIO_SCHEMA_MIGRATION_REQUIRED",
             "active generation accepts only the v1.4 scenario registry",
             "schema_version",
-            {"received": "1.3.0"},
+            {"received": declared_version or "1.3.0"},
         )
+    raw = _load_task4_yaml_mapping(path)
     if raw.get("schema_version") != "1.4.0":
         fail(
             "SCENARIO_SCHEMA_MIGRATION_REQUIRED",
@@ -4447,9 +5715,21 @@ def load_synthetic_scenarios(path: str | Path) -> SyntheticScenarioRegistry:
             {"received": raw.get("schema_version")},
         )
     try:
-        return SyntheticScenarioRegistry.model_validate(raw)
+        registry = SyntheticScenarioRegistry.model_validate(raw)
     except Exception as error:
         _scenario_invalid("v1.4 scenario registry is invalid", "root", cause=error)
+    if len(registry.sensitivities) != 36:
+        _scenario_invalid(
+            "v1.4 scenario registry omits the sensitivity authority",
+            "sensitivities",
+        )
+    observed_sha256 = hashlib.sha256(canonical_json_bytes(raw)).hexdigest()
+    if observed_sha256 != REGISTERED_TASK4_SCENARIO_REGISTRY_SHA256:
+        _scenario_invalid(
+            "v1.4 scenario registry differs from the canonical authority",
+            "root",
+        )
+    return registry
 
 
 def _load_legacy_synthetic_scenarios(
@@ -4514,3 +5794,15 @@ def _load_legacy_synthetic_scenarios(
         LegacySyntheticScenarioConfig.model_validate(scenario)
         for scenario in scenarios
     )
+
+
+# Public Paper 1 facade for the isolated, solver-free forcing contracts.
+from almondlab.task4_forcing import (  # noqa: E402,F401
+    CalibrationForcingPanel,
+    CalibrationForcingPanelBundle,
+    CalibrationForcingRecord,
+    NominalForcingArtifact,
+    NominalForcingRecord,
+    revalidate_calibration_forcing_panel_bundle,
+    revalidate_nominal_forcing_artifact,
+)

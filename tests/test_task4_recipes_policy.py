@@ -804,22 +804,33 @@ def _registered_water_loop() -> WaterLoopGeneratorConfig:
 
 
 @lru_cache(maxsize=1)
-def _discovery_authorities() -> tuple[PositionMap, RandomizationManifest]:
+def _discovery_authorities() -> tuple[
+    Paper1DesignConfig,
+    BaselineRoster,
+    PositionMap,
+    RandomizationManifest,
+]:
+    config = load_paper1_design(DESIGN_PATH)
     inputs = load_randomization_fixture(TASK3_FIXTURE_PATH)
     manifest = randomize(
-        load_paper1_design(DESIGN_PATH),
+        config,
         TASK3_ROOT_SEED,
         position_map=inputs.position_map,
         baseline_roster=inputs.baseline_roster,
     )
-    return inputs.position_map, manifest
+    return config, inputs.baseline_roster, inputs.position_map, manifest
 
 
 @lru_cache(maxsize=8)
 def _confirmation_authorities(
     plants_per_group_reservoir: int,
     selected_candidate_count: int = 4,
-) -> tuple[PositionMap, RandomizationManifest]:
+) -> tuple[
+    ConfirmationDesignConfig,
+    BaselineRoster,
+    PositionMap,
+    RandomizationManifest,
+]:
     """Construct a registered 1--4 candidate + EV confirmation authority."""
 
     selected_candidates = ("C1", "C2", "C3", "C4")[:selected_candidate_count]
@@ -902,16 +913,19 @@ def _confirmation_authorities(
                     )
                 )
     position_map = PositionMap(tuple(slots))
+    roster = BaselineRoster(tuple(plants))
     manifest = randomize(
         config,
         TASK3_ROOT_SEED,
         position_map=position_map,
-        baseline_roster=BaselineRoster(tuple(plants)),
+        baseline_roster=roster,
     )
-    return position_map, manifest
+    return config, roster, position_map, manifest
 
 
 def _capacity_preflight(
+    config: Paper1DesignConfig | ConfirmationDesignConfig,
+    baseline_roster: BaselineRoster,
     position_map: PositionMap,
     manifest: RandomizationManifest,
     *,
@@ -920,6 +934,8 @@ def _capacity_preflight(
 ):
     return paper1_contracts.preflight_shared_source_batch_capacity(
         load_task4_stop_policy(STOP_POLICY_PATH),
+        config=config,
+        baseline_roster=baseline_roster,
         position_map=position_map,
         manifest=manifest,
         recipe_registry=(
@@ -929,53 +945,254 @@ def _capacity_preflight(
     )
 
 
-@pytest.mark.parametrize(
-    (
-        "cohort",
-        "plants_per_group_reservoir",
-        "expected_batch_count",
-        "expected_loop_count",
-        "expected_per_loop",
-        "expected_total",
-        "expected_remaining",
-    ),
-    (
-        ("discovery", 5, 4, 4, 901.5, 3606.0, 1394.0),
-        ("confirmation", 6, 2, 6, 674.7, 4048.2, 951.8),
-        ("confirmation", 5, 2, 6, 599.1, 3594.6, 1405.4),
-    ),
-)
-def test_shared_source_capacity_is_derived_from_task3_and_registered_generator(
-    cohort: str,
-    plants_per_group_reservoir: int,
-    expected_batch_count: int,
-    expected_loop_count: int,
-    expected_per_loop: float,
-    expected_total: float,
-    expected_remaining: float,
+def _position_map_canonical_sha256(position_map: PositionMap) -> str:
+    payload = [
+        {
+            "position_id": slot.position_id,
+            "run_id": slot.run_id,
+            "run_sequence_ordinal": slot.run_sequence_ordinal,
+            "water_id": slot.water_id,
+            "reservoir_id": slot.reservoir_id,
+            "water_batch_id": slot.water_batch_id,
+            "greenhouse_compartment_id": slot.greenhouse_compartment_id,
+            "bench_id": slot.bench_id,
+            "row": slot.row,
+            "column": slot.column,
+            "spatial_gradient_profile_id": slot.spatial_gradient_profile_id,
+            "permitted_movement_schedule_ids": list(
+                slot.permitted_movement_schedule_ids
+            ),
+            "cohort_id": slot.cohort_id,
+        }
+        for slot in sorted(position_map.slots, key=lambda item: item.position_id)
+    ]
+    return sha256_bytes(canonical_json_bytes(payload))
+
+
+def _forge_bound_manifest(
+    manifest: RandomizationManifest,
+    position_map: PositionMap,
+    records: tuple,
+) -> RandomizationManifest:
+    input_sha256s = dict(manifest.input_sha256s)
+    input_sha256s["position_map_canonical"] = _position_map_canonical_sha256(
+        position_map
+    )
+    return replace(
+        manifest,
+        records=records,
+        allocation_sha256=sha256_bytes(
+            canonical_json_bytes([record.to_dict() for record in records])
+        ),
+        input_sha256s=input_sha256s,
+    )
+
+
+def test_shared_source_capacity_requires_complete_task3_authority_inputs() -> None:
+    """Catches an API that cannot bind the manifest to its design and roster."""
+
+    config = load_paper1_design(DESIGN_PATH)
+    inputs = load_randomization_fixture(TASK3_FIXTURE_PATH)
+    manifest = randomize(
+        config,
+        TASK3_ROOT_SEED,
+        position_map=inputs.position_map,
+        baseline_roster=inputs.baseline_roster,
+    )
+    audits = paper1_contracts.preflight_shared_source_batch_capacity(
+        load_task4_stop_policy(STOP_POLICY_PATH),
+        config=config,
+        baseline_roster=inputs.baseline_roster,
+        position_map=inputs.position_map,
+        manifest=manifest,
+        recipe_registry=load_paper1_water_recipes(RECIPE_PATH),
+        water_loop=_registered_water_loop(),
+    )
+    assert len(audits) == 4
+    assert {audit.aggregate_expected_debit_l for audit in audits} == {3606.0}
+
+
+def test_shared_source_capacity_rejects_self_consistent_projection() -> None:
+    """Catches a smaller valid map/manifest being substituted for the supplied bundle."""
+
+    full_config, full_roster, _, _ = _confirmation_authorities(6, 4)
+    _, _, projected_map, projected_manifest = _confirmation_authorities(5, 1)
+    with pytest.raises(AlmondLabError):
+        _capacity_preflight(
+            full_config,
+            full_roster,
+            projected_map,
+            projected_manifest,
+        )
+
+
+def test_shared_source_capacity_rejects_jointly_relabelled_discovery_water() -> None:
+    """Catches map/manifest self-agreement erasing the registered two-water cross."""
+
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
+    forged_map = PositionMap(
+        tuple(replace(slot, water_id=CONTROL_ID) for slot in position_map.slots)
+    )
+    forged_records = tuple(
+        replace(record, water_id=CONTROL_ID) for record in manifest.records
+    )
+    forged_manifest = _forge_bound_manifest(manifest, forged_map, forged_records)
+    with pytest.raises(AlmondLabError):
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            forged_map,
+            forged_manifest,
+        )
+
+
+def test_shared_source_capacity_rejects_jointly_renamed_batch_ids() -> None:
+    """Catches same-count runtime IDs replacing the approved discovery map IDs."""
+
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
+    forged_map = PositionMap(
+        tuple(
+            replace(slot, water_batch_id=f"invented-{slot.water_batch_id}")
+            for slot in position_map.slots
+        )
+    )
+    forged_records = tuple(
+        replace(record, water_batch_id=f"invented-{record.water_batch_id}")
+        for record in manifest.records
+    )
+    forged_manifest = _forge_bound_manifest(manifest, forged_map, forged_records)
+    with pytest.raises(AlmondLabError):
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            forged_map,
+            forged_manifest,
+        )
+
+
+def test_shared_source_capacity_rejects_nonlater_single_run_confirmation() -> None:
+    """Catches a jointly forged confirmation map collapsing its temporal runs."""
+
+    config, baseline_roster, position_map, manifest = _confirmation_authorities(6, 4)
+    forged_map = PositionMap(
+        tuple(
+            replace(
+                slot,
+                run_id="confirmation_only_run",
+                run_sequence_ordinal=1,
+            )
+            for slot in position_map.slots
+        )
+    )
+    forged_records = tuple(
+        replace(
+            record,
+            run_id="confirmation_only_run",
+            run_sequence_ordinal=1,
+        )
+        for record in manifest.records
+    )
+    forged_manifest = _forge_bound_manifest(manifest, forged_map, forged_records)
+    with pytest.raises(AlmondLabError):
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            forged_map,
+            forged_manifest,
+        )
+
+
+def test_shared_source_capacity_rejects_stale_config_and_missing_roster_hash() -> None:
+    """Catches manifest lineage that is merely well-formed instead of complete."""
+
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
+    forged_manifest = replace(
+        manifest,
+        config_sha256="0" * 64,
+        input_sha256s={
+            "position_map_canonical": _position_map_canonical_sha256(position_map)
+        },
+    )
+    with pytest.raises(AlmondLabError):
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            position_map,
+            forged_manifest,
+        )
+
+
+@pytest.mark.parametrize("alternate_seed", (0, 1, 20260813))
+def test_shared_source_capacity_rejects_self_consistent_discovery_seed_forgery(
+    alternate_seed: int,
 ) -> None:
+    """Catches a valid reallocation replacing the registered discovery draw."""
+
+    config, baseline_roster, position_map, _ = _discovery_authorities()
+    forged_manifest = randomize(
+        config,
+        alternate_seed,
+        position_map=position_map,
+        baseline_roster=baseline_roster,
+    )
+    with pytest.raises(AlmondLabError) as exc_info:
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            position_map,
+            forged_manifest,
+        )
+    assert exc_info.value.code == "WATER_BATCH_AUTHORITY_INVALID"
+
+
+def test_shared_source_capacity_rejects_self_consistent_discovery_config_forgery() -> None:
+    """Catches a valid config and allocation replacing the registered authority."""
+
+    config, baseline_roster, position_map, _ = _discovery_authorities()
+    payload = config.model_dump(mode="json")
+    payload["water_conditions"][0]["chemistry"]["temperature_k"] = 298.16
+    forged_config = Paper1DesignConfig.model_validate(payload)
+    forged_manifest = randomize(
+        forged_config,
+        TASK3_ROOT_SEED,
+        position_map=position_map,
+        baseline_roster=baseline_roster,
+    )
+    with pytest.raises(AlmondLabError) as exc_info:
+        _capacity_preflight(
+            forged_config,
+            baseline_roster,
+            position_map,
+            forged_manifest,
+        )
+    assert exc_info.value.code == "WATER_BATCH_AUTHORITY_INVALID"
+
+
+def test_shared_source_capacity_is_derived_from_registered_discovery() -> None:
     """Catches caller-authored debit, chemistry, or batch identity entering the audit."""
 
-    position_map, manifest = (
-        _discovery_authorities()
-        if cohort == "discovery"
-        else _confirmation_authorities(plants_per_group_reservoir)
-    )
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
     registry = load_paper1_water_recipes(RECIPE_PATH)
     recipes = _recipe_by_water(registry)
-    audits = _capacity_preflight(position_map, manifest, registry=registry)
-    assert len(audits) == expected_batch_count
-    assert {audit.cohort_id for audit in audits} == {cohort}
-    assert {audit.loop_count for audit in audits} == {expected_loop_count}
+    audits = _capacity_preflight(
+        config,
+        baseline_roster,
+        position_map,
+        manifest,
+        registry=registry,
+    )
+    assert len(audits) == 4
+    assert {audit.cohort_id for audit in audits} == {"discovery"}
+    assert {audit.loop_count for audit in audits} == {4}
     for audit in audits:
         assert audit.aggregate_expected_debit_l == pytest.approx(
-            expected_total, rel=0.0, abs=1e-12
+            3606.0, rel=0.0, abs=1e-12
         )
         assert audit.aggregate_expected_debit_l / audit.loop_count == pytest.approx(
-            expected_per_loop, rel=0.0, abs=1e-12
+            901.5, rel=0.0, abs=1e-12
         )
         assert audit.remaining_capacity_l == pytest.approx(
-            expected_remaining, rel=0.0, abs=1e-12
+            1394.0, rel=0.0, abs=1e-12
         )
         recipe = recipes[audit.water_id]
         assert audit.recipe_id == recipe.recipe_id
@@ -1003,38 +1220,36 @@ def test_shared_source_capacity_is_derived_from_task3_and_registered_generator(
         (4, 6, 674.7, 4048.2),
     ),
 )
-def test_shared_source_capacity_derives_every_task3_confirmation_size(
+def test_shared_source_capacity_rejects_unsealed_confirmation_shapes(
     selected_candidate_count: int,
     plants_per_group_reservoir: int,
     expected_per_loop: float,
     expected_total: float,
 ) -> None:
-    """Catches hard-coding Task 4 to the maximum four selected candidates."""
+    """Catches prospective confirmation data being treated as registered authority."""
 
-    position_map, manifest = _confirmation_authorities(
+    config, baseline_roster, position_map, manifest = _confirmation_authorities(
         plants_per_group_reservoir,
         selected_candidate_count,
     )
-    audits = _capacity_preflight(position_map, manifest)
-    assert len(audits) == 2
-    assert {audit.loop_count for audit in audits} == {6}
-    for audit in audits:
-        assert audit.aggregate_expected_debit_l / 6 == pytest.approx(
-            expected_per_loop,
-            rel=0.0,
-            abs=1e-12,
-        )
-        assert audit.aggregate_expected_debit_l == pytest.approx(
-            expected_total,
-            rel=0.0,
-            abs=1e-12,
-        )
+    with pytest.raises(AlmondLabError) as exc_info:
+        _capacity_preflight(config, baseline_roster, position_map, manifest)
+    assert exc_info.value.code == "WATER_BATCH_CONFIRMATION_AUTHORITY_UNAVAILABLE"
+    assert exc_info.value.field_path == "config"
+
+    expected_plant_count = (selected_candidate_count + 1) * plants_per_group_reservoir
+    debit = paper1_contracts._task4_expected_loop_debit(
+        _registered_water_loop(),
+        expected_plant_count,
+    )
+    assert debit == pytest.approx(expected_per_loop, rel=0.0, abs=1e-12)
+    assert 6 * debit == pytest.approx(expected_total, rel=0.0, abs=1e-12)
 
 
 def test_shared_source_capacity_rejects_different_groups_between_loops() -> None:
     """Catches separately valid candidate sets being mixed within one cohort."""
 
-    position_map, manifest = _confirmation_authorities(5)
+    config, baseline_roster, position_map, manifest = _confirmation_authorities(5)
     target = manifest.records[0]
     changed = tuple(
         replace(record, group_id="C5")
@@ -1056,13 +1271,13 @@ def test_shared_source_capacity_rejects_different_groups_between_loops() -> None
         ),
     )
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(position_map, forged)
+        _capacity_preflight(config, baseline_roster, position_map, forged)
 
 
 def test_shared_source_capacity_rejects_position_manifest_omission_and_addition() -> None:
     """Catches a partial caller projection being mistaken for the complete Task 3 loop set."""
 
-    position_map, manifest = _discovery_authorities()
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
     omitted = PositionMap(position_map.slots[:-1])
     last = position_map.slots[-1]
     added = PositionMap(
@@ -1078,14 +1293,21 @@ def test_shared_source_capacity_rejects_position_manifest_omission_and_addition(
     )
     for mismatched in (omitted, added):
         with pytest.raises(AlmondLabError):
-            _capacity_preflight(mismatched, manifest)
+            _capacity_preflight(
+                config,
+                baseline_roster,
+                mismatched,
+                manifest,
+            )
 
 
 def test_shared_source_capacity_rejects_split_or_invented_batch_identity() -> None:
     """Catches matching forged authorities splitting the registered four-loop source."""
 
     inputs = load_randomization_fixture(TASK3_FIXTURE_PATH)
-    position_map, original_manifest = _discovery_authorities()
+    config, baseline_roster, position_map, original_manifest = (
+        _discovery_authorities()
+    )
     first = position_map.slots[0]
     split_slots = tuple(
         replace(slot, water_batch_id=f"{first.water_batch_id}-invented-split")
@@ -1106,7 +1328,12 @@ def test_shared_source_capacity_rejects_split_or_invented_batch_identity() -> No
         baseline_roster=inputs.baseline_roster,
     )
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(split_map, split_manifest)
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            split_map,
+            split_manifest,
+        )
 
     invented_slots = tuple(
         replace(slot, water_batch_id="runtime-invented-batch")
@@ -1115,14 +1342,19 @@ def test_shared_source_capacity_rejects_split_or_invented_batch_identity() -> No
         for slot in position_map.slots
     )
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(PositionMap(invented_slots), original_manifest)
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            PositionMap(invented_slots),
+            original_manifest,
+        )
 
 
 def test_shared_source_capacity_has_no_caller_override_ingress() -> None:
     """Catches reintroducing the zero-debit, split-ID, or fake-hash API surface."""
 
-    position_map, manifest = _discovery_authorities()
-    assert _capacity_preflight(position_map, manifest)
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
+    assert _capacity_preflight(config, baseline_roster, position_map, manifest)
     for injected in (
         {"expected_debit_l": 0.0},
         {"water_batch_id": "runtime-invented-batch"},
@@ -1132,6 +1364,8 @@ def test_shared_source_capacity_has_no_caller_override_ingress() -> None:
         with pytest.raises(TypeError):
             paper1_contracts.preflight_shared_source_batch_capacity(
                 load_task4_stop_policy(STOP_POLICY_PATH),
+                config=config,
+                baseline_roster=baseline_roster,
                 position_map=position_map,
                 manifest=manifest,
                 recipe_registry=load_paper1_water_recipes(RECIPE_PATH),
@@ -1146,7 +1380,7 @@ def test_shared_source_capacity_revalidates_copied_water_loop_arithmetic(
 ) -> None:
     """Catches model_copy supplying zero, altered, nonfinite, or overflowing debit inputs."""
 
-    position_map, manifest = _discovery_authorities()
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
     water_loop = _registered_water_loop()
     forged_irrigation = water_loop.irrigation_volume_l_per_plant_day.model_copy(
         update={"value": replacement}
@@ -1155,13 +1389,19 @@ def test_shared_source_capacity_revalidates_copied_water_loop_arithmetic(
         update={"irrigation_volume_l_per_plant_day": forged_irrigation}
     )
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(position_map, manifest, water_loop=forged)
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            position_map,
+            manifest,
+            water_loop=forged,
+        )
 
 
 def test_shared_source_capacity_revalidates_copied_recipe_authority() -> None:
     """Catches model_copy changing the chemistry identity used by the audit."""
 
-    position_map, manifest = _discovery_authorities()
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
     registry = load_paper1_water_recipes(RECIPE_PATH)
     forged_recipe = registry.active_recipes[0].model_copy(
         update={"recipe_id": "runtime-forged-recipe"}
@@ -1170,20 +1410,47 @@ def test_shared_source_capacity_revalidates_copied_recipe_authority() -> None:
         update={"active_recipes": (forged_recipe, registry.active_recipes[1])}
     )
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(position_map, manifest, registry=forged_registry)
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            position_map,
+            manifest,
+            registry=forged_registry,
+        )
 
 
 def test_shared_source_capacity_rejects_authority_subclasses() -> None:
     """Catches subclass-only hidden state bypassing detached authority reconstruction."""
 
-    position_map, manifest = _discovery_authorities()
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
     registry = load_paper1_water_recipes(RECIPE_PATH)
+
+    class HostileDesign(Paper1DesignConfig):
+        hidden_position_map_sha256: str = "0" * 64
+
+    class HostileRoster(BaselineRoster):
+        pass
 
     class HostilePositionMap(PositionMap):
         pass
 
     class HostileManifest(RandomizationManifest):
         pass
+
+    hostile_config = HostileDesign.model_validate(config.model_dump(mode="json"))
+    hostile_roster = HostileRoster(baseline_roster.plants)
+    for candidate_config, candidate_roster in (
+        (hostile_config, baseline_roster),
+        (config, hostile_roster),
+        (config.model_copy(update={"schema_version": "9.9"}), baseline_roster),
+    ):
+        with pytest.raises(AlmondLabError):
+            _capacity_preflight(
+                candidate_config,
+                candidate_roster,
+                position_map,
+                manifest,
+            )
 
     hostile_map = HostilePositionMap(position_map.slots)
     hostile_manifest = HostileManifest(
@@ -1202,14 +1469,25 @@ def test_shared_source_capacity_rejects_authority_subclasses() -> None:
         (position_map, hostile_manifest),
     ):
         with pytest.raises(AlmondLabError):
-            _capacity_preflight(candidate_map, candidate_manifest)
+            _capacity_preflight(
+                config,
+                baseline_roster,
+                candidate_map,
+                candidate_manifest,
+            )
 
     class HostileRegistry(paper1_contracts.Paper1WaterRecipeRegistry):
         hidden_chemistry_sha256: str = "0" * 64
 
     hostile_registry = HostileRegistry.model_validate(registry.model_dump(mode="json"))
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(position_map, manifest, registry=hostile_registry)
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            position_map,
+            manifest,
+            registry=hostile_registry,
+        )
 
     class HostileWaterLoop(WaterLoopGeneratorConfig):
         hidden_expected_debit_l: float = 0.0
@@ -1218,4 +1496,10 @@ def test_shared_source_capacity_rejects_authority_subclasses() -> None:
         _registered_water_loop().model_dump(mode="json")
     )
     with pytest.raises(AlmondLabError):
-        _capacity_preflight(position_map, manifest, water_loop=hostile_loop)
+        _capacity_preflight(
+            config,
+            baseline_roster,
+            position_map,
+            manifest,
+            water_loop=hostile_loop,
+        )

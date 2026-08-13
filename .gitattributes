@@ -2,6 +2,7 @@
 /configs/experiment_paper1.yaml text eol=lf
 /configs/paper1_task4_stop_policy.yaml text eol=lf
 /configs/paper1_water_recipes.yaml text eol=lf
+/configs/synthetic_scenarios.yaml text eol=lf
 /configs/thresholds.yaml text eol=lf
 /configs/verification.yaml text eol=lf
 /src/almondlab/resources/configs/*.yaml text eol=lf
