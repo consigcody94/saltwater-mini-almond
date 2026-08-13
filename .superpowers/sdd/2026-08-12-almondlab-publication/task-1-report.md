@@ -64,7 +64,19 @@ before the combined suite ran. A final audit also reproduced two successful
 native returns that left both target and staged names bound to the same inode;
 both file and run-directory paths now refuse that non-consuming publication.
 
-The final focused suite has 204 passing cases on this Windows host. Boundary
+The next exact rereview exposed a cleanup-time publication window in both
+state machines. A concurrent actor could move or alias the exact staged object
+to the target while prepublication cleanup ran, after the earlier native-helper
+reconciliation but before a raw or `committed=False` error was emitted. The
+initial deterministic slice was RED with six expected failures: two raw
+`RuntimeError` escapes, two raw `OSError` escapes, and two retained-cleanup
+errors falsely classified as `committed=False`. After the repair, a 14-case
+matrix passed for cleanup returns and exceptions, target aliases plus retained
+quarantines, missing/replaced/ambiguous recovery names, and a publication race
+at the final target observation. Ordinary no-replace collisions remain
+prepublication controls.
+
+The final focused suite has 218 passing cases on this Windows host. Boundary
 tests reject boolean or string numeric coercion, nonfinite numbers, non-string
 keys, path traversal, links/reparse points, collisions, inconsistent seed
 trees, unavailable-state inventions, hash corruption, unsafe finalization,
@@ -123,6 +135,18 @@ and every case-insensitive reserved-manifest artifact component.
   missing/replaced/ambiguous names never yield success or a stale committed
   identity. Recovery paths are reported only after handle-based observation of
   the object currently at that name.
+- Every attempted prepublication cleanup, including a successful return,
+  retained quarantine, identity mismatch, and arbitrary exception, is followed
+  by two descriptor-relative identity reconciliation passes across every known
+  staging/quarantine name. Each pass observes the target last. An exact target
+  observed in either pass is committed-uncertain; `committed=False` is emitted
+  only when the final target is absent or provably different and the exact
+  original identity remains recoverable under a verified staging/quarantine
+  handle. Missing, replaced, or ambiguous recovery state is conservative
+  committed uncertainty. The final held observations make reported recovery
+  paths truthful at that point in time. No finite observation protocol can
+  prevent a new concurrent rename after its last target open, so recovery still
+  requires operators to stop concurrent writers before acting on those paths.
 - Atomic replacement flushes file bytes and, where supported, directory
   metadata. Replace failures preserve an existing destination. Cleanup prefers
   retaining recoverable bytes to deleting an object through a name that could
@@ -202,7 +226,7 @@ canonical_science_hash a996babe2890e75893eb1d51cc5499acd3d7cd4eaad4e214a10688bf7
 manifest_hash          b235d72389fa7ef81433b11de1657ead4803907aba44f674caca0df2db121a78
 ```
 
-## Final verification after identity-bound phase repair
+## Final verification after cleanup-phase repair
 
 Focused Task 1 suite, with the cache plugin disabled to avoid the workspace's
 pre-existing `.pytest_cache` permission warning:
@@ -212,7 +236,7 @@ pre-existing `.pytest_cache` permission warning:
 ```
 
 ```text
-204 passed, 3 skipped in 10.55s
+218 passed, 3 skipped in 10.71s
 ```
 
 The three skips are real-filesystem POSIX integration cases for replacement
@@ -235,7 +259,23 @@ path. The legacy `os.link` failure regression is now Windows-only, while the
 forced-POSIX suite fails immediately if `os.link` is invoked. Four forced-POSIX
 replacement schedules additionally prove successful overwrite, exception
 before replacement with the old target preserved, exception after replacement,
-and post-replacement target substitution.
+and post-replacement target substitution. Cleanup-time forced-POSIX schedules
+also prove that moving or aliasing the exact staged identity to the target can
+never escape raw or as `committed=False`, retained target/quarantine paths are
+re-observed before reporting, missing/replaced/ambiguous recovery state is
+committed-uncertain, and the target is observed last on both reconciliation
+passes.
+
+The narrow cleanup-race matrix was rerun independently of the full focused
+suite:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_provenance.py -q -p no:cacheprovider -k "reconciles_publication_during_precommit_cleanup or treats_unrecoverable_cleanup_outcomes_as_uncertain or observes_target_last_after_precommit_cleanup"
+```
+
+```text
+14 passed, 207 deselected in 1.00s
+```
 
 WSL, Docker, and another POSIX runtime are not available here. The three real
 POSIX integration cases therefore remain platform-skipped on this Windows host;
@@ -250,12 +290,12 @@ biology/registry repair worktree:
 ```
 
 ```text
-1063 passed, 3 skipped in 120.58s
+1085 passed, 3 skipped in 126.08s
 ```
 
-This final combined run used committed biology and registry repairs plus the
-unstaged Task 1 provenance diff. Exact-index verification, native-POSIX
-execution, and a fresh independent Task 1 rereview remain required.
+This final combined run used the committed biology and registry repairs through
+`4adf366` plus the unstaged Task 1 provenance diff. Exact-index verification,
+native-POSIX execution, and a fresh independent Task 1 rereview remain required.
 
 Dependency-free Draft 2020-12 schema coverage is included in the focused suite.
 The optional external gate remains unavailable:

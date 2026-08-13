@@ -1281,14 +1281,25 @@ class RunDirectory:
             def raise_run_prepublication_failure(
                 operation_error: BaseException,
             ) -> None:
-                removed = cleanup_staging()
-                if retained_paths:
-                    raise AtomicCleanupRetainedError(
-                        destination, retained_path=retained_paths[0]
-                    ) from operation_error
-                if not removed:
-                    raise AtomicCommitUncertainError(destination) from operation_error
-                raise operation_error
+                cleanup_error: BaseException | None = None
+                try:
+                    cleanup_staging()
+                except BaseException as error:
+                    cleanup_error = error
+                recovery_names = [staging_name]
+                recovery_names.extend(
+                    path.name for path in retained_paths if path.parent == root
+                )
+                _raise_after_posix_prepublication_cleanup(
+                    destination,
+                    root_descriptor,
+                    run_id,
+                    recovery_names,
+                    path_identity,
+                    is_directory=True,
+                    operation_error=operation_error,
+                    cleanup_error=cleanup_error,
+                )
 
             def raise_run_uncertain_publication(
                 reconciliation: _PosixPublicationReconciliation,
@@ -1980,6 +1991,18 @@ class _PosixPublicationReconciliation:
         self.temporary.close()
 
 
+@dataclass(slots=True)
+class _PosixCleanupReconciliation:
+    state: Literal["published", "not_published", "uncertain"]
+    target: _PosixNameObservation
+    recoveries: tuple[tuple[str, _PosixNameObservation], ...]
+
+    def close(self) -> None:
+        self.target.close()
+        for _, observation in self.recoveries:
+            observation.close()
+
+
 def _require_descriptor_object(
     descriptor: int,
     *,
@@ -2089,6 +2112,145 @@ def _uncertain_recovery_paths(
     if reconciliation.temporary.state == "exact":
         paths.append(temporary)
     return tuple(paths)
+
+
+def _reconcile_posix_cleanup(
+    parent_descriptor: int,
+    target_name: str,
+    recovery_names: Sequence[str],
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+) -> _PosixCleanupReconciliation:
+    """Classify cleanup twice, observing the target last in each pass."""
+
+    unique_recovery_names = tuple(dict.fromkeys(recovery_names))
+
+    def observe_recoveries() -> tuple[tuple[str, _PosixNameObservation], ...]:
+        return tuple(
+            (
+                name,
+                _observe_posix_name(
+                    parent_descriptor,
+                    name,
+                    expected_identity,
+                    is_directory=is_directory,
+                ),
+            )
+            for name in unique_recovery_names
+        )
+
+    first_recoveries = observe_recoveries()
+    try:
+        first_target = _observe_posix_name(
+            parent_descriptor,
+            target_name,
+            expected_identity,
+            is_directory=is_directory,
+        )
+    except BaseException:
+        for _, observation in first_recoveries:
+            observation.close()
+        raise
+    try:
+        recoveries = observe_recoveries()
+        try:
+            target = _observe_posix_name(
+                parent_descriptor,
+                target_name,
+                expected_identity,
+                is_directory=is_directory,
+            )
+        except BaseException:
+            for _, observation in recoveries:
+                observation.close()
+            raise
+    finally:
+        first_target.close()
+        for _, observation in first_recoveries:
+            observation.close()
+
+    publication_seen = first_target.state == "exact" or target.state == "exact"
+    ambiguity_seen = (
+        first_target.state == "ambiguous"
+        or target.state == "ambiguous"
+        or any(
+            observation.state == "ambiguous"
+            for _, observation in (*first_recoveries, *recoveries)
+        )
+    )
+    if publication_seen:
+        state: Literal["published", "not_published", "uncertain"] = "published"
+    elif not ambiguity_seen and target.state in {"absent", "different"} and any(
+        observation.state == "exact" for _, observation in recoveries
+    ):
+        state = "not_published"
+    else:
+        state = "uncertain"
+    return _PosixCleanupReconciliation(state, target, recoveries)
+
+
+def _cleanup_recovery_paths(
+    parent: Path,
+    target: Path,
+    reconciliation: _PosixCleanupReconciliation,
+) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    if (
+        reconciliation.target.state in {"exact", "different"}
+        and reconciliation.target.descriptor is not None
+    ):
+        paths.append(target)
+    paths.extend(
+        parent / name
+        for name, observation in reconciliation.recoveries
+        if observation.state == "exact" and observation.descriptor is not None
+    )
+    return tuple(dict.fromkeys(paths))
+
+
+def _raise_after_posix_prepublication_cleanup(
+    destination: Path,
+    parent_descriptor: int,
+    target_name: str,
+    recovery_names: Sequence[str],
+    expected_identity: tuple[int, int],
+    *,
+    is_directory: bool,
+    operation_error: BaseException,
+    cleanup_error: BaseException | None,
+) -> None:
+    cause = operation_error if cleanup_error is None else cleanup_error
+    try:
+        reconciliation = _reconcile_posix_cleanup(
+            parent_descriptor,
+            target_name,
+            recovery_names,
+            expected_identity,
+            is_directory=is_directory,
+        )
+    except BaseException as reconciliation_error:
+        raise AtomicCommitUncertainError(destination) from reconciliation_error
+    try:
+        paths = _cleanup_recovery_paths(
+            destination.parent,
+            destination,
+            reconciliation,
+        )
+        if reconciliation.state == "not_published":
+            recovery_paths = tuple(path for path in paths if path != destination)
+            if not recovery_paths:
+                raise AtomicCommitUncertainError(
+                    destination, retained_paths=paths
+                ) from cause
+            raise AtomicCleanupRetainedError(
+                destination, retained_path=recovery_paths[0]
+            ) from cause
+        raise AtomicCommitUncertainError(
+            destination, retained_paths=paths
+        ) from cause
+    finally:
+        reconciliation.close()
 
 
 def _observed_posix_recovery_paths(
@@ -3427,14 +3589,27 @@ def _atomic_commit_posix(
         return removed
 
     def raise_prepublication_failure(operation_error: BaseException) -> None:
-        removed = cleanup_temporary()
-        if retained_paths:
-            raise AtomicCleanupRetainedError(
-                target, retained_path=retained_paths[0]
-            ) from operation_error
-        if not removed:
+        if temporary_identity is None:
             raise AtomicCommitUncertainError(target) from operation_error
-        raise operation_error
+        cleanup_error: BaseException | None = None
+        try:
+            cleanup_temporary()
+        except BaseException as error:
+            cleanup_error = error
+        recovery_names = [temporary_name]
+        recovery_names.extend(
+            path.name for path in retained_paths if path.parent == target.parent
+        )
+        _raise_after_posix_prepublication_cleanup(
+            target,
+            parent_descriptor,
+            target.name,
+            recovery_names,
+            temporary_identity,
+            is_directory=False,
+            operation_error=operation_error,
+            cleanup_error=cleanup_error,
+        )
 
     def raise_uncertain_publication(
         reconciliation: _PosixPublicationReconciliation,

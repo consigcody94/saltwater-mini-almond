@@ -1288,11 +1288,13 @@ class _ScheduledPosixRunPublication:
         rename_mode: str,
         precheck_attack_kind: str | None = None,
         parent_failure_at: int | None = None,
+        cleanup_race_mode: str | None = None,
     ) -> None:
         self.root = root
         self.rename_mode = rename_mode
         self.precheck_attack_kind = precheck_attack_kind
         self.parent_failure_at = parent_failure_at
+        self.cleanup_race_mode = cleanup_race_mode
         self.parent_descriptor = 70
         self.stage_identity = (71, 81)
         self.attacker_identity = (71, 89)
@@ -1302,8 +1304,10 @@ class _ScheduledPosixRunPublication:
         self.staging_name: str | None = None
         self.target_name = "SYN_demo"
         self.parent_checks = 0
+        self.target_observations = 0
         self.rename_calls = 0
         self.cleanup_calls: list[str] = []
+        self.ambiguous_names: set[str] = set()
         if rename_mode == "collision":
             self.nodes[self.target_name] = self._node("directory", self.attacker_identity)
 
@@ -1347,6 +1351,16 @@ class _ScheduledPosixRunPublication:
     ) -> int:
         del mode
         assert dir_fd == self.parent_descriptor
+        if name == self.target_name:
+            self.target_observations += 1
+            if (
+                self.cleanup_race_mode == "move_on_target_observe"
+                and self.target_observations == 2
+            ):
+                assert self.staging_name is not None
+                self.nodes[self.target_name] = self.nodes.pop(self.staging_name)
+        if name in self.ambiguous_names:
+            raise OSError(errno.EIO, "scheduled ambiguous observation", name)
         node = self.nodes.get(name)
         if node is None:
             raise FileNotFoundError(errno.ENOENT, "scheduled absence", name)
@@ -1455,6 +1469,25 @@ class _ScheduledPosixRunPublication:
         if node["identity"] != expected_identity:
             return False
         retained_name = ".almondlab-quarantine-scheduled-run"
+        if self.cleanup_race_mode == "move_target_return":
+            self.nodes[self.target_name] = self.nodes.pop(name)
+            return True
+        if self.cleanup_race_mode == "move_target_raise":
+            self.nodes[self.target_name] = self.nodes.pop(name)
+            raise OSError("scheduled run cleanup exception after publication")
+        if self.cleanup_race_mode == "alias_target_retain":
+            self.nodes[self.target_name] = node
+        if self.cleanup_race_mode == "missing_return":
+            self.nodes.pop(name)
+            return True
+        if self.cleanup_race_mode == "mismatch_return":
+            self.nodes[name] = self._node("directory", self.attacker_identity)
+            return False
+        if self.cleanup_race_mode == "ambiguous_return":
+            self.ambiguous_names.add(name)
+            return False
+        if self.cleanup_race_mode == "move_on_target_observe":
+            return False
         self.nodes[retained_name] = self.nodes.pop(name)
         raise provenance._RetainedCleanupIdentityError(retained_name)
 
@@ -1688,6 +1721,100 @@ def test_posix_run_claim_fsync_failure_does_not_report_a_stale_target_path(
     assert captured.value.committed is True
     assert isinstance(captured.value.__cause__, OSError)
     assert captured.value.retained_path is None
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    ("cleanup_race_mode", "retained_names"),
+    [
+        ("move_target_return", ("SYN_demo",)),
+        ("move_target_raise", ("SYN_demo",)),
+        (
+            "alias_target_retain",
+            ("SYN_demo", ".almondlab-quarantine-scheduled-run"),
+        ),
+    ],
+)
+def test_posix_run_claim_reconciles_publication_during_precommit_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_race_mode: str,
+    retained_names: tuple[str, ...],
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(
+        root,
+        rename_mode="raise_before",
+        cleanup_race_mode=cleanup_race_mode,
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == tuple(root / name for name in retained_names)
+    assert schedule.nodes["SYN_demo"]["identity"] == schedule.stage_identity
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    "cleanup_race_mode", ["missing_return", "mismatch_return", "ambiguous_return"]
+)
+def test_posix_run_claim_treats_unrecoverable_cleanup_outcomes_as_uncertain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_race_mode: str,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(
+        root,
+        rename_mode="raise_before",
+        cleanup_race_mode=cleanup_race_mode,
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_path is None
+    assert schedule.descriptors == {}
+
+
+def test_posix_run_claim_observes_target_last_after_precommit_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "outputs" / "runs"
+    schedule = _ScheduledPosixRunPublication(
+        root,
+        rename_mode="raise_before",
+        cleanup_race_mode="move_on_target_observe",
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.RunDirectory.create(
+            root,
+            config_sha256="1" * 64,
+            root_seed=42,
+            deterministic_run_id="SYN_demo",
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == (root / "SYN_demo",)
+    assert schedule.target_observations == 3
     assert schedule.descriptors == {}
 
 
@@ -2658,7 +2785,11 @@ class _PosixAtomicSyscallHarness:
         metadata = path.stat(follow_symlinks=False)
         identity = (metadata.st_dev, metadata.st_ino)
         state = "exact" if identity == expected_identity else "different"
-        return provenance._PosixNameObservation(state, None, identity)
+        if self.rename_error is None:
+            return provenance._PosixNameObservation(state, None, identity)
+        descriptor = os.open(path, os.O_RDONLY)
+        self._file_descriptors[descriptor] = path
+        return provenance._PosixNameObservation(state, descriptor, identity)
 
     def install(
         self,
@@ -2825,9 +2956,11 @@ class _ScheduledPosixFilePublication:
         *,
         rename_mode: str = "normal",
         precheck_attack_kind: str | None = None,
+        cleanup_race_mode: str | None = None,
     ) -> None:
         self.rename_mode = rename_mode
         self.precheck_attack_kind = precheck_attack_kind
+        self.cleanup_race_mode = cleanup_race_mode
         self.stage_identity = (31, 41)
         self.attacker_identity = (31, 99)
         self.parent_descriptor = 50
@@ -2837,12 +2970,14 @@ class _ScheduledPosixFilePublication:
         self.descriptors: dict[int, dict[str, object]] = {}
         self.next_descriptor = 51
         self.parent_checks = 0
+        self.target_observations = 0
         self.rename_calls = 0
         self.cleanup_calls: list[str] = []
         self.directory_sync_calls = 0
         self.closed_descriptors: list[int] = []
         self.link_calls = 0
         self.replaced_target_node: dict[str, object] | None = None
+        self.ambiguous_names: set[str] = set()
         if rename_mode == "collision":
             self.nodes[self.target_name] = self._node("regular", self.attacker_identity)
         elif rename_mode in {"replace_existing", "replace_raise_before"}:
@@ -2911,6 +3046,16 @@ class _ScheduledPosixFilePublication:
             node = self._node("regular", self.stage_identity)
             self.nodes[name] = node
             return self._allocate(node)
+        if name == self.target_name:
+            self.target_observations += 1
+            if (
+                self.cleanup_race_mode == "move_on_target_observe"
+                and self.target_observations == 2
+            ):
+                assert self.temp_name is not None
+                self.nodes[self.target_name] = self.nodes.pop(self.temp_name)
+        if name in self.ambiguous_names:
+            raise OSError(errno.EIO, "scheduled ambiguous observation", name)
         node = self.nodes.get(name)
         if node is None:
             raise FileNotFoundError(errno.ENOENT, "scheduled absence", name)
@@ -3055,6 +3200,25 @@ class _ScheduledPosixFilePublication:
         if node["identity"] != expected_identity:
             return False
         retained_name = ".almondlab-quarantine-scheduled"
+        if self.cleanup_race_mode == "move_target_return":
+            self.nodes[self.target_name] = self.nodes.pop(name)
+            return True
+        if self.cleanup_race_mode == "move_target_raise":
+            self.nodes[self.target_name] = self.nodes.pop(name)
+            raise OSError("scheduled file cleanup exception after publication")
+        if self.cleanup_race_mode == "alias_target_retain":
+            self.nodes[self.target_name] = node
+        if self.cleanup_race_mode == "missing_return":
+            self.nodes.pop(name)
+            return True
+        if self.cleanup_race_mode == "mismatch_return":
+            self.nodes[name] = self._node("regular", self.attacker_identity)
+            return False
+        if self.cleanup_race_mode == "ambiguous_return":
+            self.ambiguous_names.add(name)
+            return False
+        if self.cleanup_race_mode == "move_on_target_observe":
+            return False
         self.nodes[retained_name] = self.nodes.pop(name)
         raise provenance._RetainedCleanupIdentityError(retained_name)
 
@@ -3293,6 +3457,85 @@ def test_posix_atomic_create_reconciles_native_rename_exceptions(
 
 
 @pytest.mark.parametrize(
+    ("cleanup_race_mode", "retained_paths"),
+    [
+        ("move_target_return", (Path("/sandbox/result.json"),)),
+        ("move_target_raise", (Path("/sandbox/result.json"),)),
+        (
+            "alias_target_retain",
+            (
+                Path("/sandbox/result.json"),
+                Path("/sandbox/.almondlab-quarantine-scheduled"),
+            ),
+        ),
+    ],
+)
+def test_posix_atomic_create_reconciles_publication_during_precommit_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_race_mode: str,
+    retained_paths: tuple[Path, ...],
+) -> None:
+    schedule = _ScheduledPosixFilePublication(
+        rename_mode="raise_before",
+        cleanup_race_mode=cleanup_race_mode,
+    )
+    schedule.install(monkeypatch)
+    committed_identity: list[tuple[int, int]] = []
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(
+            Path("/sandbox/result.json"),
+            b"created",
+            _committed_identity=committed_identity,
+        )
+
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == retained_paths
+    assert schedule.nodes["result.json"]["identity"] == schedule.stage_identity
+    assert committed_identity == []
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
+    "cleanup_race_mode", ["missing_return", "mismatch_return", "ambiguous_return"]
+)
+def test_posix_atomic_create_treats_unrecoverable_cleanup_outcomes_as_uncertain(
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_race_mode: str,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(
+        rename_mode="raise_before",
+        cleanup_race_mode=cleanup_race_mode,
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(Path("/sandbox/result.json"), b"created")
+
+    assert captured.value.committed is True
+    assert captured.value.retained_path is None
+    assert schedule.descriptors == {}
+
+
+def test_posix_atomic_create_observes_target_last_after_precommit_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schedule = _ScheduledPosixFilePublication(
+        rename_mode="raise_before",
+        cleanup_race_mode="move_on_target_observe",
+    )
+    schedule.install(monkeypatch)
+
+    with pytest.raises(provenance.AtomicCommitUncertainError) as captured:
+        provenance.atomic_create_bytes(Path("/sandbox/result.json"), b"created")
+
+    assert captured.value.committed is True
+    assert captured.value.retained_paths == (Path("/sandbox/result.json"),)
+    assert schedule.target_observations == 3
+    assert schedule.descriptors == {}
+
+
+@pytest.mark.parametrize(
     ("rename_mode", "expected_committed"),
     [
         ("replace_existing", True),
@@ -3385,6 +3628,17 @@ def test_posix_atomic_precommit_cleanup_retention_fails_safely(
     )
     monkeypatch.setattr(provenance.os, "fdopen", fail_write)
     monkeypatch.setattr(provenance, "_unlink_name_if_identity", retain_cleanup)
+    monkeypatch.setattr(
+        provenance,
+        "_observe_posix_name",
+        lambda parent_descriptor, name, expected_identity, *, is_directory: (
+            provenance._PosixNameObservation(
+                "exact", 61, expected_identity
+            )
+            if name == retained_name
+            else provenance._PosixNameObservation("absent")
+        ),
+    )
 
     def close_parent(descriptor: int) -> None:
         closed_descriptors.append(descriptor)
@@ -3404,7 +3658,7 @@ def test_posix_atomic_precommit_cleanup_retention_fails_safely(
     assert captured.value.retained_path == Path("/sandbox") / retained_name
     assert captured.value.__cause__ is not None
     assert "forced precommit failure" in str(captured.value.__cause__)
-    assert closed_descriptors == [51, 50]
+    assert closed_descriptors == [61, 61, 51, 50]
 
 
 def test_posix_atomic_identity_capture_failure_reports_retained_temp(
