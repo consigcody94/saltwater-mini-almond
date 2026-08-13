@@ -1,0 +1,772 @@
+schema_version: "1.0.0"
+manifest_id: "almondlab-public-biological-data-2026-08-12"
+generated_at: "2026-08-12T00:00:00-04:00"
+verification_policy:
+  repositories: "Official/primary repositories and publisher or PMC records only."
+  accession_rule: "Accessions are recorded only when verified in repository metadata; absent accessions are null rather than inferred."
+  size_rule: "Sizes are reported only when exposed by the repository. Alternate encodings of the same sequence are not added to totals."
+  raw_download_rule: "Metadata only for multi-GB read sets; no multi-GB reads were downloaded."
+summary:
+  machine_addressable_datasets: 16
+  article_or_supplement_only_packages: 4
+  deleted_or_withdrawn_external_records: 1
+  exposed_nonduplicated_payload_lower_bound:
+    bytes: 43617462230
+    gib: 40.62
+    includes:
+      - "PRJNA732909 canonical paired FASTQ files: 43,527,962,230 bytes (40.539 GiB)"
+      - "GCA_021292205.2 genomic FASTA: 72.7 MB as exposed by NCBI WGS"
+      - "GSE254853 processed supplementary files: approximately 16.8 MB"
+    excludes: "Datasets whose repositories do not expose a stable total, dynamic water-query results, article packages, and alternate encodings."
+
+datasets:
+  - id: "ALM_REF_TEXAS_V2"
+    category: "reference_genome"
+    data_class: "machine_addressable_reference"
+    downloadable: true
+    verification_status: "verified_current"
+    official_repository: "NCBI Datasets / RefSeq / GenBank"
+    accession: "GCF_902201215.1"
+    paired_accession: "GCA_902201215.1"
+    assembly_name: "ALMONDv2"
+    organism: "Prunus dulcis"
+    cultivar_or_chassis: "Texas"
+    biosample: "SAMEA5704668"
+    bioprojects:
+      submitter: "PRJEB32994"
+      refseq: "PRJNA631757"
+    landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_902201215.1/"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCF_902201215.1/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCF_902201215.1&include_annotation_type=GENOME_GFF,GENOME_GTF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    assembly_level: "chromosome"
+    genome_size_bp: 227599157
+    contig_count: 4395
+    annotation:
+      provider: "NCBI RefSeq release 100"
+      genes_and_pseudogenes: 26936
+      protein_coding_genes: 23151
+      mrnas: 33240
+    sample_count: 1
+    assay: "whole-genome sequencing and genome annotation"
+    tissue: null
+    treatment_chemistry: null
+    file_types: ["genomic FASTA", "GFF3", "GTF", "GenBank flatfile", "RNA FASTA", "CDS FASTA", "protein FASTA", "sequence report"]
+    approximate_download_size: "not exposed by the Datasets report endpoint"
+    access_conditions: "public; no login"
+    license: "NCBI data are public-domain or supplied without an NCBI-imposed copyright; confirm submitter restrictions for reuse"
+    checksum_availability: "NCBI data-package catalog and assembly FTP expose file hashes; preserve the package catalog/MD5 alongside downloads"
+    exact_relevance: "Primary almond chassis reference and annotation for coordinate mapping, orthology, off-target searches, and construct QC."
+    limitations:
+      - "Cultivar Texas is not Nonpareil, Vairo, Nemaguard, or Rootpac40."
+      - "Reference sequence does not establish salinity phenotype."
+    supersession: "Use version .1 exactly; no newer RefSeq version was exposed at verification."
+    identity_conflicts:
+      - "RefSeq includes plastid NC_034696.1 added from an FDA record; the paired GenBank submission is therefore not byte-identical."
+
+  - id: "ALM_REF_LAURANNE"
+    category: "reference_genome"
+    data_class: "machine_addressable_reference"
+    downloadable: true
+    verification_status: "verified_current"
+    official_repository: "NCBI Datasets / GenBank"
+    accession: "GCA_008632915.2"
+    assembly_name: "Lauranne_v1.0"
+    organism: "Prunus dulcis"
+    cultivar_or_chassis: "Lauranne"
+    biosample: "SAMD00145063"
+    bioprojects: ["PRJDB7547"]
+    landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_008632915.2/"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_008632915.2/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCA_008632915.2&include_annotation_type=GENOME_GFF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    assembly_level: "scaffold"
+    genome_size_bp: 246116696
+    contig_count: 4575
+    annotation: "submitter annotation from Sequentia; no NCBI RefSeq annotation"
+    sample_count: 1
+    assay: "whole-genome sequencing and submitter annotation"
+    tissue: null
+    treatment_chemistry: null
+    file_types: ["genomic FASTA", "GFF3/GenBank annotation when present", "CDS/protein FASTA", "sequence report"]
+    approximate_download_size: "not exposed"
+    access_conditions: "public; no login"
+    license: "repository data; no dataset-specific license displayed in assembly report"
+    checksum_availability: "assembly FTP/data package hashes available"
+    exact_relevance: "Independent almond haplotype/reference for checking cultivar-dependent candidate variants."
+    limitations:
+      - "Scaffold-level and substantially more fragmented than chromosome-level Texas and Nonpareil assemblies."
+      - "Submitter annotation is not directly interchangeable with RefSeq gene identifiers."
+    supersession: "GCA_008632915.1 is superseded by .2; use .2."
+    identity_conflicts: []
+
+  - id: "ALM_REF_NONPAREIL"
+    category: "reference_genome"
+    data_class: "machine_addressable_reference"
+    downloadable: true
+    verification_status: "verified_current"
+    official_repository: "NCBI Datasets / GenBank WGS"
+    accession: "GCA_021292205.2"
+    wgs_accession: "JAJFAZ02"
+    assembly_name: "OSU_Pdul_2.5"
+    organism: "Prunus dulcis"
+    cultivar_or_chassis: "Nonpareil"
+    biosample: null
+    bioprojects: []
+    landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_021292205.2/"
+    wgs_landing_url: "https://www.ncbi.nlm.nih.gov/Traces/wgs/JAJFAZ02"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_021292205.2/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCA_021292205.2&include_annotation_type=GENOME_GFF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    assembly_level: "chromosome"
+    genome_size_bp: 257071663
+    contig_count: 331
+    annotation: "submitter annotation from Ohio State University"
+    sample_count: 1
+    assay: "whole-genome sequencing and genome annotation"
+    tissue: null
+    treatment_chemistry: null
+    file_types: ["genomic FASTA", "GenBank flatfile", "ASN.1", "protein FASTA", "GenPept"]
+    approximate_download_size:
+      genomic_fasta_compressed_mb: 72.7
+      genbank_flatfile_compressed_mb: 114.7
+      asn1_compressed_mb: 73.6
+      protein_fasta_compressed_mb: 8.7
+      genpept_compressed_mb: 16.8
+      note: "Formats are alternate representations; do not sum them as independent sequence payloads."
+    access_conditions: "public; no login"
+    license: "repository data; no dataset-specific license displayed"
+    checksum_availability: "WGS/assembly download service provides hashes with download artifacts"
+    exact_relevance: "Commercially central California almond cultivar; best reference for Nonpareil-specific variant and off-target checks."
+    limitations:
+      - "Submitter annotation identifiers differ from RefSeq Texas identifiers."
+    supersession: "GCA_021292205.1 is superseded; .2 modifies the mitochondrial chromosome and annotation."
+    identity_conflicts: []
+
+  - id: "PEACH_REF_LOVELL_V2"
+    category: "ortholog_reference"
+    data_class: "machine_addressable_reference"
+    downloadable: true
+    verification_status: "verified_current"
+    official_repository: "NCBI Datasets / RefSeq"
+    accession: "GCF_000346465.2"
+    paired_accession: "GCA_000346465.2"
+    wgs_accession: "AKXU02"
+    assembly_name: "Prunus_persica_NCBIv2"
+    organism: "Prunus persica"
+    cultivar_or_chassis: "Lovell"
+    bioprojects: ["PRJNA241430"]
+    landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000346465.2/"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCF_000346465.2/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCF_000346465.2&include_annotation_type=GENOME_GFF,GENOME_GTF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    assembly_level: "chromosome"
+    genome_size_bp: 227411381
+    contig_count: 2530
+    annotation: "NCBI RefSeq release 100"
+    sample_count: 1
+    assay: "whole-genome sequencing and RefSeq annotation"
+    tissue: null
+    treatment_chemistry: null
+    file_types: ["genomic FASTA", "GFF3", "GTF", "RNA/CDS/protein FASTA", "GenBank flatfile"]
+    approximate_download_size: "not exposed"
+    access_conditions: "public; no login"
+    license: "NCBI repository terms"
+    checksum_availability: "NCBI data-package/FTP hashes available"
+    exact_relevance: "Authoritative coordinate/protein source for Prupe.1G067100 (PpHKT1) and Prupe.7G244500 (PpCIPK24/SOS2 candidate)."
+    limitations:
+      - "Lovell predicted alleles are not experimentally cloned Nemaguard or almond-rootstock alleles."
+    supersession: "Use .2; older assembly versions are superseded."
+    identity_conflicts: []
+
+  - id: "ALM_PEACH_PHASED_ASE_GSE254853"
+    category: "gene_expression"
+    data_class: "processed_and_raw_repository"
+    downloadable: true
+    verification_status: "verified_public"
+    official_repository: "NCBI GEO/SRA"
+    accession: "GSE254853"
+    bioprojects: ["PRJNA1072089"]
+    organism: ["Prunus dulcis", "Prunus persica"]
+    cultivar_or_chassis: ["Texas almond", "Early Gold peach"]
+    tissue: ["flower", "immature fruit"]
+    treatment_chemistry: "developmental comparison; no salinity treatment"
+    sample_count: 12
+    assay: "paired-end RNA-seq; allele-specific and general expression matrices"
+    landing_url: "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE254853"
+    api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=GSE254853&retmode=json"
+    download_endpoint: "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE254nnn/GSE254853/suppl/"
+    file_types: ["transcript FASTA", "raw count matrix", "ASE matrix", "rlog matrices", "SRA raw reads"]
+    approximate_download_size:
+      processed_supplement_total_mb: 16.8
+      components: ["13.7 MB transcript FASTA", "423.1 KB general rawdata", "178.4 KB ASE raw matrix", "781.9 KB ASE rlog", "1.7 MB general rlog"]
+      sra_raw_reads: "not size-audited"
+    access_conditions: "public; no login"
+    license: "GEO repository terms; source article license governs article text"
+    checksum_availability: "GEO FTP metadata commonly supplies file-level checksums, but none were displayed on the GEO landing page; verify md5sum file at acquisition"
+    exact_relevance: "Cross-validates Texas almond transcripts, haplotype phasing, peach/almond orthology, and expressed isoforms."
+    limitations:
+      - "Not a salt-stress experiment."
+      - "Tissue/development effects cannot be used as root salinity responses."
+    supersession: null
+    identity_conflicts: []
+
+  - id: "ROOTSTOCK_SALINITY_PRJNA732909"
+    category: "salinity_transcriptomics"
+    data_class: "raw_reads_repository"
+    downloadable: true
+    verification_status: "verified_public"
+    official_repository: "NCBI SRA / ENA"
+    accession: "PRJNA732909"
+    study_accessions: ["PRJNA732909"]
+    organism_as_deposited: "Prunus persica"
+    cultivar_or_chassis: ["Rootpac40", "Nemaguard"]
+    tissue: ["root", "leaf"]
+    treatment_chemistry:
+      article_design: "control Riverside city water versus Na/Cl-dominant saline water; RNA sampled after 48 h"
+      control_ec_ds_m: 1.36
+      saline_ec_ds_m: 3.0
+      repository_limitation: "ENA sample/run metadata do not encode a per-run treatment label; the 2x2x2x3 design must not be assigned to runs without a verified sample key."
+    sample_count:
+      runs: 24
+      biosamples: 24
+      design_expected: "2 genotypes x 2 tissues x 2 treatments x 3 biological replicates"
+    run_accessions:
+      - "SRR14662796"
+      - "SRR14662797"
+      - "SRR14671044"
+      - "SRR14671045"
+      - "SRR14671099"
+      - "SRR14671100"
+      - "SRR14671104"
+      - "SRR14679437"
+      - "SRR14661175"
+      - "SRR14661176"
+      - "SRR14662509"
+      - "SRR14671101"
+      - "SRR14679436"
+      - "SRR14661177"
+      - "SRR14662508"
+      - "SRR14662510"
+      - "SRR14662798"
+      - "SRR14671043"
+      - "SRR14671103"
+      - "SRR14671105"
+      - "SRR14671864"
+      - "SRR14671865"
+      - "SRR14671866"
+      - "SRR14679438"
+    assay: "Illumina paired-end RNA-seq"
+    landing_url: "https://www.ncbi.nlm.nih.gov/bioproject/PRJNA732909"
+    api_endpoint: "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=PRJNA732909&result=read_run&fields=study_accession,sample_accession,experiment_accession,run_accession,tax_id,scientific_name,library_strategy,library_source,library_layout,instrument_platform,fastq_ftp,fastq_md5,fastq_bytes&format=json"
+    file_types: ["paired compressed FASTQ", "ENA run/sample metadata"]
+    approximate_download_size:
+      canonical_paired_fastq_bytes: 43527962230
+      canonical_paired_fastq_gib: 40.539
+      article_reported_clean_read_yield: "233 Gb across 24 libraries; biological sequence yield reported by the primary paper, not a repository file-size measurement"
+      all_fastq_urls_including_unsuffixed_representation_bytes: 46541872263
+      warning: "Download the _1/_2 pair only; unsuffixed files are alternate generated representations and must not be added as independent data."
+    access_conditions: "public; no login"
+    license: "INSDC repository data; no study-specific license shown in ENA run metadata"
+    checksum_availability: "ENA exposes MD5 for every FASTQ URL"
+    exact_relevance: "Only verified public root/leaf RNA-seq dataset directly matching the Rootpac40/Nemaguard salinity study; supports expression-model calibration and differential-response priors."
+    linked_primary_article:
+      doi: "10.1038/s41598-022-05202-1"
+      pmcid: "PMC8786923"
+      oa_package: "ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_package/9a/7f/PMC8786923.tar.gz"
+      license: "CC BY"
+    limitations:
+      - "Treatment cannot be assigned to individual runs from repository metadata alone."
+      - "The experiment tests modest irrigation salinity, not seawater."
+      - "Short 48-hour RNA response is not perennial yield or survival."
+    supersession: null
+    identity_conflicts:
+      - "Repository taxonomy is Prunus persica for both cultivars. Rootpac40 is commercially described as a peach x almond hybrid, but the deposited taxon must not be silently relabeled."
+
+  - id: "ROOTSTOCK_14_PHENOTYPE_ION_SUPPLEMENT"
+    category: "salinity_phenotype_and_ion_chemistry"
+    data_class: "article_supplement_only"
+    downloadable: true
+    verification_status: "verified_article_only_no_raw_repository"
+    official_repository: "Nature Scientific Reports / PubMed Central"
+    accession: "PMC7712888"
+    doi: "10.1038/s41598-020-78036-4"
+    organism: "Prunus rootstocks used for almond"
+    cultivar_or_chassis: "14 rootstocks"
+    tissue: ["whole plant", "leaf", "root-associated phenotype"]
+    treatment_chemistry:
+      units: "meq/L"
+      treatments:
+        T1_control: {Na: 1.65, K: 6.5, PO4: 1.5, Mg: 1.3, SO4: 1.5, Cl: 1.5, NO3: 5.0}
+        T2_Na_SO4: {Na: 18.0, Ca: 4.5, K: 6.5, PO4: 1.5, Mg: 3.6, SO4: 22.0, Cl: 4.4, NO3: 5.0}
+        T3_Na_Cl: {Na: 15.5, Ca: 3.8, K: 6.5, PO4: 1.5, Mg: 3.1, SO4: 3.8, Cl: 19.0, NO3: 5.0}
+        T4_Na_Cl_SO4: {Na: 17.0, Ca: 4.25, K: 6.5, PO4: 1.5, Mg: 3.4, SO4: 12.32, Cl: 12.32, NO3: 5.0}
+        T5_Ca_Mg_Cl_SO4: {Na: 2.75, Ca: 13.5, K: 6.5, PO4: 1.5, Mg: 10.8, SO4: 13.5, Cl: 13.5, NO3: 5.0}
+    sample_count:
+      total_trees: 630
+      design: "14 genotypes x 5 treatments x 3 blocks x 3 plants"
+    assay: "greenhouse phenotyping, tissue ion analysis, physiological/biochemical measurements, targeted gene expression"
+    landing_url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC7712888/"
+    oa_metadata_endpoint: "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC7712888"
+    oa_package: "ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_package/54/c8/PMC7712888.tar.gz"
+    supplementary_file: "41598_2020_78036_MOESM1_ESM.pdf"
+    file_types: ["JATS XML", "PDF", "supplementary PDF tables/figures"]
+    approximate_download_size: "not exposed by OA metadata"
+    access_conditions: "public open access"
+    license: "CC BY"
+    checksum_availability: "not exposed by PMC OA API; calculate SHA-256 after download"
+    exact_relevance: "Best verified multi-genotype almond-rootstock phenotype and ion-composition calibration set; exact treatment recipes are available."
+    limitations:
+      - "No machine-readable raw instrument files or independent phenotype repository was identified."
+      - "Values must be extracted from article/supplement tables with provenance and double-entry QC."
+      - "Mixed-salt irrigation is far below undiluted seawater ionic strength."
+    supersession: null
+    identity_conflicts: []
+
+  - id: "ROOT_GRADIENT_SALINITY_FRONTIERS"
+    category: "salinity_phenotype_and_targeted_expression"
+    data_class: "article_supplement_only"
+    downloadable: true
+    verification_status: "verified_article_only_no_raw_repository"
+    official_repository: "Frontiers in Plant Science"
+    accession: null
+    doi: "10.3389/fpls.2020.595055"
+    organism: "Prunus rootstocks used for almond"
+    cultivar_or_chassis: ["Empyrean-1", "Controller-5", "Krymsk-86"]
+    tissue: ["root developmental zones", "whole plant"]
+    treatment_chemistry: "0, 50, and 150 mM NaCl; 13-day phenotype experiment and 3-day sodium-imaging experiment"
+    sample_count:
+      whole_plant_replicates_per_condition: 5
+      sodium_imaging_signals_per_condition: 15
+      note: "Targeted assays have assay-specific replicate counts in the methods/supplement."
+    assay: "growth, root anatomy, sodium imaging, ion distribution, qPCR/targeted expression"
+    landing_url: "https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2020.595055/full"
+    download_endpoint: "https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2020.595055/xml/nlm"
+    file_types: ["HTML/XML article", "PDF", "publisher supplementary files"]
+    approximate_download_size: "not exposed"
+    access_conditions: "public open access"
+    license: "CC BY"
+    checksum_availability: "not exposed; calculate local SHA-256"
+    exact_relevance: "Mechanistic evidence for sodium exclusion/sequestration, root barriers, HKT/SOS/NHX responses, and genotype-specific root-zone behavior."
+    limitations:
+      - "Publisher data-availability statement says contributions are in article/supplement; no external raw-data accession exists."
+      - "NaCl-only hydroponic/pot exposure does not reproduce seawater multi-ion chemistry."
+    supersession: null
+    identity_conflicts: []
+
+  - id: "ALMOND_HAIRY_ROOT_CRISPR_2024"
+    category: "transformation_and_genome_editing"
+    data_class: "article_supplement_with_deleted_external_record"
+    downloadable: true
+    verification_status: "publisher_supplement_public_external_record_deleted"
+    official_repository: "Springer Plant Cell, Tissue and Organ Culture / Zenodo"
+    accession: null
+    doi: "10.1007/s11240-024-02935-x"
+    organism: "Prunus dulcis"
+    cultivar_or_chassis: "Vairo"
+    tissue: "Agrobacterium rhizogenes-induced hairy roots on composite seedlings"
+    treatment_chemistry: null
+    sample_count:
+      composite_plants_screened: 6
+      reported_transformation_rate: "41 +/- 7%"
+    assay: "hairy-root transformation, CRISPR editing of ERF74 and GAI, PCR/Sanger screening"
+    landing_url: "https://link.springer.com/article/10.1007/s11240-024-02935-x"
+    supplementary_landing_url: "https://link.springer.com/article/10.1007/s11240-024-02935-x#Sec21"
+    cited_external_record:
+      doi: "10.5281/zenodo.10945763"
+      api_endpoint: "https://zenodo.org/api/records/10945763"
+      verified_status: "HTTP 410 Gone; record deleted as of 2026-08-12"
+    file_types: ["article PDF/HTML", "Springer supplementary PDF", "deleted Zenodo sequence/chromatogram record"]
+    approximate_download_size: "not exposed"
+    access_conditions: "article and Springer supplement public; Zenodo record unavailable"
+    license: "article CC BY 4.0; deleted record license unavailable"
+    checksum_availability: "not exposed for Springer supplement; Zenodo file hashes unavailable because record is deleted"
+    exact_relevance: "Published almond transformation/editing chassis relevant to testing engineered root traits in containment."
+    limitations:
+      - "The paper's cited sequences/chromatograms cannot currently be retrieved."
+      - "Six screened composite plants are a feasibility demonstration, not a validated production protocol."
+      - "Guide design initially used Prunus avium because the design tool lacked almond, then almond Texas v2 for off-target checks."
+    supersession: null
+    identity_conflicts:
+      - "Deleted Zenodo DOI is a critical reproducibility failure; do not claim the underlying chromatograms are publicly available."
+
+  - id: "PPHKT1_PPRUPE1G067100"
+    category: "candidate_gene_sequence"
+    data_class: "reference_sequence_plus_article"
+    downloadable: true
+    verification_status: "verified_reference_models_experimental_clone_not_deposited"
+    official_repository: "NCBI Gene/RefSeq and PubMed Central"
+    accession: "GeneID:18791946"
+    community_gene_id: "Prupe.1G067100"
+    refseq_transcripts:
+      - {rna: "XM_020565174.1", protein: "XP_020420763.1", amino_acids: 466}
+      - {rna: "XM_020564808.1", protein: "XP_020420397.1", amino_acids: 542}
+    organism: "Prunus persica"
+    cultivar_or_chassis: "Lovell reference; Nemaguard experimental material in paper"
+    tissue: "Nemaguard root cDNA/promoter in functional paper"
+    treatment_chemistry: "salt-response/Arabidopsis hkt1 complementation context; see article methods"
+    sample_count: "not a deposited expression dataset"
+    assay: "predicted RefSeq gene models; cloning and Arabidopsis complementation in article"
+    gene_landing_url: "https://www.ncbi.nlm.nih.gov/gene/18791946"
+    sequence_api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=XM_020565174.1,XM_020564808.1&rettype=fasta&retmode=text"
+    linked_primary_article:
+      doi: "10.1371/journal.pone.0214473"
+      pmcid: "PMC6435114"
+      oa_package: "ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_package/97/8c/PMC6435114.tar.gz"
+    file_types: ["RefSeq RNA FASTA", "protein FASTA", "GenBank/GenPept", "open-access article and supplements"]
+    approximate_download_size: "kilobytes for sequences; article package size not exposed"
+    access_conditions: "public; no login"
+    license: "NCBI repository terms; article CC0"
+    checksum_availability: "no per-record hash exposed by E-utilities; compute SHA-256 and retain accession.version"
+    exact_relevance: "Primary peach HKT1 ortholog candidate for sodium retrieval/exclusion logic."
+    limitations:
+      - "The exact Nemaguard cloned cDNA/promoter sequence has no verified public accession."
+      - "Two current Lovell RefSeq transcript isoforms differ substantially in length."
+    supersession: "Use exact accession versions."
+    identity_conflicts:
+      - "Do not equate either predicted Lovell RefSeq isoform with the experimental Nemaguard clone without resequencing or author-supplied sequence."
+
+  - id: "PPSOS2_PPCIPK24_PPRUPE7G244500"
+    category: "candidate_gene_sequence"
+    data_class: "reference_sequence_plus_article"
+    downloadable: true
+    verification_status: "verified_reference_models_nomenclature_conflict"
+    official_repository: "NCBI Gene/RefSeq"
+    accession: "GeneID:18770930"
+    community_gene_id: "Prupe.7G244500.1"
+    refseq_transcripts:
+      - {rna: "XM_020568644.1", protein: "XP_020424233.1", amino_acids: 446}
+      - {rna: "XM_007201987.2", protein: "XP_007202049.1", amino_acids: 446}
+    refseq_definition: "CBL-interacting serine/threonine-protein kinase 24"
+    organism: "Prunus persica"
+    cultivar_or_chassis: "Lovell reference"
+    tissue: "root/leaf targeted-expression and cloned-CDS context in linked studies"
+    treatment_chemistry: "control EC 1.36 dS/m versus saline EC 3.0 dS/m for 48 h in the 2024 study"
+    sample_count: "no raw expression repository verified"
+    assay: "RefSeq predicted gene models; qPCR, cloning, and interaction assays in articles"
+    gene_landing_url: "https://www.ncbi.nlm.nih.gov/gene/18770930"
+    sequence_api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=XM_020568644.1,XM_007201987.2&rettype=fasta&retmode=text"
+    linked_primary_articles:
+      - {doi: "10.1002/tpg2.20371", interpretation: "PpCIPK24/PpSOS2 candidate; cloned full CDS and interaction assays"}
+      - {doi: null, interpretation: "2022 peach CBL/CIPK family study labels the same Prupe locus PprCIPK17"}
+    file_types: ["RefSeq RNA FASTA", "protein FASTA", "GenBank/GenPept", "article/supplement"]
+    approximate_download_size: "kilobytes for sequences"
+    access_conditions: "public; no login"
+    license: "NCBI repository terms; article-specific licenses"
+    checksum_availability: "compute local SHA-256 and retain accession.version"
+    exact_relevance: "Peach SOS-pathway kinase candidate for stress signaling and Na homeostasis modules."
+    limitations:
+      - "No raw qPCR or salinity expression repository was identified."
+      - "Functional naming is phylogenetic/experimental interpretation, not a distinct sequence accession."
+    supersession: "XM_007201987.2 supersedes older transcript versions; retain both current isoforms only if experimentally justified."
+    identity_conflicts:
+      - "The identical community locus is called PprCIPK17 in one family paper and PpCIPK24/PpSOS2 in the 2024 study. Use accession.version as identity, not the family number alone."
+
+  - id: "PYKPA1_AJ972674"
+    category: "candidate_donor_gene"
+    data_class: "primary_sequence_record"
+    downloadable: true
+    verification_status: "verified_current"
+    official_repository: "NCBI GenBank/Protein"
+    accession: "AJ972674.1"
+    protein_accession: "CAI99405.1"
+    organism: "Pyropia yezoensis"
+    historical_organism_name: "Porphyra yezoensis"
+    cultivar_or_chassis: null
+    tissue: null
+    treatment_chemistry: "functional salt-tolerance context in rice study"
+    sample_count: 1
+    assay: "full-length cDNA sequencing; heterologous expression evidence in linked paper"
+    landing_url: "https://www.ncbi.nlm.nih.gov/nuccore/AJ972674.1"
+    api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=AJ972674.1&rettype=gbwithparts&retmode=text"
+    linked_primary_article: {doi: "10.5511/plantbiotechnology.13.0517a"}
+    sequence_length_bp: 3510
+    file_types: ["GenBank", "nucleotide FASTA", "protein FASTA/GenPept"]
+    approximate_download_size: "kilobytes"
+    access_conditions: "public; no login"
+    license: "INSDC repository data"
+    checksum_availability: "no per-record checksum exposed; calculate SHA-256 after accession-version fetch"
+    exact_relevance: "Sequence-ready red-algal P-type ATPase/putative Na/K transporter donor candidate."
+    limitations:
+      - "Rice heterologous-expression evidence is not evidence of safety or function in almond roots."
+      - "Subcellular localization and energetic burden must be revalidated in the target chassis."
+    supersession: null
+    identity_conflicts:
+      - "Current taxonomy is Pyropia yezoensis; older paper/record language may say Porphyra yezoensis."
+
+  - id: "SBSOS1_EU879059"
+    category: "candidate_donor_gene"
+    data_class: "primary_sequence_record"
+    downloadable: true
+    verification_status: "verified_current"
+    official_repository: "NCBI GenBank/Protein"
+    accession: "EU879059.1"
+    protein_accession: "ACJ63441.1"
+    organism: "Salicornia brachiata"
+    cultivar_or_chassis: null
+    tissue: "source cDNA; functional study context"
+    treatment_chemistry: "halophyte NaCl tolerance context"
+    sample_count: 1
+    assay: "mRNA sequencing and functional characterization"
+    landing_url: "https://www.ncbi.nlm.nih.gov/nuccore/EU879059.1"
+    api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=EU879059.1&rettype=gbwithparts&retmode=text"
+    linked_primary_article: {doi: "10.1186/1471-2229-12-188"}
+    sequence_length_bp: 3774
+    cds_coordinates: "91..3570"
+    protein_length_aa: 1159
+    file_types: ["GenBank", "nucleotide FASTA", "protein FASTA/GenPept"]
+    approximate_download_size: "kilobytes"
+    access_conditions: "public; no login"
+    license: "INSDC repository data; linked BMC article open access"
+    checksum_availability: "no per-record checksum exposed; calculate SHA-256 after accession-version fetch"
+    exact_relevance: "Sequence-ready halophyte plasma-membrane Na+/H+ antiporter candidate."
+    limitations:
+      - "Large membrane protein; expression, targeting, and pleiotropy require chassis-specific validation."
+    supersession: null
+    identity_conflicts: []
+
+  - id: "ECTOCARPUS_REF_GCA000310025"
+    category: "candidate_donor_reference"
+    data_class: "machine_addressable_reference"
+    downloadable: true
+    verification_status: "verified_accession"
+    official_repository: "NCBI GenBank"
+    accession: "GCA_000310025.1"
+    assembly_name: "ASM31002v1"
+    organism: "Ectocarpus siliculosus"
+    cultivar_or_chassis: null
+    tissue: null
+    treatment_chemistry: null
+    sample_count: 1
+    assay: "whole-genome sequencing and annotation"
+    landing_url: "https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_000310025.1/"
+    api_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_000310025.1/dataset_report"
+    download_endpoint: "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/download?accessions=GCA_000310025.1&include_annotation_type=GENOME_GFF,GENOME_GBFF,RNA_FASTA,CDS_FASTA,PROTEIN_FASTA,SEQUENCE_REPORT"
+    file_types: ["genomic FASTA", "annotation", "CDS/protein FASTA", "sequence report"]
+    approximate_download_size: "not exposed in verified landing metadata"
+    access_conditions: "public; no login"
+    license: "repository data; no dataset-specific license displayed"
+    checksum_availability: "NCBI data-package/FTP hashes available"
+    exact_relevance: "Reference for validating Ectocarpus mannitol-pathway gene models before donor-sequence selection."
+    limitations:
+      - "Legacy Esi gene identifiers may require crosswalk to the exact assembly annotation release."
+      - "Marine brown-algal gene regulation and codon context are not transferable without testing."
+    supersession: null
+    identity_conflicts: []
+
+  - id: "ECTOCARPUS_STRESS_MICROARRAY_2009"
+    category: "donor_expression_evidence"
+    data_class: "article_supplement_and_est_accessions"
+    downloadable: true
+    verification_status: "verified_supplements_no_raw_array_repository"
+    official_repository: "PubMed Central / European Nucleotide Archive via INSDC"
+    accession_range: "FP245546-FP312611"
+    doi: "10.1186/gb-2009-10-6-r66"
+    organism: "Ectocarpus siliculosus"
+    cultivar_or_chassis: null
+    tissue: "whole cultured filaments/flasks"
+    treatment_chemistry: "control, hyposalinity, hypersalinity, and oxidative stress; 6-hour exposure"
+    sample_count:
+      biological_flasks: 20
+      design: "4 conditions x 5 biological replicates"
+    assay: "NimbleGen expression microarray built from 90,637 ESTs; 17,119 sequences represented"
+    landing_url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC2718500/"
+    oa_metadata_endpoint: "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC2718500"
+    est_query_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=nuccore&term=FP245546%3AFP312611%5Baccn%5D&retmode=json"
+    file_types: ["supplementary XLS expression/annotation tables", "EST sequence records", "article XML/PDF"]
+    approximate_download_size: "not exposed"
+    access_conditions: "public open access"
+    license: "BMC open-access article; INSDC sequence records public"
+    checksum_availability: "not exposed for supplements; compute SHA-256; preserve accession.version for ESTs"
+    exact_relevance: "Primary expression evidence for Ectocarpus osmotic-stress and mannitol-pathway candidates."
+    candidate_gene_observations:
+      Esi0017_0062: "Mannitol-1-phosphate dehydrogenase candidate; reported approximately sixfold down under hyposalinity."
+      Esi0020_0181: "A second M1PDH-like model with low baseline expression and approximately fivefold induction under hypersalinity."
+      Esi0100_0020: "Not established by this microarray paper as Esi0020_0181; do not conflate the identifiers."
+    limitations:
+      - "No GEO/ArrayExpress raw NimbleGen deposition was verified."
+      - "Supplemental expression tables are processed values, not raw probe images/intensities."
+      - "Legacy identifiers require sequence-level mapping to the reference assembly."
+    supersession: null
+    identity_conflicts:
+      - "Esi0020_0181 (second M1PDH-like model) and Esi0100_0020 (later mannitol-1-phosphatase-2 candidate) are different identifiers and functions."
+
+  - id: "PYAPX_RICE_2026_ARTICLE"
+    category: "candidate_donor_evidence"
+    data_class: "article_additional_files_only"
+    downloadable: true
+    verification_status: "article_verified_sequence_accession_absent"
+    official_repository: "Plant Physiology and Biochemistry publisher record"
+    accession: null
+    doi: "10.1016/j.plaphy.2025.110839"
+    organism: ["Pyropia yezoensis donor", "Oryza sativa transgenic chassis"]
+    cultivar_or_chassis: "transgenic rice"
+    tissue: "rice tissues as specified in article"
+    treatment_chemistry: "salt stress; exact design in article/additional files"
+    sample_count: "article-specific; no repository sample table verified"
+    assay: "physiological, biochemical, and transcriptomic analysis of PyAPX-expressing rice"
+    landing_url: "https://pubmed.ncbi.nlm.nih.gov/?term=10.1016%2Fj.plaphy.2025.110839"
+    file_types: ["publisher article", "additional files if exposed by publisher"]
+    approximate_download_size: "not exposed"
+    access_conditions: "article availability subject to publisher page; no independent raw-data repository identified"
+    license: "no dataset-specific license verified"
+    checksum_availability: "not exposed"
+    exact_relevance: "Recent heterologous evidence that a Pyropia APX candidate may improve oxidative-stress handling under salinity."
+    limitations:
+      - "No exact PyAPX nucleotide/protein accession was verified."
+      - "No raw RNA-seq repository accession was stated in the verified data-availability text."
+      - "Not construct-ready; sequence identity must be obtained from authors or independently cloned/verified."
+    supersession: null
+    identity_conflicts: []
+
+  - id: "CA_DWR_DISCRETE_WATER_QUALITY"
+    category: "water_ion_chemistry"
+    data_class: "dynamic_public_observations"
+    downloadable: true
+    verification_status: "verified_dynamic"
+    official_repository: "California Natural Resources Agency / Department of Water Resources"
+    accession: null
+    title: "Water Quality Data / Discrete Grab Water Quality"
+    organism: null
+    cultivar_or_chassis: null
+    tissue: null
+    treatment_chemistry: "Observed California surface-water and groundwater physical/chemical results; filter for EC, sodium, chloride, calcium, magnesium, sulfate, alkalinity, pH, boron, and sampling location/date/method."
+    sample_count: "dynamic; Water Data Library map reported 44,665 stations, not a fixed analytical-result count"
+    assay: "field/laboratory water-quality measurements from multiple programs"
+    landing_url: "https://data.cnra.ca.gov/dataset/water-quality-data"
+    api_endpoint: "https://gis.water.ca.gov/arcgis/rest/services/Geoscientific/i08_Stations_Discrete_Grab_Water_Quality/MapServer/0"
+    file_types: ["CSV/open-data exports", "ArcGIS REST JSON/GeoJSON where supported"]
+    approximate_download_size: "dynamic and query-dependent"
+    access_conditions: "public; no login for open-data endpoints"
+    license: "California open-data terms; verify resource-level metadata at snapshot time"
+    checksum_availability: "no stable hash for dynamic queries; hash the exact response and store URL/timestamp"
+    exact_relevance: "California-specific source-water prior for greenhouse irrigation recipes and regional model calibration."
+    limitations:
+      - "The interactive Water Data Library map was reported temporarily offline; use the open-data/API endpoints."
+      - "Methods, units, detection limits, and station programs vary; harmonization is mandatory."
+    supersession: "dynamic weekly publication; pin extraction timestamp"
+    identity_conflicts: []
+
+  - id: "CA_GAMA_GROUNDWATER_QUALITY"
+    category: "water_ion_chemistry"
+    data_class: "dynamic_public_observations"
+    downloadable: true
+    verification_status: "verified_dynamic"
+    official_repository: "California State Water Resources Control Board / GeoTracker GAMA / California Open Data"
+    accession: null
+    title: "Ground Water Water Quality Results"
+    organism: null
+    cultivar_or_chassis: null
+    tissue: null
+    treatment_chemistry: "Observed groundwater analytes; query EC/TDS, sodium, chloride, sulfate, boron, nitrate, Ca, Mg, K, alkalinity, and pH."
+    sample_count: "dynamic; not exposed as a stable total"
+    assay: "groundwater laboratory and field results aggregated from state/federal/local programs"
+    landing_url: "https://data.ca.gov/dataset/ground-water-water-quality-results"
+    api_endpoint: "https://gamagroundwater.waterboards.ca.gov/gama/gamamap/public/"
+    file_types: ["open-data downloads", "web/API query results"]
+    approximate_download_size: "dynamic and query-dependent"
+    access_conditions: "public"
+    license: "California open-data/resource terms"
+    checksum_availability: "no stable hash for dynamic query; hash exact extracts locally"
+    exact_relevance: "Groundwater salinity and boron priors for almond-growing regions and blend-water scenarios."
+    limitations:
+      - "Duplicate results and heterogeneous analytical methods/programs require QC."
+      - "Station coordinates may be generalized for privacy."
+    supersession: "dynamic; pin extraction timestamp"
+    identity_conflicts: []
+
+  - id: "WATER_QUALITY_PORTAL_WQX3_CA"
+    category: "water_ion_chemistry"
+    data_class: "dynamic_federated_observations"
+    downloadable: true
+    verification_status: "verified_dynamic"
+    official_repository: "USGS/EPA Water Quality Portal WQX3"
+    accession: null
+    title: "California major-ion and conductivity query templates"
+    organism: null
+    cultivar_or_chassis: null
+    tissue: null
+    treatment_chemistry: "Observed water chemistry; run separate WQX3 queries for Specific conductance, Sodium, Chloride, Sulfate, Calcium, Magnesium, Boron, pH, alkalinity, and TDS."
+    sample_count: "dynamic and query-dependent"
+    assay: "federated physical/chemical monitoring results"
+    landing_url: "https://www.waterqualitydata.us/"
+    api_endpoint_template: "https://www.waterqualitydata.us/wqx3/Result/search?statecode=US%3A06&characteristicName={URL_ENCODED_CHARACTERISTIC}&mimeType=csv&dataProfile=fullPhysChem&providers=NWIS&providers=STORET"
+    documentation_url: "https://www.waterqualitydata.us/webservices_documentation/"
+    file_types: ["CSV", "XLSX", "XML/JSON as supported by endpoint"]
+    approximate_download_size: "dynamic and query-dependent"
+    access_conditions: "public; large queries should be spatially/date bounded"
+    license: "underlying agency public-data terms; retain provider/source identifiers"
+    checksum_availability: "no stable service hash; hash exact response locally"
+    exact_relevance: "Cross-agency California calibration and validation source, including USGS and state/local observations."
+    limitations:
+      - "Use WQX3. Legacy WQX 2.2 does not include recent USGS data after 2024-03-11."
+      - "Characteristic names, units, fractions, methods, detection limits, and censored values require normalization."
+    supersession: "WQX3 supersedes WQX 2.2 for current USGS-inclusive extraction"
+    identity_conflicts: []
+
+  - id: "USGS_PHREEQC_PITZER_DATABASE"
+    category: "water_chemistry_model"
+    data_class: "thermodynamic_reference"
+    downloadable: true
+    verification_status: "verified_official_software_resource"
+    official_repository: "USGS PHREEQC"
+    accession: null
+    title: "PHREEQC Pitzer thermodynamic database"
+    organism: null
+    cultivar_or_chassis: null
+    tissue: null
+    treatment_chemistry: "High-ionic-strength aqueous speciation, including seawater-range activity-coefficient calculations"
+    sample_count: null
+    assay: "thermodynamic parameter database, not observations"
+    landing_url: "https://www.usgs.gov/software/phreeqc-version-3"
+    api_endpoint: null
+    file_types: ["pitzer.dat text database", "PHREEQC release archive/source"]
+    approximate_download_size: "small; exact file size depends on pinned PHREEQC release"
+    access_conditions: "public USGS software download"
+    license: "USGS software notice/public-domain status as specified in the pinned release"
+    checksum_availability: "release-archive checksum varies by distribution; calculate SHA-256 for pitzer.dat and record PHREEQC version"
+    exact_relevance: "Required to convert nominal seawater/mixed-salt recipes into ion activities, osmotic pressure, saturation indices, and precipitation risk."
+    limitations:
+      - "Not biological data and not a growth-response model."
+      - "Must be version-pinned; do not use dilute-solution assumptions at seawater ionic strength."
+    supersession: "pin exact PHREEQC version and database hash"
+    identity_conflicts: []
+
+critical_gaps:
+  - id: "GAP_NO_SEAWATER_ALMOND_DATA"
+    severity: "critical"
+    statement: "No verified public almond dataset demonstrates survival, growth, or nut yield under undiluted seawater. Existing studies use EC 3 dS/m irrigation, mixed salts, or up to 150 mM NaCl."
+  - id: "GAP_PYAPX_SEQUENCE"
+    severity: "critical"
+    statement: "The exact PyAPX sequence/accession used in the recent rice paper was not verified; it is not construct-ready."
+  - id: "GAP_HKT1_CLONE"
+    severity: "critical"
+    statement: "The functional paper's Nemaguard PpHKT1 clone/promoter has no verified accession; two Lovell RefSeq isoforms exist."
+  - id: "GAP_SOS2_NOMENCLATURE"
+    severity: "high"
+    statement: "Prupe.7G244500 is called PprCIPK17 and PpCIPK24/PpSOS2 in different primary studies; sequence accession.version must anchor identity."
+  - id: "GAP_PRJNA732909_SAMPLE_KEY"
+    severity: "critical"
+    statement: "The 24 PRJNA732909 runs lack per-run treatment labels in verified ENA metadata; a publisher/author sample-to-condition key is needed before differential expression."
+  - id: "GAP_HAIRY_ROOT_ZENODO"
+    severity: "critical"
+    statement: "Zenodo DOI 10.5281/zenodo.10945763 cited for almond editing sequences/chromatograms returns HTTP 410 Gone."
+  - id: "GAP_ECTOCARPUS_GENE_CROSSWALK"
+    severity: "high"
+    statement: "Legacy Esi mannitol-pathway identifiers need sequence-level crosswalk; Esi0020_0181 and Esi0100_0020 must not be conflated."
+  - id: "GAP_RAW_PHENOTYPES"
+    severity: "high"
+    statement: "Key almond/rootstock salinity studies expose tables/supplements but no independently deposited machine-readable raw phenotype or instrument files."
+  - id: "GAP_PERENNIAL_OUTCOMES"
+    severity: "critical"
+    statement: "No verified dataset links candidate constructs to multi-year almond survival, flowering, yield, kernel quality, rootstock/scion compatibility, or food-safety outcomes."
+
+recommended_acquisition_order:
+  - priority: 1
+    datasets: ["ALM_REF_TEXAS_V2", "ALM_REF_NONPAREIL", "PEACH_REF_LOVELL_V2", "PPHKT1_PPRUPE1G067100", "PPSOS2_PPCIPK24_PPRUPE7G244500", "PYKPA1_AJ972674", "SBSOS1_EU879059"]
+    action: "Download small reference packages/records, capture repository metadata, and compute SHA-256."
+  - priority: 2
+    datasets: ["ROOTSTOCK_14_PHENOTYPE_ION_SUPPLEMENT", "ROOT_GRADIENT_SALINITY_FRONTIERS", "ALMOND_HAIRY_ROOT_CRISPR_2024", "ECTOCARPUS_STRESS_MICROARRAY_2009"]
+    action: "Download article packages/supplements and transcribe tables with two-person or scripted validation."
+  - priority: 3
+    datasets: ["CA_DWR_DISCRETE_WATER_QUALITY", "CA_GAMA_GROUNDWATER_QUALITY", "WATER_QUALITY_PORTAL_WQX3_CA", "USGS_PHREEQC_PITZER_DATABASE"]
+    action: "Run bounded California queries, normalize units/methods, version snapshots, and hash exact responses."
+  - priority: 4
+    datasets: ["ROOTSTOCK_SALINITY_PRJNA732909"]
+    action: "Resolve the run-to-condition key first; then stage the 40.539 GiB canonical paired FASTQs with ENA MD5 verification."

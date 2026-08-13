@@ -1,0 +1,11 @@
+# Locally calculated SHA-256 snapshot, generated 2026-08-12.
+# These hashes cover repository files only. They are not remote repository,
+# publisher, NCBI, ENA, SRA, Zenodo, or author-supplied checksums.
+5c6a5eb8e874cd6e278e9009898a347ae82095b75425920d9784aa71506ec7b9  data/public/public_bio_data_manifest.yaml
+e8b71f2251f4cd5014c8c0d480beb35d7fc10e3eaf1cb299b9cec9e62250db74  data/public/public_bio_data_audit.md
+7b92681c5a21c079abf4a947dffe780f55759bb3c6154c806a4a8a85bc359296  data/public/evidence_registry_seed.md
+46943940d8c6cd9a5624b7c6a8c60e7383f5a83547a7691c069955a2c625a9bc  scripts/acquire_public_data.ps1
+682a82c5a6d38463748ceb03c1a70a84d357d1bae05d97cf3a7021ab18ab1f52  scripts/public_data/Acquire-NcbiReferences.ps1
+8e422be43ac43ef7a1d9246db7e66f394f0b3490626e2f0bc5d74a0e1f1d2229  scripts/public_data/PublicDataDownloader.psm1
+430231902292916ece90c8461dbaf308e9b7b71bb406bbc452f70ec2b81d2980  scripts/public_data/Test-PublicDataDownloader.ps1
+a6dd6bc8a79c3600270ccc648d3bd0d880186658f2b76cd3a3b6c88571478a6f  scripts/public_data/README.md
