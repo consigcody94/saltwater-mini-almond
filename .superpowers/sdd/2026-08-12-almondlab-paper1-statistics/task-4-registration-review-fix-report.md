@@ -1,13 +1,15 @@
 # Task 4 prospective-registration review repair report
 
-**Status:** second-review findings repaired; awaiting a new independent read-only re-review
-**Scope:** documentation/registration only; no production/config/test edit,
-outcome generation, mechanism calibration, stage, or commit
+**Status:** independently APPROVED at immutable registration commit `f200edd`
+plus LF-portability commit `d5412a9`; implementation remains separate
+**Scope:** documentation/registration only; no outcome generation or mechanism
+calibration
 **Evidence:** all choices remain `hypothesis_prior`; materialized schedules and
 forcing panels remain `synthetic_only`
 
 Repaired proposal SHA-256:
-`646d61edbbec8d996977e18e560c4966ebfdb799bc34b68a0d20170bb05b7419`.
+`48083df8fb0f3742a984921c9099cd5d2bcfe8ae33c5d7366abced9852f0b69a`
+(approval-status-only follow-up; reviewed normative body unchanged).
 
 Final approved Task 3 dependency commit:
 `d242473269803fa16461f78e8784813272912fbb`.
@@ -65,14 +67,21 @@ The materializer produces exogenous schedules/forcing only.  It contains no
 plant outcome, solver call, calibrated mechanism value, rank, selection, or
 acceptance result.
 
-## Re-review request
+## Final independent rereview
 
-The second review stated that C3–C8, I2–I9, and all minor findings were closed;
-this repair does not weaken those clauses.  Please perform a fresh read-only
-review of the complete proposal and materializer, concentrating on C1, C2,
-C9, I1, and I10 while checking for interactions with every previously closed
-finding.  Re-run the materializer in a clean process; independently audit
-shared-batch volume arithmetic, all four H3 transforms, exact time-grid/AUC
-semantics, every expanded path, prefix relations, primary/sensitivity
-separation, and the runtime/artifact hash partition.  This report does not
-assert approval.
+The fresh reviewer returned **Spec APPROVED; Quality APPROVED**, with zero
+Critical, Important, or Minor findings for immutable commits `f200edd` and
+`d5412a9`.  The reviewer independently rechecked every prior closure,
+Task 3 compatibility, shared-batch arithmetic, all four H3 transforms,
+StandardNormal variance scaling, exact sensitivity paths, the non-self-
+referential artifact hash partition, and the fixed 32/64/128 prefixes.
+
+A fresh Git archive produced the registered materializer bytes with SHA-256
+`0397fb262931c08f197ea841c24e055bbb751cbdec06dbc7473a87c9981497d5`.
+Two locked-environment archive executions were byte-identical and reproduced
+all nine registered hashes.  The final Task 3 regression was `108 passed`;
+the review target and commit diffs were clean.  This approval authorizes
+test-first implementation of the registered synthetic-only contracts.  It
+does not authorize physical preparation/use, empirical efficacy claims,
+outcome generation before the contracts pass, or any preferred-candidate
+claim.

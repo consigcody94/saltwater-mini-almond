@@ -1,6 +1,6 @@
 # Paper 1 Task 4 prospective synthetic-only registration proposal
 
-**Status:** second-review-repaired proposal awaiting a fresh independent read-only review; not yet an accepted configuration, protocol, recipe, assay, or physical-use authorization
+**Status:** independently approved as prospective synthetic-only registration at `f200edd` + `d5412a9`; implementation and every physical-use authorization remain separate
 **Prepared:** 2026-08-13
 **Scope:** prospective closure of Task 4 blockers B01–B20
 **Evidence semantics:** every numerical choice introduced here is `hypothesis_prior`; every generated material, forcing, trajectory, observation, scenario, and calibration panel is `synthetic_only`
