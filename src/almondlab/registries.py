@@ -430,10 +430,10 @@ _SIGNED_DECIMAL = re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?$")
 # publication inputs.  They are intentionally literal rather than derived at
 # import time: a syntactically valid edit must not authorize itself.
 _AUDITED_EVIDENCE_REGISTRY_SHA256: Final[str] = (
-    "3296138c408220c9b5919cc5f1126bc18e1def9c5dd72ff0188d1c5ce8159bb8"
+    "68925e3862beb823c60a91842588f649c972f07d489a80d66fd51867583fcf05"
 )
 _AUDITED_CANDIDATE_REGISTRY_SHA256: Final[str] = (
-    "8e95c90ee9d85180a0b2dee7ef71ae8471b9784da1bafd52bf4d0d9aa044d0ae"
+    "877c7767719f307c19b75fc314e04229a329a6e3cb3cc385d76697c67ce28664"
 )
 _AUDITED_REFERENCE_CHEMISTRY_SHA256: Final[str] = (
     "262a3b3210181d73bac416a6c0e09151de397fc8cc3752692a88d296a75f430a"

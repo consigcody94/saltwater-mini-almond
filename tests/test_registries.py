@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from almondlab.errors import AlmondLabError
 from almondlab.registries import (
@@ -203,6 +204,14 @@ def test_primary_candidate_accessions_and_h3_contract_are_exact() -> None:
     assert table.loc["C2", "sequence_readiness"] == (
         "accession_verified_construct_map_unresolved"
     )
+    assert table.loc["C2", "target_tissue"] == (
+        "prospective root-preferred cortex/vascular parenchyma class; exact "
+        "construct targeting unresolved"
+    )
+    assert table.loc["C2", "registered_expression_class"] == (
+        "Prospective salt-inducible root-preferred cortex/vascular parenchyma "
+        "class; exact construct targeting unresolved"
+    )
     assert table.loc["C3", "sequence_id"] == "Esi0017_0062|Esi0100_0020"
     assert table.loc["C3", "sequence_status"] == "crosswalk_pending"
     assert table.loc["C4", "sequence_id"] == "EU879059.1"
@@ -307,14 +316,65 @@ def test_recent_rice_evidence_retains_full_text_design_and_claim_boundaries() ->
     assert "every 3 days" in row["exposure_duration"]
     assert "day 10" in row["exposure_duration"]
     assert "30 seeds per dish x 3 replicate dishes" in row["sample_size"]
-    assert "12 PyAPX" in row["sample_size"]
-    assert "11 PyMnSOD" in row["sample_size"]
-    assert "9 KaNa+/H+" in row["sample_size"]
+    assert "endpoint-specific independent-line n not_reported" in row["sample_size"]
+    assert "12 PyAPX" not in row["sample_size"]
+    assert "11 PyMnSOD" not in row["sample_size"]
+    assert "9 KaNa+/H+" not in row["sample_size"]
+    assert "recovered homozygous T1 inventory" in row["life_stage"]
+    assert "12 PyAPX" in row["life_stage"]
+    assert "11 PyMnSOD" in row["life_stage"]
+    assert "9 KaNa+/H+" in row["life_stage"]
     assert "AY282755.1" in row["program_assumptions"]
     assert "DQ146477.2" in row["program_assumptions"]
+    assert "KaNa+/H+ MT473962 (unversioned)" in row["program_assumptions"]
+    assert "resolves MT473962.1 as a partial CDS" in row["program_assumptions"]
     assert "MT473962.1" in row["program_assumptions"]
     assert "construct" in row["limitation"].lower()
     assert "event" in row["limitation"].lower()
+
+
+def test_kana_evidence_records_paper_repository_completeness_conflict() -> None:
+    row = load_evidence_registry(EVIDENCE).set_index("evidence_id").loc[
+        "EV_KANAH_2022"
+    ]
+
+    assert "MT473962 (unversioned)" in row["program_assumptions"]
+    assert "full-length coding sequence" in row["program_assumptions"]
+    assert "MT473962.1" in row["program_assumptions"]
+    assert "partial CDS" in row["program_assumptions"]
+    assert "identity/completeness conflict" in row["limitation"]
+    assert "No securely pinned public accession" not in row["limitation"]
+
+
+def test_public_manifest_separates_rice_inventory_and_kana_identity_states() -> None:
+    payload = yaml.safe_load(
+        (REPO / "data" / "public" / "public_bio_data_manifest.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    datasets = {item["id"]: item for item in payload["datasets"]}
+    article = datasets["PYAPX_RICE_2026_ARTICLE"]
+    kana = datasets["KANAH_MT473962"]
+
+    assert article["sample_count"] == {
+        "germination": "30 seeds per dish x 3 replicate dishes",
+        "other_endpoint_independent_line_n": "not_reported",
+    }
+    assert article["source_reported_inventory"]["recovered_homozygous_t1_lines"] == {
+        "PyAPX": 12,
+        "PyMnSOD": 11,
+        "KaNa+/H+": 9,
+    }
+    assert article["paper_reported_accessions"]["KaNa+/H+"] == "MT473962"
+    assert article["repository_verification"]["resolved_accession_versions"][
+        "KaNa+/H+"
+    ] == "MT473962.1"
+    assert kana["paper_reported_accession"] == "MT473962"
+    assert kana["accession"] == "MT473962.1"
+    assert any(
+        "full-length coding sequence" in conflict and "partial CDS" in conflict
+        for conflict in kana["identity_conflicts"]
+    )
 
 
 @pytest.mark.parametrize(

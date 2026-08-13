@@ -44,12 +44,15 @@ The endpoint template is:
 https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db={nuccore|protein}&id={accession.version}&rettype=fasta&retmode=text&tool=AlmondLabPhase2
 ```
 
-The 2025 paper reports `AY282755.1`, `DQ146477.2`, and `MT473962.1`, and the
-guarded workflow independently verifies those repository record identities.
-They are **not construct-ready**: the records do not independently validate
-targeting, the exact construct maps, or event-to-construct mappings, and
-`MT473962.1` is a partial CDS. No Ectocarpus crosswalk is asserted. The code
-does not call SRA or ENA and does not scrape article pages.
+The 2025 paper reports `AY282755.1`, `DQ146477.2`, and unversioned `MT473962`;
+the guarded workflow independently verifies the first two repository records
+and resolves the last to `MT473962.1`. They are **not construct-ready**: the
+records do not independently validate targeting, exact construct maps, or
+event-to-construct mappings. The paper calls the KaNa+/H+ cloned material a
+full-length coding sequence, while the resolved repository record is a partial
+CDS; this identity/completeness conflict remains open. No Ectocarpus crosswalk
+is asserted. The code does not call SRA or ENA and does not scrape article
+pages.
 
 The GEO filename policy is a positive allowlist. It accepts uncompressed
 `.csv`, `.tsv`, `.txt`, `.fasta`, `.fa`, `.gff`, `.gff3`, `.gtf`, `.xlsx`, and

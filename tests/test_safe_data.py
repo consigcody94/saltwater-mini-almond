@@ -60,6 +60,123 @@ def test_every_row_is_inspected_before_merge_including_a_late_collision() -> Non
     assert exc_info.value.code == "SYNTHETIC_CONTAMINATION"
 
 
+@pytest.mark.parametrize("oversized_side", ["left", "right"])
+def test_join_rejects_clean_input_above_the_inclusive_ten_thousand_row_limit(
+    monkeypatch: pytest.MonkeyPatch, oversized_side: str
+) -> None:
+    calls: list[str] = []
+
+    def forbidden_merge(*args: object, **kwargs: object) -> pd.DataFrame:
+        calls.append("merge")
+        raise AssertionError("merge ran after a derivable input-size violation")
+
+    monkeypatch.setattr(pd, "merge", forbidden_merge)
+    oversized = _measured(keys=list(range(10_001)))
+    small = _measured(keys=[0])
+    left, right = (oversized, small) if oversized_side == "left" else (small, oversized)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        safe_join(left, right, on=["key"])
+
+    assert exc_info.value.code == "JOIN_ROW_LIMIT_EXCEEDED"
+    assert exc_info.value.message == (
+        "protected joins allow at most 10,000 rows per input and result"
+    )
+    assert exc_info.value.field_path == oversized_side
+    assert exc_info.value.details == {
+        "maximum_rows": 10_000,
+        "observed_rows": 10_001,
+        "stage": "input",
+    }
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("cardinality", "left_keys", "right_keys", "expected_rows"),
+    [
+        (
+            "one_to_one",
+            list(range(5_001)),
+            list(range(5_001, 10_002)),
+            10_002,
+        ),
+        ("one_to_many", list(range(5_001)), [0] * 5_001, 10_001),
+        ("many_to_one", [0] * 5_001, list(range(5_001)), 10_001),
+    ],
+)
+def test_join_rejects_derivable_oversized_result_before_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    cardinality: str,
+    left_keys: list[int],
+    right_keys: list[int],
+    expected_rows: int,
+) -> None:
+    calls: list[str] = []
+
+    def forbidden_merge(*args: object, **kwargs: object) -> pd.DataFrame:
+        calls.append("merge")
+        raise AssertionError("merge ran after a derivable result-size violation")
+
+    monkeypatch.setattr(pd, "merge", forbidden_merge)
+    left = _measured(keys=left_keys)
+    right = _measured(keys=right_keys)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        safe_join(
+            left,
+            right,
+            on=["key"],
+            how="outer",
+            cardinality=cardinality,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == "JOIN_ROW_LIMIT_EXCEEDED"
+    assert exc_info.value.message == (
+        "protected joins allow at most 10,000 rows per input and result"
+    )
+    assert exc_info.value.field_path == "result"
+    assert exc_info.value.details == {
+        "maximum_rows": 10_000,
+        "observed_rows": expected_rows,
+        "stage": "predicted_result",
+    }
+    assert calls == []
+
+
+def test_join_always_checks_the_materialized_result_row_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_merge = pd.merge
+
+    def oversized_merge(*args: object, **kwargs: object) -> pd.DataFrame:
+        row = real_merge(*args, **kwargs)
+        return pd.concat([row] * 10_001, ignore_index=True)
+
+    monkeypatch.setattr(pd, "merge", oversized_merge)
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        safe_join(_measured(keys=[1]), _measured(keys=[1]), on=["key"])
+
+    assert exc_info.value.code == "JOIN_ROW_LIMIT_EXCEEDED"
+    assert exc_info.value.message == (
+        "protected joins allow at most 10,000 rows per input and result"
+    )
+    assert exc_info.value.field_path == "result"
+    assert exc_info.value.details == {
+        "maximum_rows": 10_000,
+        "observed_rows": 10_001,
+        "stage": "materialized_result",
+    }
+
+
+def test_join_accepts_exactly_ten_thousand_input_and_result_rows() -> None:
+    keys = list(range(10_000))
+
+    joined = safe_join(_measured(keys=keys), _measured(keys=keys), on=["key"])
+
+    assert len(joined) == 10_000
+
+
 @pytest.mark.parametrize(
     ("record_id", "source_type"),
     [

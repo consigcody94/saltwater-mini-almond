@@ -65,9 +65,12 @@ completed live snapshot below was explicitly authorized and is disclosed in a
 sanitized receipt.
 
 The guarded workflow includes paper-reported `AY282755.1`, `DQ146477.2`, and
-`MT473962.1` and independently verifies their NCBI record identities. Those
-records are **not construct-ready**: targeting, exact construct maps, and event
-mapping remain unresolved, and `MT473962.1` is a partial CDS. No Ectocarpus
+unversioned `MT473962`; NCBI independently verifies the first two accession
+versions and resolves the last to `MT473962.1`. Those records are **not
+construct-ready**: targeting, exact construct maps, and event mapping remain
+unresolved. The paper calls the KaNa+/H+ cloned material a full-length coding
+sequence, while the resolved NCBI record is a partial CDS; this explicit
+identity/completeness conflict remains open. No Ectocarpus
 identifier crosswalk or sequence claim is made. Phase 2 does not request SRA,
 ENA, FASTQ, FQ, BAM, CRAM, or any other raw-read payload; the repository still
 has no RNA-seq downloader.

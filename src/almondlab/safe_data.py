@@ -40,6 +40,7 @@ _SOURCE_NAMESPACES: Final[dict[str, tuple[str, str]]] = {
 _PROVENANCE_COLUMNS: Final[tuple[str, str]] = ("record_id", "source_type")
 _SAFE_RECORD_ID = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _LINEAGE_NAMESPACE: Final[str] = "almondlab.provenance.v1"
+_MAX_JOIN_ROWS: Final[int] = 10_000
 
 _LineageAtom: TypeAlias = tuple[str, str]
 _RowLineage: TypeAlias = tuple[_LineageAtom, ...]
@@ -959,6 +960,58 @@ def _validate_cardinality(
     return selected  # type: ignore[return-value]
 
 
+def _require_join_row_limit(
+    observed_rows: int, *, field_path: str, stage: str
+) -> None:
+    if observed_rows > _MAX_JOIN_ROWS:
+        fail(
+            "JOIN_ROW_LIMIT_EXCEEDED",
+            "protected joins allow at most 10,000 rows per input and result",
+            field_path,
+            {
+                "maximum_rows": _MAX_JOIN_ROWS,
+                "observed_rows": observed_rows,
+                "stage": stage,
+            },
+        )
+
+
+def _join_key_counts(
+    frame: pd.DataFrame, keys: tuple[str, ...]
+) -> dict[tuple[object, ...], int]:
+    counts: dict[tuple[object, ...], int] = {}
+    columns = [_values(frame, key) for key in keys]
+    for key_values in zip(*columns, strict=True):
+        counts[key_values] = counts.get(key_values, 0) + 1
+    return counts
+
+
+def _predicted_join_rows(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    keys: tuple[str, ...],
+    how: str,
+) -> int:
+    """Return pandas-equivalent row multiplicity after exact key validation."""
+    left_counts = _join_key_counts(left, keys)
+    right_counts = _join_key_counts(right, keys)
+    shared = left_counts.keys() & right_counts.keys()
+    matched = sum(left_counts[key] * right_counts[key] for key in shared)
+    left_only = sum(
+        count for key, count in left_counts.items() if key not in right_counts
+    )
+    right_only = sum(
+        count for key, count in right_counts.items() if key not in left_counts
+    )
+    if how == "inner":
+        return matched
+    if how == "left":
+        return matched + left_only
+    if how == "right":
+        return matched + right_only
+    return matched + left_only + right_only
+
+
 def _plan_suffixes(
     left: pd.DataFrame, right: pd.DataFrame, keys: tuple[str, ...]
 ) -> tuple[str, str]:
@@ -999,7 +1052,7 @@ def safe_join(
     cardinality: Cardinality = "one_to_one",
     validate: Cardinality | None = None,
 ) -> ProvenanceFrame:
-    """Join compatible ancestry only after complete source/key validation."""
+    """Join compatible ancestry with an inclusive 10,000-row input/output cap."""
     (
         left_frame,
         left_rows,
@@ -1025,6 +1078,8 @@ def safe_join(
                 "right_source_types": sorted(right_types),
             },
         )
+    _require_join_row_limit(len(left_frame), field_path="left", stage="input")
+    _require_join_row_limit(len(right_frame), field_path="right", stage="input")
     if type(how) is not str or how not in {"inner", "left", "right", "outer"}:
         fail("JOIN_HOW_INVALID", "how must be inner, left, right, or outer", "how")
     keys, join_key_kinds = _validate_join_keys(
@@ -1036,6 +1091,12 @@ def safe_join(
     )
     checked_cardinality = _validate_cardinality(
         left_frame, right_frame, keys, cardinality, validate
+    )
+    predicted_rows = _predicted_join_rows(left_frame, right_frame, keys, how)
+    _require_join_row_limit(
+        predicted_rows,
+        field_path="result",
+        stage="predicted_result",
     )
     suffixes = _plan_suffixes(left_frame, right_frame, keys)
 
@@ -1055,6 +1116,11 @@ def safe_join(
         sort=False,
         suffixes=suffixes,
         validate=checked_cardinality,
+    )
+    _require_join_row_limit(
+        len(result),
+        field_path="result",
+        stage="materialized_result",
     )
     sort_columns = (
         [right_position_column, left_position_column]

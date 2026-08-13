@@ -666,7 +666,8 @@ datasets:
     linked_primary_articles:
       - {doi: "10.1016/j.plaphy.2025.110839"}
       - {doi: "10.1007/s11033-022-07213-7"}
-    paper_reported_identity: true
+    paper_reported_accession: "MT473962"
+    paper_reported_completeness_claim: "full-length coding sequence"
     acquired_fasta:
       bytes: 1283
       local_sha256: "182bc6de02e53212b7319f7ed9f1549ad32e34f8f12654492b12cbe8fdf14733"
@@ -682,7 +683,8 @@ datasets:
       - "The deposited sequence is a partial CDS and is not a complete construct specification."
       - "Topology, localization, direction, substrate selectivity, targeting, construct map, and event mapping remain unresolved; it is not construct-ready."
     supersession: "MT473962.1 is the resolved accession-version for paper-reported MT473962"
-    identity_conflicts: []
+    identity_conflicts:
+      - "The paper reports unversioned MT473962 and calls the cloned material a full-length coding sequence, while NCBI resolves VERSION MT473962.1 as a partial CDS; exact construct identity and completeness remain unresolved."
 
   - id: "PYAPX_RICE_2026_ARTICLE"
     category: "candidate_donor_evidence"
@@ -697,8 +699,11 @@ datasets:
     tissue: "rice tissues as specified in article"
     treatment_chemistry: "250 mM NaCl applied every 3 days; germination read on day 10; no complete multi-ion recipe"
     sample_count:
-      homozygous_t1_lines: {PyAPX: 12, PyMnSOD: 11, "KaNa+/H+": 9}
       germination: "30 seeds per dish x 3 replicate dishes"
+      other_endpoint_independent_line_n: "not_reported"
+    source_reported_inventory:
+      recovered_homozygous_t1_lines: {PyAPX: 12, PyMnSOD: 11, "KaNa+/H+": 9}
+      interpretation: "Recovered-line inventory only; not endpoint experimental sample size."
     assay: "physiological, biochemical, and transcriptomic analysis of PyAPX-expressing rice"
     landing_url: "https://pubmed.ncbi.nlm.nih.gov/?term=10.1016%2Fj.plaphy.2025.110839"
     file_types: ["publisher article", "additional files if exposed by publisher"]
@@ -709,18 +714,23 @@ datasets:
     paper_reported_accessions:
       PyAPX: "AY282755.1"
       PyMnSOD: "DQ146477.2"
-      "KaNa+/H+": "MT473962.1"
+      "KaNa+/H+": "MT473962"
     repository_verification:
       status: "independently fetched and hashed through guarded NCBI EFetch workflow"
       receipt: "phase2_acquisition_receipt.json"
       boundary: "record identity only; no independent construct or event mapping"
+      resolved_accession_versions:
+        PyAPX: "AY282755.1"
+        PyMnSOD: "DQ146477.2"
+        "KaNa+/H+": "MT473962.1"
     exact_relevance: "Recent heterologous evidence that a Pyropia APX candidate may improve oxidative-stress handling under salinity."
     limitations:
       - "No raw RNA-seq repository accession was stated in the verified data-availability text."
       - "Paper-reported accessions and independently verified repository identities do not establish targeting, exact construct maps, or event-to-construct mappings."
-      - "The accession records are not construct-ready; MT473962.1 is a partial CDS."
+      - "The accession records are not construct-ready. The paper's full-length KaNa+/H+ coding-sequence claim conflicts with the partial-CDS state of resolved repository record MT473962.1."
     supersession: null
-    identity_conflicts: []
+    identity_conflicts:
+      - "For KaNa+/H+, the paper reports unversioned MT473962 and a full-length coding sequence, while the repository resolves MT473962.1 as a partial CDS."
 
   - id: "CA_DWR_DISCRETE_WATER_QUALITY"
     category: "water_ion_chemistry"
