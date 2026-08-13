@@ -23,6 +23,7 @@ greenhouse, safety, or field efficacy.
 - `tests/test_verification_manifest.py`
 - `tests/test_verification_resources.py`
 - `pyproject.toml` (authorized JSON resource include only)
+- `.gitattributes` (authorized LF rules for exact-byte verifier resources only)
 - this report and one `progress.md` ledger line
 
 Concurrent mass changes and `tests/test_mass_balance.py` were preserved and
@@ -54,7 +55,17 @@ type-exact constructed policies, eager complete comparison-schema validation,
 arbitrary-precision integers, resource-hash key/primary collisions, and
 candidate-set membership. The initial new boundary slice failed 9/9 and the
 reviewer blocker slice failed 10/12 before implementation; the combined
-targeted matrix then passed 20/20. The final focused suite contains 122 tests.
+targeted matrix then passed 20/20.
+
+The immutable-snapshot rereview of `778cfd6` passed its 122-test focused suite,
+580-test committed-scope full suite, and 16-class exploit replay, but it found
+two final false-pass/portability regressions: a boolean RO stock could be
+coerced to numeric zero before validation, and Windows `core.autocrlf=true`
+could change the frozen candidate bytes in a fresh checkout/archive. Both were
+reproduced before the narrow fix. Model metrics are now type-checked before
+arithmetic, and a temporary-repository checkout-index regression proves every
+hash-locked YAML/JSON mirror materializes as the canonical LF bytes under
+`core.autocrlf=true`. The final focused suite contains 124 tests.
 
 ## Implemented authority
 
@@ -89,7 +100,12 @@ targeted matrix then passed 20/20. The final focused suite contains 122 tests.
   `6dadb7aaa883e113b28c6833ac544389a79c31c21b8b452097ddca3b17ef621e`,
   each selected input is verified as a candidate member, and explicit flow/RO
   volume-L errors are recorded separately from water-kg errors. Non-finite or
-  malformed injected model output produces the first frozen counterexample.
+  malformed injected model output produces the first frozen counterexample;
+  boolean model outputs are rejected before Python arithmetic can coerce them.
+- Exact-byte YAML and JSON verifier resources have repository-level `eol=lf`
+  rules across authoring, packaged, and test mirrors. A clean-index
+  materialization test runs with `core.autocrlf=true` and compares all resulting
+  bytes with their canonical source bytes.
 - Git provenance is associated only with the exact tracked loaded module;
   untracked status participates in dirty state and status-byte SHA-256. Public
   `capture_code_provenance()` and `code_version_from_provenance()` let
@@ -121,29 +137,32 @@ configs/verification.yaml                      64876d38c3bd90af141c76adcc2b7dc12
 Focused verification/policy/resource/adversarial suite:
 
 ```powershell
-$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
-& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' run --no-sync pytest tests/test_verification_manifest.py tests/test_verification_resources.py tests/test_core_acceptance.py -q -p no:cacheprovider --basetemp 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-final-focused'
+.\.venv\Scripts\python.exe -m pytest tests/test_core_acceptance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-portable-focused
 ```
 
 ```text
-122 passed in 95.22s
+124 passed in 96.45s
 ```
 
 Required core suite:
 
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_schemas.py tests/test_chemistry.py tests/test_domains.py tests/test_hydraulics.py tests/test_contracts.py tests/test_mass_balance.py tests/test_treatment.py tests/test_core_acceptance.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-portable-core
+```
+
 ```text
-546 passed in 100.76s
+548 passed in 101.66s
 ```
 
 Committed-scope full repository suite (all committed test modules; the
 concurrent, uncommitted publication-provenance work was explicitly excluded):
 
 ```powershell
-& uv run --no-sync pytest -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-final-full
+.\.venv\Scripts\python.exe -m pytest tests/test_chemistry.py tests/test_cli.py tests/test_contracts.py tests/test_core_acceptance.py tests/test_domains.py tests/test_hydraulics.py tests/test_mass_balance.py tests/test_paper1_contracts.py tests/test_schemas.py tests/test_treatment.py tests/test_verification_manifest.py tests/test_verification_resources.py -q -p no:cacheprovider --basetemp C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\pytest-f-portable-full
 ```
 
 ```text
-580 passed in 103.30s
+582 passed in 103.00s
 ```
 
 Before Fix G landed, the same required-core run was `505 passed, 14 failed`;
@@ -155,8 +174,21 @@ not hidden or patched in verification. The final counts above are post-commit.
 The final offline wheel was built as:
 
 ```text
-C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-exact-final\saltwater_mini_almond-0.1.0-py3-none-any.whl
-SHA-256 9F5D2C0CD52BFA4A7AF4A1F2BD983EB3E3DA1AAE3A05120F580D2CC58119A087
+C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup\saltwater_mini_almond-0.1.0-py3-none-any.whl
+SHA-256 41F06F42973F3F318DF2F158258321B9496FF20ED9D55197E8B030EC51FD7DC6
+```
+
+Exact build/install/path-isolation/smoke commands:
+
+```powershell
+$env:UV_CACHE_DIR='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\uv-cache'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\.uv-bootstrap\Scripts\uv.exe' build --wheel --offline --clear --out-dir 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup' .
+.\.venv\Scripts\python.exe -m venv 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv\Scripts\python.exe' -m pip install --no-deps --no-index 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup\saltwater_mini_almond-0.1.0-py3-none-any.whl'
+$env:PYTHONPATH='C:\Users\fowlb\Documents\Codex\2026-08-12\lets\outputs\saltwater-mini-almond\.venv\Lib\site-packages'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv\Scripts\python.exe' -c "import almondlab, pathlib; p=pathlib.Path(almondlab.__file__).resolve(); print(p); assert 'wheel-f-portable-followup-venv' in str(p); assert 'saltwater-mini-almond\\src' not in str(p)"
+Set-Location 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work'
+& 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel-f-portable-followup-venv\Scripts\python.exe' 'C:\Users\fowlb\Documents\Codex\2026-08-12\lets\work\wheel_f_smoke.py'
 ```
 
 It was installed with `--no-deps` into a fresh venv outside the checkout; the

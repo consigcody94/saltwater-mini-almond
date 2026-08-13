@@ -905,6 +905,21 @@ def test_manifest_runner_rejects_nonfinite_injected_model_output(
     assert result["counterexample"]["case_id"].endswith("_01")
 
 
+def test_manifest_runner_rejects_boolean_before_numeric_arithmetic() -> None:
+    def boolean_ro(case: object) -> object:
+        output = verification._ro_case_default(case)  # type: ignore[arg-type]
+        if case["id"] == "ro_seed_20260813_02":  # type: ignore[index]
+            output["permeate"]["stocks"]["cl"] = False
+        return output
+
+    record = verification._acceptance_20(ro_case_model=boolean_ro)
+    result = record.observed_value["case_manifest"]
+
+    assert record.passed is False
+    assert result["counterexample"]["case_id"] == "ro_seed_20260813_02"
+    assert result["counterexample"]["failing_metrics"]["error_type"] == "ValueError"
+
+
 def test_manifest_runner_turns_malformed_ro_output_into_frozen_counterexample() -> None:
     def malformed_ro(case: object) -> object:
         output = verification._ro_case_default(case)  # type: ignore[arg-type]

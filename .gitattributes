@@ -1,0 +1,6 @@
+/configs/*.yaml text eol=lf
+/src/almondlab/resources/configs/*.yaml text eol=lf
+/src/almondlab/resources/fixtures/*.yaml text eol=lf
+/src/almondlab/resources/fixtures/*.json text eol=lf
+/tests/fixtures/*.yaml text eol=lf
+/tests/fixtures/*.json text eol=lf

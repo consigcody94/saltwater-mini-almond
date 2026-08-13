@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from importlib import resources
 from pathlib import Path
 
@@ -43,3 +45,56 @@ def test_authoring_and_runtime_policy_sets_are_exact_byte_mirrors() -> None:
     } == CANONICAL_POLICIES | {"model_domains.yaml"}
     for name in CANONICAL_POLICIES:
         assert (authoring / name).read_bytes() == packaged.joinpath(name).read_bytes()
+
+
+def test_hash_locked_resources_materialize_lf_under_windows_autocrlf(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).parents[1]
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    shutil.copy2(root / ".gitattributes", repository / ".gitattributes")
+    relative_files = tuple(
+        path.relative_to(root)
+        for directory in (
+            root / "configs",
+            root / "src" / "almondlab" / "resources" / "configs",
+            root / "src" / "almondlab" / "resources" / "fixtures",
+            root / "tests" / "fixtures",
+        )
+        for path in directory.iterdir()
+        if path.is_file() and path.suffix in {".yaml", ".json"}
+    )
+    expected: dict[Path, bytes] = {}
+    for relative in relative_files:
+        destination = repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(root / relative, destination)
+        expected[relative] = (root / relative).read_bytes()
+    subprocess.run(
+        ["git", "init"], cwd=repository, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "add", "."], cwd=repository, check=True, capture_output=True
+    )
+    materialized = tmp_path / "materialized"
+    materialized.mkdir()
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.autocrlf=true",
+            "checkout-index",
+            "--all",
+            "--force",
+            f"--prefix={materialized.as_posix()}/",
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+
+    for relative, exact_bytes in expected.items():
+        received = (materialized / relative).read_bytes()
+        assert received == exact_bytes
+        assert b"\r\n" not in received

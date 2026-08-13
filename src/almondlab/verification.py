@@ -2445,6 +2445,13 @@ def _run_case_manifest(
         branch[name] = max(branch[name], magnitude)
         return magnitude
 
+    def metric(value: object, field_path: str) -> int | float:
+        if not _is_finite_primitive_number(value):
+            raise ValueError(
+                f"{field_path} model metric must be a finite primitive number"
+            )
+        return value  # type: ignore[return-value]
+
     def fail_case(
         property_id: str,
         case: Mapping[str, object],
@@ -2482,7 +2489,10 @@ def _run_case_manifest(
                             maximum(
                                 extrema["flow"]["volume_literal_absolute_error"],  # type: ignore[index]
                                 location,
-                                post[location]["volume_l"]
+                                metric(
+                                    post[location]["volume_l"],
+                                    f"flow.{location}.volume_l",
+                                )
                                 - expected[location]["volume_l"],
                             )
                         )
@@ -2490,7 +2500,10 @@ def _run_case_manifest(
                             maximum(
                                 extrema["flow"]["literal_absolute_error"],  # type: ignore[index]
                                 "water",
-                                post[location]["water_mass_kg"]
+                                metric(
+                                    post[location]["water_mass_kg"],
+                                    f"flow.{location}.water_mass_kg",
+                                )
                                 - expected[location]["water_mass_kg"],
                             )
                         )
@@ -2499,7 +2512,10 @@ def _run_case_manifest(
                                 maximum(
                                     extrema["flow"]["literal_absolute_error"],  # type: ignore[index]
                                     name,
-                                    post[location]["stocks"][name]
+                                    metric(
+                                        post[location]["stocks"][name],
+                                        f"flow.{location}.stocks.{name}",
+                                    )
                                     - expected[location]["stocks"][name],
                                 )
                             )
@@ -2537,15 +2553,30 @@ def _run_case_manifest(
                         raise ValueError("RO model output shape is invalid")
                     conservation = {
                         "water": (
-                            permeate["water_mass_kg"]
-                            + concentrate["water_mass_kg"]
-                            - feed["water_mass_kg"]
+                            metric(
+                                permeate["water_mass_kg"],
+                                "ro.permeate.water_mass_kg",
+                            )
+                            + metric(
+                                concentrate["water_mass_kg"],
+                                "ro.concentrate.water_mass_kg",
+                            )
+                            - metric(feed["water_mass_kg"], "ro.feed.water_mass_kg")
                         ),
                         **{
                             name: (
-                                permeate["stocks"][name]
-                                + concentrate["stocks"][name]
-                                - feed["stocks"][name]
+                                metric(
+                                    permeate["stocks"][name],
+                                    f"ro.permeate.stocks.{name}",
+                                )
+                                + metric(
+                                    concentrate["stocks"][name],
+                                    f"ro.concentrate.stocks.{name}",
+                                )
+                                - metric(
+                                    feed["stocks"][name],
+                                    f"ro.feed.stocks.{name}",
+                                )
                             )
                             for name in ("na", "cl")
                         },
@@ -2563,7 +2594,8 @@ def _run_case_manifest(
                         maximum(
                             extrema["ro"]["volume_literal_absolute_error"],  # type: ignore[index]
                             "feed",
-                            feed["volume_l"] - case["feed"]["volume_l"],  # type: ignore[index]
+                            metric(feed["volume_l"], "ro.feed.volume_l")
+                            - case["feed"]["volume_l"],  # type: ignore[index]
                         )
                     )
                     for branch_name, branch in (
@@ -2574,7 +2606,10 @@ def _run_case_manifest(
                             maximum(
                                 extrema["ro"]["volume_literal_absolute_error"],  # type: ignore[index]
                                 branch_name,
-                                branch["volume_l"]
+                                metric(
+                                    branch["volume_l"],
+                                    f"ro.{branch_name}.volume_l",
+                                )
                                 - expected[branch_name]["volume_l"],
                             )
                         )
@@ -2582,7 +2617,10 @@ def _run_case_manifest(
                             maximum(
                                 extrema["ro"]["literal_absolute_error"],  # type: ignore[index]
                                 "water",
-                                branch["water_mass_kg"]
+                                metric(
+                                    branch["water_mass_kg"],
+                                    f"ro.{branch_name}.water_mass_kg",
+                                )
                                 - expected[branch_name]["water_mass_kg"],
                             )
                         )
@@ -2591,7 +2629,10 @@ def _run_case_manifest(
                                 maximum(
                                     extrema["ro"]["literal_absolute_error"],  # type: ignore[index]
                                     name,
-                                    branch["stocks"][name]
+                                    metric(
+                                        branch["stocks"][name],
+                                        f"ro.{branch_name}.stocks.{name}",
+                                    )
                                     - expected[branch_name]["stocks"][name],
                                 )
                             )
@@ -2608,7 +2649,8 @@ def _run_case_manifest(
                             maximum(
                                 extrema["blend"]["literal_absolute_error"],  # type: ignore[index]
                                 name,
-                                output[name] - expected[name],
+                                metric(output[name], f"blend.{name}")
+                                - expected[name],
                             )
                         )
                     failing = {"maximum_error": max(case_errors)}
