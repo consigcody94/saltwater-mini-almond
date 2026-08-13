@@ -1,5 +1,7 @@
-"""Structured AlmondLab errors and a concise raising helper."""
+"""Structured AlmondLab errors and strict boundary conversion helpers."""
 
+from math import isfinite
+from numbers import Real
 from typing import Never
 
 
@@ -38,3 +40,33 @@ def fail(
 ) -> Never:
     """Raise a structured AlmondLab error with stable fields."""
     raise AlmondLabError(code, message, field_path, details)
+
+
+def finite_float(
+    value: object,
+    *,
+    code: str,
+    field_path: str,
+    nonnegative: bool = False,
+    positive: bool = False,
+) -> float:
+    """Return a finite float for a genuine real scalar or fail structurally.
+
+    This is the shared numerical input boundary.  In particular, it deliberately
+    refuses Python's otherwise-permissive conversions from booleans, strings, and
+    arbitrary objects implementing ``__float__``.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, Real):
+        fail(code, "value must be a finite real number", field_path)
+    try:
+        converted = float(value)
+    except Exception:
+        fail(code, "value must be a finite real number", field_path)
+    if not isfinite(converted):
+        fail(code, "value must be a finite real number", field_path)
+    if positive and converted <= 0.0:
+        fail(code, "value must be greater than zero", field_path)
+    if nonnegative and converted < 0.0:
+        fail(code, "value must be nonnegative", field_path)
+    return converted
