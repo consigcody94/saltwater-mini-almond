@@ -64,7 +64,7 @@ before the combined suite ran. A final audit also reproduced two successful
 native returns that left both target and staged names bound to the same inode;
 both file and run-directory paths now refuse that non-consuming publication.
 
-The final focused suite has 202 passing cases on this Windows host. Boundary
+The final focused suite has 204 passing cases on this Windows host. Boundary
 tests reject boolean or string numeric coercion, nonfinite numbers, non-string
 keys, path traversal, links/reparse points, collisions, inconsistent seed
 trees, unavailable-state inventions, hash corruption, unsafe finalization,
@@ -212,7 +212,7 @@ pre-existing `.pytest_cache` permission warning:
 ```
 
 ```text
-202 passed, 3 skipped in 11.01s
+204 passed, 3 skipped in 10.55s
 ```
 
 The three skips are real-filesystem POSIX integration cases for replacement
