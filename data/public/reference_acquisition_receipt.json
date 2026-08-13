@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "acquired_at": "2026-08-12T20:20:27.2877713-04:00",
+  "source": "NCBI Datasets v2",
+  "acquisition_scope": "Four allowlisted almond/peach reference assembly packages; no SRA, ENA, or FASTQ payloads.",
+  "downloader_git_commit": "0e17a783f05ee9f1174f9b888f52ae3c6a3f3c32",
+  "public_manifest_sha256": "d85c54b4b1cb5e840aeeab172e42dc1b474ed461a246a10a588fc79ab01d6395",
+  "package_count": 4,
+  "total_package_bytes": 911023329,
+  "total_package_gib": 0.8484565923,
+  "validation": {
+    "zip_integrity": "passed_for_all_packages",
+    "sha256_sidecar_revalidation": "passed_for_all_packages",
+    "dataset_catalog_extracted_and_hashed": "passed_for_all_packages"
+  },
+  "packages": [
+    {
+      "accession": "GCA_008632915.2",
+      "organism": "Prunus dulcis",
+      "cultivar": "Lauranne",
+      "package_bytes": 210178640,
+      "package_sha256": "88f5aff1a2c02ced7544caf84a3fa855f7c02f4d3d8e25ad28fe709f3b628303",
+      "dataset_report_bytes": 2861,
+      "dataset_report_sha256": "680d953557917cb3ccbfb2fc6375b3e31bcc4d066f2373247e86438ca62737b1",
+      "dataset_catalog_bytes": 1287,
+      "dataset_catalog_sha256": "1c0cd1ff143aa9e8cf507a3c4644c7448bfc939f51b0ff8dca140def4dd729e1",
+      "request_url": "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_008632915.2/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
+    },
+    {
+      "accession": "GCA_021292205.2",
+      "organism": "Prunus dulcis",
+      "cultivar": "Nonpareil",
+      "package_bytes": 240491627,
+      "package_sha256": "0bc96fcf8041324dc71f922000c1b2290541fea503adcaf0f8d88fd7d5919158",
+      "dataset_report_bytes": 3199,
+      "dataset_report_sha256": "ad8680a4bc18dc9c8aa50322e84f206ec1bb8929aa784ea58491a6150a7d204b",
+      "dataset_catalog_bytes": 1290,
+      "dataset_catalog_sha256": "5893830823ef6623398889adabe78ec33c7e2fb06023381dfd0f3c56559d0318",
+      "request_url": "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCA_021292205.2/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
+    },
+    {
+      "accession": "GCF_000346465.2",
+      "organism": "Prunus persica",
+      "cultivar": "Lovell",
+      "package_bytes": 231247074,
+      "package_sha256": "cf6e553d1d4935e3ecc7e17458e19343ffccbbbc78494bb922430b9aed085769",
+      "dataset_report_bytes": 3493,
+      "dataset_report_sha256": "992b576fc5ff4a2adacfe3e762407957b49704593eff2432c02fd6cde2054733",
+      "dataset_catalog_bytes": 1443,
+      "dataset_catalog_sha256": "8175d85bac894c76d157d1401b04649d38610378fd5def70869b777c5896bbc6",
+      "request_url": "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_000346465.2/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
+    },
+    {
+      "accession": "GCF_902201215.1",
+      "organism": "Prunus dulcis",
+      "cultivar": "Texas",
+      "package_bytes": 229105988,
+      "package_sha256": "557892f27bb9e0ab0f05549df60ff14c345a89bb81439978a8cdb6fd54255a57",
+      "dataset_report_bytes": 4543,
+      "dataset_report_sha256": "dd046c6e2c475578a2ace4a3bfcab98465eb91dbe3524d0d70230fe91a00dc82",
+      "dataset_catalog_bytes": 1431,
+      "dataset_catalog_sha256": "1539d96703c6f033334620417662fc07d4531e96fb81cb8d30244c7d4ce89963",
+      "request_url": "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_902201215.1/download?include_annotation_type=GENOME_FASTA%2CGENOME_GFF%2CGENOME_GTF%2CGENOME_GBFF%2CRNA_FASTA%2CCDS_FASTA%2CPROT_FASTA%2CSEQUENCE_REPORT"
+    }
+  ]
+}

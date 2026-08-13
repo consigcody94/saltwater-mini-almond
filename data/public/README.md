@@ -42,3 +42,16 @@ by repository code.
 `local_snapshot.sha256` contains locally calculated hashes for the audited
 manifest, audit, evidence seed, and acquisition code. These are repository
 snapshot hashes, not publisher, NCBI, ENA, or other remote checksums.
+
+## Completed reference snapshot
+
+The four approved reference packages were acquired on 2026-08-12 after the
+live NCBI Datasets v2 API contract was verified. The packages total
+911,023,329 bytes (0.8485 GiB). All four passed ZIP integrity and local SHA-256
+sidecar revalidation, and every included `dataset_catalog.json` was extracted
+and hashed. Exact sizes, hashes, accession identities, request URLs, and the
+downloader Git commit are frozen in `reference_acquisition_receipt.json`.
+
+The package files remain ignored under `data/raw/ncbi_references/`; they are
+local reproducibility inputs, not source-controlled artifacts. This completed
+snapshot still contains no SRA, ENA, or FASTQ reads.
