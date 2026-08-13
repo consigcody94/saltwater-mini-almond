@@ -1,7 +1,10 @@
 import hashlib
+from io import BytesIO
 import math
 from copy import deepcopy
 from pathlib import Path
+import subprocess
+import tarfile
 
 import pytest
 import yaml
@@ -643,6 +646,68 @@ WATER_IDS = (
     "nonsaline_nutrient_matched_control",
     "pilot_selected_full_ion_marine_challenge",
 )
+ENDPOINT_UNITS = {
+    "green_canopy_area": "cm^2",
+    "root_zone_na_concentration": "mmol Na L^-1",
+    "root_zone_cl_concentration": "mmol Cl L^-1",
+    "root_zone_k_concentration": "mmol K L^-1",
+    "xylem_sap_na_concentration": "mmol Na L^-1",
+    "drainage_total_b_concentration": "mmol B L^-1",
+    "root_surface_outward_na_flux_per_root_dry_mass": (
+        "umol Na g_root_dry_mass^-1 h^-1"
+    ),
+    "root_h2o2_concentration_time_auc": (
+        "umol H2O2 g_root_fresh_mass^-1 h"
+    ),
+    "root_mannitol_concentration_above_empty_vector": (
+        "nmol g_root_fresh_mass^-1"
+    ),
+    "xylem_sap_na_concentration_time_auc": "mmol Na L^-1 h",
+}
+H3_ERROR_AUTHORITIES = {
+    "C1": (
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "log_ratio",
+        "umol Na g_root_dry_mass^-1 h^-1",
+        0.05,
+        "log-ratio",
+    ),
+    "C2": (
+        "root_h2o2_concentration_time_auc",
+        "log_ratio",
+        "umol H2O2 g_root_fresh_mass^-1 h",
+        0.05,
+        "log-ratio",
+    ),
+    "C3": (
+        "root_mannitol_concentration_above_empty_vector",
+        "difference",
+        "nmol g_root_fresh_mass^-1",
+        2.0,
+        "nmol g_root_fresh_mass^-1",
+    ),
+    "C4": (
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "log_ratio",
+        "umol Na g_root_dry_mass^-1 h^-1",
+        0.05,
+        "log-ratio",
+    ),
+    "C5": (
+        "xylem_sap_na_concentration_time_auc",
+        "log_ratio",
+        "mmol Na L^-1 h",
+        0.05,
+        "log-ratio",
+    ),
+    "C6": (
+        "root_surface_outward_na_flux_per_root_dry_mass",
+        "log_ratio",
+        "umol Na g_root_dry_mass^-1 h^-1",
+        0.05,
+        "log-ratio",
+    ),
+}
 
 
 def _v14_generator_payload() -> dict[str, object]:
@@ -650,7 +715,14 @@ def _v14_generator_payload() -> dict[str, object]:
         endpoint_id: None if endpoint_id in {
             "green_canopy_area",
             "root_mannitol_concentration_above_empty_vector",
-        } else _rq(0.01, "native endpoint unit")
+        } else _rq(0.01, ENDPOINT_UNITS[endpoint_id])
+        for endpoint_id in ENDPOINT_IDS
+    }
+    endpoint_loqs = {
+        endpoint_id: None if endpoint_id in {
+            "green_canopy_area",
+            "root_mannitol_concentration_above_empty_vector",
+        } else _rq(0.03, ENDPOINT_UNITS[endpoint_id])
         for endpoint_id in ENDPOINT_IDS
     }
     endpoint_log_sds = {
@@ -703,13 +775,14 @@ def _v14_generator_payload() -> dict[str, object]:
             "canopy_observation_error_sd": _rq(0.05, "log-ratio"),
             "ion_observation_error_sd": _rq(0.04, "log-ratio"),
             "h3_observation_error_by_endpoint": {
-                candidate_id: _rq(
-                    2.0 if candidate_id == "C3" else 0.05,
-                    "nmol g_root_fresh_mass^-1"
-                    if candidate_id == "C3"
-                    else "log-ratio",
-                )
-                for candidate_id in ("C1", "C2", "C3", "C4", "C5", "C6")
+                candidate_id: {
+                    "candidate_id": candidate_id,
+                    "endpoint_id": authority[0],
+                    "analysis_scale": authority[1],
+                    "endpoint_unit": authority[2],
+                    "error_sd": _rq(authority[3], authority[4]),
+                }
+                for candidate_id, authority in H3_ERROR_AUTHORITIES.items()
             },
             "canopy_heteroscedastic_log_slope": _rq(0.10, "log/log"),
             "ion_heteroscedastic_log_slope": _rq(0.08, "log/log"),
@@ -733,7 +806,7 @@ def _v14_generator_payload() -> dict[str, object]:
         },
         "censoring": {
             "lod_by_endpoint": endpoint_limits,
-            "loq_by_endpoint": deepcopy(endpoint_limits),
+            "loq_by_endpoint": endpoint_loqs,
             "lod_log_sd_by_endpoint": endpoint_log_sds,
             "loq_log_sd_by_endpoint": deepcopy(endpoint_log_sds),
         },
@@ -744,13 +817,28 @@ def _v14_generator_payload() -> dict[str, object]:
                 for endpoint_id in ENDPOINT_IDS[1:6]
             },
             "h3_drift_per_day_by_endpoint": {
-                endpoint_id: _rq(0.0, "endpoint unit day^-1")
+                endpoint_id: _rq(
+                    0.0,
+                    "nmol g_root_fresh_mass^-1 day^-1"
+                    if endpoint_id
+                    == "root_mannitol_concentration_above_empty_vector"
+                    else "log-ratio day^-1",
+                )
                 for endpoint_id in H3_ENDPOINT_IDS
             },
             "calibration_interval_days": _rq(7.0, "day"),
             "calibration_phase_offset_days": _rq(0.0, "day"),
             "post_calibration_residual_sd_by_endpoint": {
-                endpoint_id: _rq(0.01, "native endpoint unit")
+                endpoint_id: _rq(
+                    0.25
+                    if endpoint_id
+                    == "root_mannitol_concentration_above_empty_vector"
+                    else 0.01,
+                    "nmol g_root_fresh_mass^-1"
+                    if endpoint_id
+                    == "root_mannitol_concentration_above_empty_vector"
+                    else "log-ratio",
+                )
                 for endpoint_id in ENDPOINT_IDS
             },
         },
@@ -836,9 +924,211 @@ def test_v14_generator_sections_enforce_registered_units_and_exact_map_keys() ->
         paper1_contracts.SyntheticGeneratorConfig.model_validate(missing_endpoint)
 
 
+def test_v14_generator_rejects_mapping_and_string_key_subclasses() -> None:
+    """Catches normalization of hostile nested map objects or identity keys."""
+
+    class HostileMap(dict):
+        pass
+
+    class HostileText(str):
+        pass
+
+    hostile_map = _v14_generator_payload()
+    hostile_map["censoring"]["lod_by_endpoint"] = HostileMap(
+        hostile_map["censoring"]["lod_by_endpoint"]
+    )
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(hostile_map)
+
+    hostile_key = _v14_generator_payload()
+    errors = hostile_key["observation"]["h3_observation_error_by_endpoint"]
+    hostile_key["observation"]["h3_observation_error_by_endpoint"] = {
+        HostileText(candidate_id) if candidate_id == "C1" else candidate_id: record
+        for candidate_id, record in errors.items()
+    }
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(hostile_key)
+
+
+def test_v14_generator_rejects_model_copy_nan_and_nested_model_subclasses() -> None:
+    """Catches trusted-instance bypasses that skip nested quantity validation."""
+
+    generator = paper1_contracts.SyntheticGeneratorConfig.model_validate(
+        _v14_generator_payload()
+    )
+    forged_quantity = generator.hierarchy.run_variance.model_copy(
+        update={"value": float("nan")}
+    )
+    forged_hierarchy = generator.hierarchy.model_copy(
+        update={"run_variance": forged_quantity}
+    )
+    forged_generator = generator.model_copy(update={"hierarchy": forged_hierarchy})
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(forged_generator)
+
+    class HostileHierarchy(paper1_contracts.HierarchyGeneratorConfig):
+        covert_outcome_effect: float
+
+    hostile = HostileHierarchy.model_validate(
+        {
+            **_v14_generator_payload()["hierarchy"],
+            "covert_outcome_effect": 4.0,
+        }
+    )
+    payload = _v14_generator_payload()
+    payload["hierarchy"] = hostile
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("section", "field_name", "bad_value"),
+    [
+        ("hierarchy", "run_variance", -0.01),
+        ("climate", "temperature_ar1_phi", 2.0),
+        ("water_loop", "drainage_return_fraction", 2.0),
+        ("water_loop", "reservoir_min_volume_l", 170.0),
+        ("observation", "canopy_observation_error_sd", -0.1),
+        ("death", "injury_death_threshold_log_sd", -0.1),
+        ("calibration", "parameter_xtol", 0.0),
+        ("water_loop", "irrigation_volume_l_per_plant_day", 1.0e308),
+    ],
+)
+def test_v14_generator_rejects_invalid_semantic_ranges(
+    section: str, field_name: str, bad_value: float
+) -> None:
+    """Catches finite-but-destructive values that violate generator semantics."""
+
+    payload = _v14_generator_payload()
+    payload[section][field_name]["value"] = bad_value
+
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+
+def test_v14_generator_rejects_zero_scales_counts_and_unregistered_cell_size() -> None:
+    """Catches divisions by zero, no-op solvers, and an unfrozen confirmation n."""
+
+    mutations = (
+        ("missingness", "observable_stress_proxy_scale_by_field", "scheduled_time_days", 0.0),
+        ("calibration", "max_iterations", None, 0),
+        ("design", "confirmation_plants_per_group_reservoir", None, 4),
+    )
+    for section, field_name, map_key, value in mutations:
+        payload = _v14_generator_payload()
+        target = payload[section][field_name]
+        if map_key is None:
+            target["value"] = value
+        else:
+            target[map_key]["value"] = value
+        with pytest.raises(ValidationError):
+            paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("section", "map_name", "key", "bad_unit"),
+    [
+        (
+            "censoring",
+            "lod_by_endpoint",
+            "root_zone_na_concentration",
+            "bananas",
+        ),
+        (
+            "drift",
+            "ion_drift_per_day_by_endpoint",
+            "root_zone_na_concentration",
+            "bananas",
+        ),
+        (
+            "missingness",
+            "observable_stress_proxy_scale_by_field",
+            "scheduled_time_days",
+            "bananas",
+        ),
+    ],
+)
+def test_v14_generator_rejects_unknown_endpoint_and_proxy_units(
+    section: str, map_name: str, key: str, bad_unit: str
+) -> None:
+    """Catches a well-typed quantity carrying the wrong registered unit."""
+
+    payload = _v14_generator_payload()
+    payload[section][map_name][key]["unit"] = bad_unit
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+
+def test_h3_error_records_are_cross_bound_to_candidate_rules() -> None:
+    """Catches candidate-keyed SDs that omit or misstate their H3 authority."""
+
+    generator = paper1_contracts.SyntheticGeneratorConfig.model_validate(
+        _v14_generator_payload()
+    )
+    for candidate_id, expected in H3_ERROR_AUTHORITIES.items():
+        record = generator.observation.h3_observation_error_by_endpoint[
+            candidate_id
+        ]
+        assert (
+            record.candidate_id,
+            record.endpoint_id,
+            record.analysis_scale,
+            record.endpoint_unit,
+            record.error_sd.value,
+            record.error_sd.unit,
+        ) == (candidate_id, *expected)
+
+    for field_name, replacement in (
+        ("candidate_id", "C6"),
+        ("endpoint_id", "root_h2o2_concentration_time_auc"),
+        ("analysis_scale", "difference"),
+        ("endpoint_unit", "bananas"),
+    ):
+        payload = _v14_generator_payload()
+        payload["observation"]["h3_observation_error_by_endpoint"]["C1"][
+            field_name
+        ] = replacement
+        with pytest.raises(ValidationError):
+            paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+
+def test_observation_schedules_are_strict_ordered_and_censor_limits_are_coherent() -> None:
+    """Catches duplicate times, reversed assay limits, and mismatched nullability."""
+
+    mutations = []
+    duplicate = _v14_generator_payload()
+    duplicate["observation"]["canopy_observation_times_days"][1]["value"] = 0.0
+    mutations.append(duplicate)
+    reversed_limits = _v14_generator_payload()
+    reversed_limits["censoring"]["loq_by_endpoint"][
+        "root_zone_na_concentration"
+    ]["value"] = 0.005
+    mutations.append(reversed_limits)
+    negative_lod = _v14_generator_payload()
+    negative_lod["censoring"]["lod_by_endpoint"][
+        "root_zone_na_concentration"
+    ]["value"] = -0.01
+    mutations.append(negative_lod)
+    null_mismatch = _v14_generator_payload()
+    null_mismatch["censoring"]["loq_by_endpoint"][
+        "root_zone_na_concentration"
+    ] = None
+    mutations.append(null_mismatch)
+    unequal_log_sds = _v14_generator_payload()
+    unequal_log_sds["censoring"]["loq_log_sd_by_endpoint"][
+        "root_zone_na_concentration"
+    ]["value"] = 0.10
+    mutations.append(unequal_log_sds)
+
+    for payload in mutations:
+        with pytest.raises(ValidationError):
+            paper1_contracts.SyntheticGeneratorConfig.model_validate(payload)
+
+
 def _v14_scenario_payload(scenario_id: str = "perfect_control") -> dict[str, object]:
     legacy = yaml.safe_load(LEGACY_SCENARIOS.read_text(encoding="utf-8"))
     forcing = deepcopy(legacy["forcing"])
+    forcing["duration_hours"] = 12.0
     return {
         "scenario_id": scenario_id,
         "schema_version": "1.4.0",
@@ -846,7 +1136,8 @@ def _v14_scenario_payload(scenario_id: str = "perfect_control") -> dict[str, obj
         "parameters": deepcopy(legacy["biology_parameters"]),
         "initial_state": deepcopy(legacy["initial_state"]),
         "forcings_by_water_id": {
-            water_id: (deepcopy(forcing),) for water_id in WATER_IDS
+            water_id: tuple(deepcopy(forcing) for _ in range(168))
+            for water_id in WATER_IDS
         },
         "generator": _v14_generator_payload(),
         "mechanism": {
@@ -877,6 +1168,142 @@ def test_v14_scenario_contract_replaces_scalar_forcing_and_generator_mapping() -
         )
         with pytest.raises((ValidationError, AlmondLabError)):
             paper1_contracts.SyntheticScenarioConfig.model_validate(malformed)
+
+
+def test_v14_scenario_requires_exact_168_by_12_hour_water_schedules() -> None:
+    """Catches alternate partitions that preserve only the 2,016-hour sum."""
+
+    malformed_schedules = []
+
+    one_coordinate = _v14_scenario_payload()
+    one_coordinate["forcings_by_water_id"][WATER_IDS[0]] = (
+        one_coordinate["forcings_by_water_id"][WATER_IDS[0]][0],
+    )
+    malformed_schedules.append(one_coordinate)
+
+    variable_steps = _v14_scenario_payload()
+    variable_steps["forcings_by_water_id"][WATER_IDS[0]][0][
+        "duration_hours"
+    ] = 6.0
+    variable_steps["forcings_by_water_id"][WATER_IDS[0]][1][
+        "duration_hours"
+    ] = 18.0
+    malformed_schedules.append(variable_steps)
+
+    wrong_count_same_total = _v14_scenario_payload()
+    forcing = wrong_count_same_total["forcings_by_water_id"][WATER_IDS[0]][0]
+    forcing["duration_hours"] = 2016.0 / 167.0
+    wrong_count_same_total["forcings_by_water_id"][WATER_IDS[0]] = tuple(
+        deepcopy(forcing) for _ in range(167)
+    )
+    malformed_schedules.append(wrong_count_same_total)
+
+    for payload in malformed_schedules:
+        with pytest.raises(ValidationError):
+            paper1_contracts.SyntheticScenarioConfig.model_validate(payload)
+
+
+def test_v14_scenario_revalidates_corrupted_dataclasses_and_detaches_nested_inputs() -> None:
+    """Catches object.__setattr__ corruption and retained nested identities."""
+
+    scenario = paper1_contracts.SyntheticScenarioConfig.model_validate(
+        _v14_scenario_payload()
+    )
+    object.__setattr__(scenario.parameters, "root_area_cm2", float("nan"))
+
+    with pytest.raises((ValidationError, AlmondLabError)):
+        paper1_contracts.SyntheticScenarioConfig.model_validate(scenario)
+
+    clean = paper1_contracts.SyntheticScenarioConfig.model_validate(
+        _v14_scenario_payload()
+    )
+    detached = paper1_contracts.SyntheticScenarioConfig.model_validate(clean)
+    assert detached is not clean
+    assert detached.parameters is not clean.parameters
+    assert detached.initial_state is not clean.initial_state
+    assert detached.initial_state.network_state is not clean.initial_state.network_state
+    assert detached.generator is not clean.generator
+    assert detached.generator.hierarchy is not clean.generator.hierarchy
+    assert (
+        detached.generator.hierarchy.run_variance
+        is not clean.generator.hierarchy.run_variance
+    )
+
+
+def test_v14_scenario_rejects_hostile_nested_physical_state_keys() -> None:
+    """Catches string-subclass keys reaching compartment and stock registries."""
+
+    class HostileText(str):
+        pass
+
+    for section in ("compartments", "stocks"):
+        payload = _v14_scenario_payload()
+        compartments = payload["initial_state"]["network_state"]["compartments"]
+        compartment_id = next(iter(compartments))
+        if section == "compartments":
+            payload["initial_state"]["network_state"]["compartments"] = {
+                HostileText(key) if key == compartment_id else key: value
+                for key, value in compartments.items()
+            }
+        else:
+            stocks = compartments[compartment_id]["stocks"]
+            stock_id = next(iter(stocks))
+            compartments[compartment_id]["stocks"] = {
+                HostileText(key) if key == stock_id else key: value
+                for key, value in stocks.items()
+            }
+        with pytest.raises((ValidationError, AlmondLabError)):
+            paper1_contracts.SyntheticScenarioConfig.model_validate(payload)
+
+
+def _make_all_nonscenario_inputs_hypothesis_prior(
+    payload: dict[str, object]
+) -> None:
+    payload["parameters"]["evidence_label"] = "hypothesis_prior"
+    payload["initial_state"]["evidence_label"] = "hypothesis_prior"
+    payload["initial_state"]["network_state"]["evidence_label"] = (
+        "hypothesis_prior"
+    )
+    for compartment in payload["initial_state"]["network_state"][
+        "compartments"
+    ].values():
+        compartment["evidence_label"] = "hypothesis_prior"
+    for schedule in payload["forcings_by_water_id"].values():
+        for forcing in schedule:
+            forcing["evidence_label"] = "hypothesis_prior"
+
+
+def test_v14_scenario_evidence_composes_generator_and_mechanism_inputs() -> None:
+    """Catches promoting a synthetic generator or mechanism to hypothesis_prior."""
+
+    generator_case = _v14_scenario_payload()
+    _make_all_nonscenario_inputs_hypothesis_prior(generator_case)
+    generator_case["generator"]["hierarchy"]["run_variance"][
+        "evidence_label"
+    ] = "synthetic_only"
+    generator_case["evidence_label"] = "hypothesis_prior"
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticScenarioConfig.model_validate(generator_case)
+
+    mechanism_case = _v14_scenario_payload("true_ion_exclusion")
+    _make_all_nonscenario_inputs_hypothesis_prior(mechanism_case)
+    for section in mechanism_case["generator"].values():
+        # The recursive helper below changes only explicit registration labels.
+        stack = [section]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                if "evidence_label" in value:
+                    value["evidence_label"] = "hypothesis_prior"
+                stack.extend(value.values())
+            elif isinstance(value, (list, tuple)):
+                stack.extend(value)
+    mechanism_case["mechanism"]["biology_parameter_overrides"] = {
+        "root_na_permeability_l_cm2_h": 0.0
+    }
+    mechanism_case["evidence_label"] = "hypothesis_prior"
+    with pytest.raises(ValidationError):
+        paper1_contracts.SyntheticScenarioConfig.model_validate(mechanism_case)
 
 
 def test_v14_registry_requires_the_exact_ten_scenarios_in_registered_order() -> None:
@@ -939,6 +1366,23 @@ def test_v13_archives_preserve_the_approved_source_bytes_exactly() -> None:
     for name, expected_sha256 in expected.items():
         archive = CONFIGS / "archive" / name
         assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_sha256
+        git_archive = subprocess.check_output(
+            [
+                "git",
+                "archive",
+                "--format=tar",
+                "HEAD",
+                archive.relative_to(CONFIGS.parent).as_posix(),
+            ],
+            cwd=CONFIGS.parent,
+        )
+        with tarfile.open(fileobj=BytesIO(git_archive), mode="r:") as stream:
+            member = stream.extractfile(
+                archive.relative_to(CONFIGS.parent).as_posix()
+            )
+            assert member is not None
+            archived_bytes = member.read()
+        assert archived_bytes == archive.read_bytes()
 
 
 def test_v13_inventory_has_no_dropped_generator_value() -> None:
@@ -978,11 +1422,13 @@ def test_v13_inventory_has_no_dropped_generator_value() -> None:
     h3 = by_source["generator_parameters.h3_observation_error_sd"]
     assert h3.disposition is paper1_contracts.MigrationDisposition.SPLIT_REQUIRES_REGISTRATION
     assert h3.destination_paths == tuple(
-        f"anchor.generator.observation.h3_observation_error_by_endpoint.{candidate}"
+        "anchor.generator.observation."
+        f"h3_observation_error_by_endpoint.{candidate}.error_sd"
         for candidate in ("C1", "C2", "C4", "C5", "C6")
     )
     assert h3.owner_required_paths == (
-        "anchor.generator.observation.h3_observation_error_by_endpoint.C3",
+        "anchor.generator.observation."
+        "h3_observation_error_by_endpoint.C3.error_sd",
     )
 
 
@@ -1055,8 +1501,51 @@ def _v14_registry_payload() -> dict[str, object]:
     }
 
 
-def test_explicit_v13_migration_requires_exact_retirement_inventory() -> None:
-    """Catches a migration registration silently dropping a retired source leaf."""
+def _migration_registration_payload(
+    inventory: paper1_contracts.ScenarioMigrationInventory,
+) -> dict[str, object]:
+    retired = tuple(
+        item.source_path
+        for item in inventory.items
+        if item.disposition is paper1_contracts.MigrationDisposition.RETIRED
+        and item.source_path is not None
+    )
+    return {
+        "schema_version": "1.0.0",
+        "source_raw_sha256": inventory.source_raw_sha256,
+        "target_registry": _v14_registry_payload(),
+        "accepted_retired_source_paths": retired,
+        "evidence_label": "synthetic_only",
+    }
+
+
+def test_migration_rejects_caller_forged_inventory_even_with_approved_raw_hash() -> None:
+    """Catches an empty caller-authored inventory masquerading as the archive audit."""
+
+    inventory = paper1_contracts.inspect_v13_scenario_migration(
+        CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+    )
+    forged = inventory.model_copy(
+        update={
+            "items": (),
+            "unclassified_source_paths": (),
+            "multiply_classified_source_paths": (),
+        }
+    )
+    registration_payload = _migration_registration_payload(inventory)
+    registration_payload["accepted_retired_source_paths"] = ()
+    registration = paper1_contracts.ScenarioMigrationRegistration.model_validate(
+        registration_payload
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        paper1_contracts.migrate_v13_scenario_document(forged, registration)
+
+    assert exc_info.value.code == "SCENARIO_MIGRATION_INVALID"
+
+
+def test_migration_retires_only_the_explicitly_withdrawn_legacy_authorities() -> None:
+    """Catches blanket retirement of expanded scenario biology/generator leaves."""
 
     inventory = paper1_contracts.inspect_v13_scenario_migration(
         CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
@@ -1067,13 +1556,53 @@ def test_explicit_v13_migration_requires_exact_retirement_inventory() -> None:
         if item.disposition is paper1_contracts.MigrationDisposition.RETIRED
         and item.source_path is not None
     )
-    registration_payload = {
-        "schema_version": "1.0.0",
-        "source_raw_sha256": inventory.source_raw_sha256,
-        "target_registry": _v14_registry_payload(),
-        "accepted_retired_source_paths": retired,
-        "evidence_label": "synthetic_only",
-    }
+
+    assert retired
+    assert all(
+        path.startswith("forcing.")
+        or ".forcing." in path
+        or path
+        == (
+            "scenarios[scenario_id=chassis_interaction].parameters."
+            "root_conductance_l_day_mpa"
+        )
+        for path in retired
+    )
+    assert not any(
+        ".parameters.root_area_cm2" in path
+        or ".generator_parameters.run_variance" in path
+        for path in retired
+    )
+
+
+def test_migration_checks_expanded_nonanchor_generator_copies_against_target() -> None:
+    """Catches a non-anchor legacy duplicate being changed behind RETIRED status."""
+
+    inventory = paper1_contracts.inspect_v13_scenario_migration(
+        CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+    )
+    payload = _migration_registration_payload(inventory)
+    payload["target_registry"]["scenarios"][0]["generator"]["hierarchy"][
+        "run_variance"
+    ]["value"] = 0.90
+    registration = paper1_contracts.ScenarioMigrationRegistration.model_validate(
+        payload
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        paper1_contracts.migrate_v13_scenario_document(inventory, registration)
+
+    assert exc_info.value.code == "SCENARIO_MIGRATION_INVALID"
+
+
+def test_explicit_v13_migration_requires_exact_retirement_inventory() -> None:
+    """Catches a migration registration silently dropping a retired source leaf."""
+
+    inventory = paper1_contracts.inspect_v13_scenario_migration(
+        CONFIGS / "archive" / "synthetic_scenarios_v1_3.yaml"
+    )
+    registration_payload = _migration_registration_payload(inventory)
+    retired = registration_payload["accepted_retired_source_paths"]
     registration = paper1_contracts.ScenarioMigrationRegistration.model_validate(
         registration_payload
     )
@@ -1084,6 +1613,14 @@ def test_explicit_v13_migration_requires_exact_retirement_inventory() -> None:
     assert migrated is not registration.target_registry
     assert migrated.model_dump(mode="json") == registration.target_registry.model_dump(
         mode="json"
+    )
+    assert migrated.anchor is not registration.target_registry.anchor
+    assert migrated.anchor.parameters is not registration.target_registry.anchor.parameters
+    assert migrated.anchor.initial_state is not registration.target_registry.anchor.initial_state
+    assert migrated.anchor.generator is not registration.target_registry.anchor.generator
+    assert (
+        migrated.anchor.generator.hierarchy.run_variance
+        is not registration.target_registry.anchor.generator.hierarchy.run_variance
     )
     incomplete = deepcopy(registration_payload)
     incomplete["accepted_retired_source_paths"] = retired[:-1]

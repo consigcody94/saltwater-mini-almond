@@ -2,7 +2,7 @@
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import fields, is_dataclass
 from enum import Enum, StrEnum
 from math import fsum, isclose, isfinite, log
 from pathlib import Path
@@ -46,7 +46,24 @@ MAX_INTEROPERABLE_JSON_INTEGER = 2**53 - 1
 class StrictPaper1Model(BaseModel):
     """Immutable Paper 1 boundary model that rejects unregistered fields."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+        revalidate_instances="always",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_model_subclasses(cls, value: object) -> object:
+        if isinstance(value, cls) and type(value) is not cls:
+            raise ValueError(f"{cls.__name__} requires an exact model instance")
+        if isinstance(value, Mapping):
+            if type(value) not in (dict, _MAPPING_PROXY_TYPE):
+                raise ValueError(f"{cls.__name__} requires a primitive mapping")
+            if any(type(key) is not str for key in value):
+                raise ValueError(f"{cls.__name__} requires primitive string keys")
+        return value
 
 
 def _registered_json_value(value: object) -> object:
@@ -143,9 +160,69 @@ REGISTERED_ENDPOINT_IDS = (
     "root_mannitol_concentration_above_empty_vector",
     "xylem_sap_na_concentration_time_auc",
 )
+REGISTERED_ENDPOINT_UNITS = MappingProxyType(
+    {
+        "green_canopy_area": "cm^2",
+        "root_zone_na_concentration": "mmol Na L^-1",
+        "root_zone_cl_concentration": "mmol Cl L^-1",
+        "root_zone_k_concentration": "mmol K L^-1",
+        "xylem_sap_na_concentration": "mmol Na L^-1",
+        "drainage_total_b_concentration": "mmol B L^-1",
+        "root_surface_outward_na_flux_per_root_dry_mass": (
+            "umol Na g_root_dry_mass^-1 h^-1"
+        ),
+        "root_h2o2_concentration_time_auc": (
+            "umol H2O2 g_root_fresh_mass^-1 h"
+        ),
+        "root_mannitol_concentration_above_empty_vector": (
+            "nmol g_root_fresh_mass^-1"
+        ),
+        "xylem_sap_na_concentration_time_auc": "mmol Na L^-1 h",
+    }
+)
 REGISTERED_ION_ENDPOINT_IDS = REGISTERED_ENDPOINT_IDS[1:6]
 REGISTERED_H3_ENDPOINT_IDS = REGISTERED_ENDPOINT_IDS[6:]
 REGISTERED_CANDIDATE_IDS = tuple(f"C{number}" for number in range(1, 7))
+REGISTERED_H3_ERROR_AUTHORITIES = MappingProxyType(
+    {
+        "C1": (
+            "root_surface_outward_na_flux_per_root_dry_mass",
+            "log_ratio",
+            "umol Na g_root_dry_mass^-1 h^-1",
+            "log-ratio",
+        ),
+        "C2": (
+            "root_h2o2_concentration_time_auc",
+            "log_ratio",
+            "umol H2O2 g_root_fresh_mass^-1 h",
+            "log-ratio",
+        ),
+        "C3": (
+            "root_mannitol_concentration_above_empty_vector",
+            "difference",
+            "nmol g_root_fresh_mass^-1",
+            "nmol g_root_fresh_mass^-1",
+        ),
+        "C4": (
+            "root_surface_outward_na_flux_per_root_dry_mass",
+            "log_ratio",
+            "umol Na g_root_dry_mass^-1 h^-1",
+            "log-ratio",
+        ),
+        "C5": (
+            "xylem_sap_na_concentration_time_auc",
+            "log_ratio",
+            "mmol Na L^-1 h",
+            "log-ratio",
+        ),
+        "C6": (
+            "root_surface_outward_na_flux_per_root_dry_mass",
+            "log_ratio",
+            "umol Na g_root_dry_mass^-1 h^-1",
+            "log-ratio",
+        ),
+    }
+)
 
 
 def _require_quantity_unit(
@@ -155,14 +232,51 @@ def _require_quantity_unit(
         raise ValueError(f"{field_path} requires unit {expected!r}")
 
 
+def _require_nonnegative_quantity(
+    value: RegisteredQuantity, field_path: str
+) -> None:
+    if value.value < 0.0:
+        raise ValueError(f"{field_path} must be nonnegative")
+
+
+def _require_positive_quantity(value: RegisteredQuantity, field_path: str) -> None:
+    if value.value <= 0.0:
+        raise ValueError(f"{field_path} must be positive")
+
+
+def _require_strictly_increasing_quantities(
+    values: tuple[RegisteredQuantity, ...],
+    *,
+    field_path: str,
+    unit: str,
+) -> tuple[float, ...]:
+    if not values:
+        raise ValueError(f"{field_path} must be nonempty")
+    for item in values:
+        _require_quantity_unit(item, unit, field_path)
+    plain = tuple(item.value for item in values)
+    if any(right <= left for left, right in zip(plain, plain[1:])):
+        raise ValueError(f"{field_path} must be strictly increasing")
+    return plain
+
+
 def _freeze_exact_map(
     value: Mapping[str, object], expected: tuple[str, ...], field_path: str
 ) -> Mapping[str, object]:
-    if type(value) not in (dict, _MAPPING_PROXY_TYPE):
-        raise ValueError(f"{field_path} must be a primitive mapping")
+    _require_primitive_string_mapping(value, field_path)
     if tuple(value) != expected:
         raise ValueError(f"{field_path} must contain exact registered keys in order")
     return MappingProxyType(dict(value))
+
+
+def _require_primitive_string_mapping(
+    value: object, field_path: str
+) -> Mapping[str, object]:
+    if type(value) not in (dict, _MAPPING_PROXY_TYPE):
+        raise ValueError(f"{field_path} must be a primitive mapping")
+    if any(type(key) is not str for key in value):
+        raise ValueError(f"{field_path} keys must be primitive strings")
+    return value
 
 
 class _RegisteredGeneratorSection(StrictPaper1Model):
@@ -198,6 +312,12 @@ class HierarchyGeneratorConfig(_RegisteredGeneratorSection):
         }
     )
 
+    @model_validator(mode="after")
+    def require_nonnegative_variances(self) -> "HierarchyGeneratorConfig":
+        for name in self._quantity_units:
+            _require_nonnegative_quantity(getattr(self, name), name)
+        return self
+
 
 class ClimateGeneratorConfig(_RegisteredGeneratorSection):
     temperature_ar1_phi: RegisteredQuantity
@@ -222,6 +342,26 @@ class ClimateGeneratorConfig(_RegisteredGeneratorSection):
     )
     _count_fields = frozenset({"climate_initialization_burnin_steps"})
 
+    @model_validator(mode="after")
+    def require_stationary_process(self) -> "ClimateGeneratorConfig":
+        for name in (
+            "temperature_ar1_phi",
+            "apar_ar1_phi",
+            "matric_potential_ar1_phi",
+        ):
+            if not -1.0 < getattr(self, name).value < 1.0:
+                raise ValueError(f"{name} must be strictly between -1 and 1")
+        for name in (
+            "temperature_innovation_sd_k",
+            "apar_log_innovation_sd",
+            "matric_potential_innovation_sd_mpa",
+            "potential_transpiration_log_innovation_sd",
+        ):
+            _require_nonnegative_quantity(getattr(self, name), name)
+        if self.climate_initialization_burnin_steps.value <= 0:
+            raise ValueError("climate burn-in count must be positive")
+        return self
+
 
 class ChemistryGeneratorConfig(_RegisteredGeneratorSection):
     common_ion_log_sd: RegisteredQuantity
@@ -243,6 +383,16 @@ class ChemistryGeneratorConfig(_RegisteredGeneratorSection):
             "charge_balance_tolerance_percent": "percent",
         }
     )
+
+    @model_validator(mode="after")
+    def require_measurement_scales(self) -> "ChemistryGeneratorConfig":
+        for name in self._quantity_units:
+            value = getattr(self, name)
+            if name == "charge_balance_tolerance_percent":
+                _require_positive_quantity(value, name)
+            else:
+                _require_nonnegative_quantity(value, name)
+        return self
 
 
 class WaterLoopGeneratorConfig(_RegisteredGeneratorSection):
@@ -271,13 +421,33 @@ class WaterLoopGeneratorConfig(_RegisteredGeneratorSection):
 
     @model_validator(mode="after")
     def require_ordered_operator_schedule(self) -> "WaterLoopGeneratorConfig":
-        if not self.operator_event_times_days:
-            raise ValueError("operator event schedule must be nonempty")
-        for item in self.operator_event_times_days:
-            _require_quantity_unit(item, "day", "operator_event_times_days")
-        values = tuple(item.value for item in self.operator_event_times_days)
-        if any(right <= left for left, right in zip(values, values[1:])):
-            raise ValueError("operator event schedule must be strictly increasing")
+        for name in (
+            "reservoir_initial_volume_l",
+            "water_batch_volume_l",
+            "irrigation_volume_l_per_plant_day",
+            "sampling_volume_l_per_sample",
+            "reservoir_min_volume_l",
+            "reservoir_max_volume_l",
+        ):
+            _require_positive_quantity(getattr(self, name), name)
+        _require_nonnegative_quantity(self.purge_volume_l_day, "purge_volume_l_day")
+        fraction = self.drainage_return_fraction.value
+        if not 0.0 <= fraction <= 1.0:
+            raise ValueError("drainage_return_fraction must be in [0, 1]")
+        minimum = self.reservoir_min_volume_l.value
+        initial = self.reservoir_initial_volume_l.value
+        maximum = self.reservoir_max_volume_l.value
+        if not minimum <= initial <= maximum or minimum >= maximum:
+            raise ValueError(
+                "reservoir bounds must be ordered and contain the initial volume"
+            )
+        values = _require_strictly_increasing_quantities(
+            self.operator_event_times_days,
+            field_path="operator_event_times_days",
+            unit="day",
+        )
+        if values != tuple(float(index) + 0.25 for index in range(84)):
+            raise ValueError("operator event schedule must equal the registration")
         return self
 
 
@@ -294,11 +464,51 @@ class H3MeasurementLinksConfig(_RegisteredGeneratorSection):
         }
     )
 
+    @model_validator(mode="after")
+    def require_positive_links(self) -> "H3MeasurementLinksConfig":
+        fraction = self.root_dry_matter_fraction.value
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError("root dry matter fraction must be in (0, 1]")
+        _require_positive_quantity(
+            self.h2o2_umol_g_root_fresh_mass_inv_per_ros_dimensionless,
+            "h2o2 measurement link",
+        )
+        return self
+
+
+class H3ObservationErrorRecord(StrictPaper1Model):
+    """One candidate-bound H3 measurement-error registration."""
+
+    candidate_id: str
+    endpoint_id: str
+    analysis_scale: Literal["log_ratio", "difference"]
+    endpoint_unit: str
+    error_sd: RegisteredQuantity
+
+    @model_validator(mode="after")
+    def require_candidate_authority(self) -> "H3ObservationErrorRecord":
+        if self.candidate_id not in REGISTERED_H3_ERROR_AUTHORITIES:
+            raise ValueError("H3 error record requires candidate C1 through C6")
+        expected = REGISTERED_H3_ERROR_AUTHORITIES[self.candidate_id]
+        observed = (
+            self.endpoint_id,
+            self.analysis_scale,
+            self.endpoint_unit,
+            self.error_sd.unit,
+        )
+        if observed != expected:
+            raise ValueError(
+                "H3 error record must repeat the frozen candidate rule and scale"
+            )
+        if self.error_sd.value < 0.0:
+            raise ValueError("H3 observation error SD must be nonnegative")
+        return self
+
 
 class ObservationGeneratorConfig(_RegisteredGeneratorSection):
     canopy_observation_error_sd: RegisteredQuantity
     ion_observation_error_sd: RegisteredQuantity
-    h3_observation_error_by_endpoint: Mapping[str, RegisteredQuantity]
+    h3_observation_error_by_endpoint: Mapping[str, H3ObservationErrorRecord]
     canopy_heteroscedastic_log_slope: RegisteredQuantity
     ion_heteroscedastic_log_slope: RegisteredQuantity
     canopy_observation_times_days: tuple[RegisteredQuantity, ...]
@@ -317,20 +527,34 @@ class ObservationGeneratorConfig(_RegisteredGeneratorSection):
         }
     )
 
+    @field_validator(
+        "h3_observation_error_by_endpoint",
+        "h3_observation_times_days_by_endpoint",
+        mode="before",
+    )
+    @classmethod
+    def require_primitive_endpoint_maps(cls, value: object) -> object:
+        return _require_primitive_string_mapping(value, "observation endpoint map")
+
     @model_validator(mode="after")
     def require_observation_maps(self) -> "ObservationGeneratorConfig":
+        for name in (
+            "canopy_observation_error_sd",
+            "ion_observation_error_sd",
+            "canopy_heteroscedastic_log_slope",
+            "ion_heteroscedastic_log_slope",
+        ):
+            _require_nonnegative_quantity(getattr(self, name), name)
         errors = _freeze_exact_map(
             self.h3_observation_error_by_endpoint,
             REGISTERED_CANDIDATE_IDS,
             "h3_observation_error_by_endpoint",
         )
         for candidate_id, item in errors.items():
-            expected = (
-                "nmol g_root_fresh_mass^-1"
-                if candidate_id == "C3"
-                else "log-ratio"
-            )
-            _require_quantity_unit(item, expected, f"h3.{candidate_id}")
+            if item.candidate_id != candidate_id:
+                raise ValueError(
+                    "H3 error map key must equal the repeated candidate ID"
+                )
         schedules = _freeze_exact_map(
             self.h3_observation_times_days_by_endpoint,
             REGISTERED_H3_ENDPOINT_IDS,
@@ -339,17 +563,40 @@ class ObservationGeneratorConfig(_RegisteredGeneratorSection):
         for endpoint_id, schedule in schedules.items():
             if type(schedule) is not tuple or not schedule:
                 raise ValueError(f"H3 schedule {endpoint_id} must be a nonempty tuple")
-            for item in schedule:
-                _require_quantity_unit(item, "day", endpoint_id)
-        for name in (
-            "canopy_observation_times_days",
-            "ion_observation_times_days",
+            observed = _require_strictly_increasing_quantities(
+                schedule, field_path=endpoint_id, unit="day"
+            )
+            if observed != (84.0,):
+                raise ValueError("H3 endpoint schedules must be terminal day 84")
+        canopy_times = _require_strictly_increasing_quantities(
+            self.canopy_observation_times_days,
+            field_path="canopy_observation_times_days",
+            unit="day",
+        )
+        if canopy_times != (
+            0.0,
+            3.0,
+            7.0,
+            14.0,
+            21.0,
+            28.0,
+            35.0,
+            42.0,
+            49.0,
+            56.0,
+            63.0,
+            70.0,
+            77.0,
+            84.0,
         ):
-            schedule = getattr(self, name)
-            if not schedule:
-                raise ValueError(f"{name} must be nonempty")
-            for item in schedule:
-                _require_quantity_unit(item, "day", name)
+            raise ValueError("canopy observation schedule must equal registration")
+        ion_times = _require_strictly_increasing_quantities(
+            self.ion_observation_times_days,
+            field_path="ion_observation_times_days",
+            unit="day",
+        )
+        if ion_times != (0.0, 14.0, 28.0, 42.0, 56.0, 70.0, 84.0):
+            raise ValueError("ion observation schedule must equal registration")
         object.__setattr__(self, "h3_observation_error_by_endpoint", errors)
         object.__setattr__(self, "h3_observation_times_days_by_endpoint", schedules)
         return self
@@ -361,8 +608,22 @@ class CensoringGeneratorConfig(StrictPaper1Model):
     lod_log_sd_by_endpoint: Mapping[str, RegisteredQuantity | None]
     loq_log_sd_by_endpoint: Mapping[str, RegisteredQuantity | None]
 
+    @field_validator(
+        "lod_by_endpoint",
+        "loq_by_endpoint",
+        "lod_log_sd_by_endpoint",
+        "loq_log_sd_by_endpoint",
+        mode="before",
+    )
+    @classmethod
+    def require_primitive_endpoint_maps(cls, value: object) -> object:
+        return _require_primitive_string_mapping(value, "censor endpoint map")
+
     @model_validator(mode="after")
     def require_endpoint_complete_maps(self) -> "CensoringGeneratorConfig":
+        frozen_maps: dict[
+            str, Mapping[str, RegisteredQuantity | None]
+        ] = {}
         for name in (
             "lod_by_endpoint",
             "loq_by_endpoint",
@@ -376,7 +637,43 @@ class CensoringGeneratorConfig(StrictPaper1Model):
                 for endpoint_id, item in frozen.items():
                     if item is not None:
                         _require_quantity_unit(item, "log-ratio", endpoint_id)
+                        _require_nonnegative_quantity(item, endpoint_id)
+            else:
+                for endpoint_id, item in frozen.items():
+                    if item is not None:
+                        _require_quantity_unit(
+                            item, REGISTERED_ENDPOINT_UNITS[endpoint_id], endpoint_id
+                        )
+                        _require_nonnegative_quantity(item, endpoint_id)
+            frozen_maps[name] = frozen
             object.__setattr__(self, name, frozen)
+        for endpoint_id in REGISTERED_ENDPOINT_IDS:
+            values = tuple(
+                frozen_maps[name][endpoint_id]
+                for name in (
+                    "lod_by_endpoint",
+                    "loq_by_endpoint",
+                    "lod_log_sd_by_endpoint",
+                    "loq_log_sd_by_endpoint",
+                )
+            )
+            if any(item is None for item in values) and not all(
+                item is None for item in values
+            ):
+                raise ValueError(
+                    f"censor maps require aligned nullability for {endpoint_id}"
+                )
+            lod, loq, lod_log_sd, loq_log_sd = values
+            if lod is not None and loq is not None and loq.value < lod.value:
+                raise ValueError(f"LOQ must be greater than or equal to LOD for {endpoint_id}")
+            if (
+                lod_log_sd is not None
+                and loq_log_sd is not None
+                and lod_log_sd.value != loq_log_sd.value
+            ):
+                raise ValueError(
+                    f"LOD and LOQ log SDs must match for {endpoint_id}"
+                )
         return self
 
     @model_serializer(mode="plain")
@@ -400,6 +697,16 @@ class DriftGeneratorConfig(_RegisteredGeneratorSection):
         }
     )
 
+    @field_validator(
+        "ion_drift_per_day_by_endpoint",
+        "h3_drift_per_day_by_endpoint",
+        "post_calibration_residual_sd_by_endpoint",
+        mode="before",
+    )
+    @classmethod
+    def require_primitive_endpoint_maps(cls, value: object) -> object:
+        return _require_primitive_string_mapping(value, "drift endpoint map")
+
     @model_validator(mode="after")
     def require_endpoint_complete_maps(self) -> "DriftGeneratorConfig":
         for name, keys in (
@@ -410,6 +717,28 @@ class DriftGeneratorConfig(_RegisteredGeneratorSection):
             object.__setattr__(
                 self, name, _freeze_exact_map(getattr(self, name), keys, name)
             )
+        for endpoint_id, item in self.ion_drift_per_day_by_endpoint.items():
+            _require_quantity_unit(item, "log-ratio day^-1", endpoint_id)
+        for endpoint_id, item in self.h3_drift_per_day_by_endpoint.items():
+            expected = (
+                "nmol g_root_fresh_mass^-1 day^-1"
+                if endpoint_id
+                == "root_mannitol_concentration_above_empty_vector"
+                else "log-ratio day^-1"
+            )
+            _require_quantity_unit(item, expected, endpoint_id)
+        for endpoint_id, item in self.post_calibration_residual_sd_by_endpoint.items():
+            expected = (
+                "nmol g_root_fresh_mass^-1"
+                if endpoint_id
+                == "root_mannitol_concentration_above_empty_vector"
+                else "log-ratio"
+            )
+            _require_quantity_unit(item, expected, endpoint_id)
+            _require_nonnegative_quantity(item, endpoint_id)
+        _require_positive_quantity(
+            self.calibration_interval_days, "calibration_interval_days"
+        )
         return self
 
 
@@ -425,6 +754,12 @@ class DeathGeneratorConfig(_RegisteredGeneratorSection):
             "sustained_injury_duration_log_sd": "log-ratio",
         }
     )
+
+    @model_validator(mode="after")
+    def require_nonnegative_threshold_variation(self) -> "DeathGeneratorConfig":
+        for name in self._quantity_units:
+            _require_nonnegative_quantity(getattr(self, name), name)
+        return self
 
 
 class MissingnessGeneratorConfig(_RegisteredGeneratorSection):
@@ -444,6 +779,15 @@ class MissingnessGeneratorConfig(_RegisteredGeneratorSection):
         }
     )
 
+    @field_validator(
+        "observable_stress_proxy_center_by_field",
+        "observable_stress_proxy_scale_by_field",
+        mode="before",
+    )
+    @classmethod
+    def require_primitive_proxy_maps(cls, value: object) -> object:
+        return _require_primitive_string_mapping(value, "stress-proxy map")
+
     @model_validator(mode="after")
     def require_registered_proxy_maps(self) -> "MissingnessGeneratorConfig":
         expected = (
@@ -461,6 +805,27 @@ class MissingnessGeneratorConfig(_RegisteredGeneratorSection):
                 self,
                 name,
                 _freeze_exact_map(getattr(self, name), expected, name),
+            )
+        expected_units = MappingProxyType(
+            {
+                "challenge_water_indicator": "dimensionless",
+                "scheduled_time_days": "day",
+                "prior_observed_canopy_log_ratio": "log-ratio",
+            }
+        )
+        for field_id in expected:
+            for map_name in (
+                "observable_stress_proxy_center_by_field",
+                "observable_stress_proxy_scale_by_field",
+            ):
+                _require_quantity_unit(
+                    getattr(self, map_name)[field_id],
+                    expected_units[field_id],
+                    f"{map_name}.{field_id}",
+                )
+            _require_positive_quantity(
+                self.observable_stress_proxy_scale_by_field[field_id],
+                f"observable_stress_proxy_scale_by_field.{field_id}",
             )
         if self.mnar_endpoints != (
             "green_canopy_area",
@@ -491,6 +856,18 @@ class CalibrationGeneratorConfig(_RegisteredGeneratorSection):
         {"max_iterations", "fit_panel_size", "holdout_panel_size"}
     )
 
+    @model_validator(mode="after")
+    def require_solver_domain(self) -> "CalibrationGeneratorConfig":
+        for name in self._quantity_units:
+            _require_positive_quantity(getattr(self, name), name)
+        if self.max_iterations.value <= 0:
+            raise ValueError("max_iterations must be positive")
+        fit = self.fit_panel_size.value
+        holdout = self.holdout_panel_size.value
+        if fit != holdout or fit not in {32, 64, 128}:
+            raise ValueError("fit/holdout panel counts must be equal and registered")
+        return self
+
 
 class GeneratorDesignConfig(_RegisteredGeneratorSection):
     duration_days: RegisteredQuantity
@@ -498,6 +875,14 @@ class GeneratorDesignConfig(_RegisteredGeneratorSection):
 
     _quantity_units = MappingProxyType({"duration_days": "day"})
     _count_fields = frozenset({"confirmation_plants_per_group_reservoir"})
+
+    @model_validator(mode="after")
+    def require_registered_design(self) -> "GeneratorDesignConfig":
+        if self.duration_days.value != 84.0:
+            raise ValueError("generator duration must be exactly 84 days")
+        if self.confirmation_plants_per_group_reservoir.value not in {5, 6}:
+            raise ValueError("confirmation cell size must be exactly 5 or 6")
+        return self
 
 
 class SyntheticGeneratorConfig(StrictPaper1Model):
@@ -512,6 +897,37 @@ class SyntheticGeneratorConfig(StrictPaper1Model):
     missingness: MissingnessGeneratorConfig
     calibration: CalibrationGeneratorConfig
     design: GeneratorDesignConfig
+
+    @model_validator(mode="after")
+    def require_safe_composed_arithmetic(self) -> "SyntheticGeneratorConfig":
+        loop = self.water_loop
+        try:
+            daily_makeup = (
+                loop.irrigation_volume_l_per_plant_day.value
+                * 45.0
+                * (1.0 - loop.drainage_return_fraction.value)
+                + loop.purge_volume_l_day.value
+            )
+            demand = fsum(
+                (
+                    loop.reservoir_initial_volume_l.value,
+                    84.0 * daily_makeup,
+                    6.0 * loop.sampling_volume_l_per_sample.value,
+                )
+            )
+        except (OverflowError, ValueError):
+            demand = float("inf")
+        if not isfinite(daily_makeup) or not isfinite(demand):
+            raise ValueError("water-loop arithmetic must remain finite")
+        duration = self.design.duration_days.value
+        drift_rates = (
+            self.drift.canopy_drift_per_day,
+            *self.drift.ion_drift_per_day_by_endpoint.values(),
+            *self.drift.h3_drift_per_day_by_endpoint.values(),
+        )
+        if any(not isfinite(item.value * duration) for item in drift_rates):
+            raise ValueError("drift arithmetic must remain finite over the design")
+        return self
 
     @model_serializer(mode="plain")
     def serialize_registered_generator(self) -> dict[str, object]:
@@ -1970,11 +2386,11 @@ def _exact_scenario_keys(
     expected: frozenset[str],
     field_path: str,
 ) -> Mapping[str, object]:
-    if not isinstance(supplied, Mapping):
-        _scenario_invalid("section must be a mapping", field_path)
+    if type(supplied) not in (dict, _MAPPING_PROXY_TYPE):
+        _scenario_invalid("section must be a primitive mapping", field_path)
     names = set(supplied)
-    if any(not isinstance(name, str) for name in names):
-        _scenario_invalid("section keys must be strings", field_path)
+    if any(type(name) is not str for name in names):
+        _scenario_invalid("section keys must be primitive strings", field_path)
     missing = sorted(expected - names)
     if missing:
         fail(
@@ -1995,6 +2411,8 @@ def _exact_scenario_keys(
 
 
 def _evidence(value: object, field_path: str) -> EvidenceLabel:
+    if type(value) not in (str, EvidenceLabel):
+        _scenario_invalid("evidence label must be an exact string or enum", field_path)
     try:
         label = value if isinstance(value, EvidenceLabel) else EvidenceLabel(value)
     except (TypeError, ValueError) as error:
@@ -2008,6 +2426,8 @@ def _evidence(value: object, field_path: str) -> EvidenceLabel:
 
 
 def _entity(value: object, field_path: str) -> ConservedEntity:
+    if type(value) not in (str, ConservedEntity):
+        _scenario_invalid("conserved entity must be an exact string or enum", field_path)
     try:
         return value if isinstance(value, ConservedEntity) else ConservedEntity(value)
     except (TypeError, ValueError) as error:
@@ -2015,6 +2435,8 @@ def _entity(value: object, field_path: str) -> ConservedEntity:
 
 
 def _compartment_kind(value: object, field_path: str) -> CompartmentKind:
+    if type(value) not in (str, CompartmentKind):
+        _scenario_invalid("compartment kind must be an exact string or enum", field_path)
     try:
         return value if isinstance(value, CompartmentKind) else CompartmentKind(value)
     except (TypeError, ValueError) as error:
@@ -2022,7 +2444,9 @@ def _compartment_kind(value: object, field_path: str) -> CompartmentKind:
 
 
 def _network_state(value: object, field_path: str) -> NetworkState:
-    if isinstance(value, NetworkState):
+    if isinstance(value, NetworkState) and type(value) is not NetworkState:
+        _scenario_invalid("network state must be exact", field_path)
+    if type(value) is NetworkState:
         raw_compartments: object = value.compartments
         raw_entities: object = value.tracked_entities
         raw_label: object = value.evidence_label
@@ -2035,14 +2459,24 @@ def _network_state(value: object, field_path: str) -> NetworkState:
         raw_compartments = mapping["compartments"]
         raw_entities = mapping["tracked_entities"]
         raw_label = mapping["evidence_label"]
-    if not isinstance(raw_compartments, Mapping) or not raw_compartments:
+    if (
+        type(raw_compartments) not in (dict, _MAPPING_PROXY_TYPE)
+        or not raw_compartments
+    ):
         _scenario_invalid("network compartments must be a nonempty mapping", f"{field_path}.compartments")
     compartments: dict[str, CompartmentState] = {}
     compartment_keys = frozenset(field.name for field in fields(CompartmentState))
     for raw_id, raw_compartment in raw_compartments.items():
-        if not isinstance(raw_id, str):
-            _scenario_invalid("compartment IDs must be strings", f"{field_path}.compartments")
-        if isinstance(raw_compartment, CompartmentState):
+        if type(raw_id) is not str:
+            _scenario_invalid("compartment IDs must be primitive strings", f"{field_path}.compartments")
+        if isinstance(raw_compartment, CompartmentState) and type(
+            raw_compartment
+        ) is not CompartmentState:
+            _scenario_invalid(
+                "network compartment must be exact",
+                f"{field_path}.compartments.{raw_id}",
+            )
+        if type(raw_compartment) is CompartmentState:
             item = {
                 field.name: getattr(raw_compartment, field.name)
                 for field in fields(CompartmentState)
@@ -2056,10 +2490,15 @@ def _network_state(value: object, field_path: str) -> NetworkState:
                 )
             )
         stocks = item["stocks"]
-        if not isinstance(stocks, Mapping):
-            _scenario_invalid("stocks must be a mapping", f"{field_path}.compartments.{raw_id}.stocks")
+        if type(stocks) not in (dict, _MAPPING_PROXY_TYPE):
+            _scenario_invalid("stocks must be a primitive mapping", f"{field_path}.compartments.{raw_id}.stocks")
         typed_stocks: dict[ConservedEntity, object] = {}
         for raw_entity, amount in stocks.items():
+            if type(raw_entity) not in (str, ConservedEntity):
+                _scenario_invalid(
+                    "stock keys must be primitive strings or exact entities",
+                    f"{field_path}.compartments.{raw_id}.stocks",
+                )
             entity = _entity(
                 raw_entity,
                 f"{field_path}.compartments.{raw_id}.stocks",
@@ -2089,9 +2528,7 @@ def _network_state(value: object, field_path: str) -> NetworkState:
                 f"{field_path}.compartments.{raw_id}",
                 cause=error,
             )
-    if isinstance(raw_entities, (str, bytes, Mapping)) or not isinstance(
-        raw_entities, (Sequence, set, frozenset)
-    ):
+    if type(raw_entities) not in (list, tuple, set, frozenset):
         _scenario_invalid("tracked_entities must be a sequence", f"{field_path}.tracked_entities")
     tracked = frozenset(
         _entity(item, f"{field_path}.tracked_entities") for item in raw_entities
@@ -2107,15 +2544,25 @@ def _network_state(value: object, field_path: str) -> NetworkState:
 
 
 def _biology_parameters(value: object) -> BiologyParameters:
-    if isinstance(value, BiologyParameters):
-        try:
-            return replace(value)
-        except AlmondLabError as error:
-            _scenario_invalid("biology parameters are invalid", "parameters", cause=error)
-    mapping = _exact_scenario_keys(
-        value, REQUIRED_BIOLOGY_PARAMETER_KEYS, "parameters"
-    )
+    if isinstance(value, BiologyParameters) and type(value) is not BiologyParameters:
+        _scenario_invalid("biology parameters must be exact", "parameters")
+    if type(value) is BiologyParameters:
+        mapping: Mapping[str, object] = {
+            field.name: getattr(value, field.name) for field in fields(BiologyParameters)
+        }
+    else:
+        mapping = _exact_scenario_keys(
+            value, REQUIRED_BIOLOGY_PARAMETER_KEYS, "parameters"
+        )
     payload = dict(mapping)
+    for field in fields(BiologyParameters):
+        if field.name not in {"schema_version", "evidence_label"} and type(
+            payload[field.name]
+        ) is not float:
+            _scenario_invalid(
+                "biology numeric inputs must be primitive floats",
+                f"parameters.{field.name}",
+            )
     payload["evidence_label"] = _evidence(
         payload["evidence_label"], "parameters.evidence_label"
     )
@@ -2126,13 +2573,39 @@ def _biology_parameters(value: object) -> BiologyParameters:
 
 
 def _initial_state(value: object) -> PlantState:
-    if isinstance(value, PlantState):
-        try:
-            return replace(value)
-        except AlmondLabError as error:
-            _scenario_invalid("initial plant state is invalid", "initial_state", cause=error)
-    mapping = _exact_scenario_keys(value, REQUIRED_INITIAL_STATE_KEYS, "initial_state")
+    if isinstance(value, PlantState) and type(value) is not PlantState:
+        _scenario_invalid("initial plant state must be exact", "initial_state")
+    if type(value) is PlantState:
+        mapping: Mapping[str, object] = {
+            field.name: getattr(value, field.name) for field in fields(PlantState)
+        }
+    else:
+        mapping = _exact_scenario_keys(
+            value, REQUIRED_INITIAL_STATE_KEYS, "initial_state"
+        )
     payload = dict(mapping)
+    for field in fields(PlantState):
+        if field.name in {
+            "network_state",
+            "evidence_label",
+            "alive",
+            "death_time_hours",
+        }:
+            continue
+        if type(payload[field.name]) is not float:
+            _scenario_invalid(
+                "initial-state numeric inputs must be primitive floats",
+                f"initial_state.{field.name}",
+            )
+    if type(payload["alive"]) is not bool:
+        _scenario_invalid("alive must be a primitive boolean", "initial_state.alive")
+    if payload["death_time_hours"] is not None and type(
+        payload["death_time_hours"]
+    ) is not float:
+        _scenario_invalid(
+            "death time must be null or a primitive float",
+            "initial_state.death_time_hours",
+        )
     payload["network_state"] = _network_state(
         payload["network_state"], "initial_state.network_state"
     )
@@ -2146,7 +2619,11 @@ def _initial_state(value: object) -> PlantState:
 
 
 def _hydraulic_domain(value: object) -> HydraulicDomain:
-    if isinstance(value, HydraulicDomain):
+    if isinstance(value, HydraulicDomain) and type(value) is not HydraulicDomain:
+        _scenario_invalid(
+            "hydraulic domain must be exact", "forcing.hydraulic_domain"
+        )
+    if type(value) is HydraulicDomain:
         payload: object = value.model_dump(mode="python")
     else:
         payload = value
@@ -2157,13 +2634,23 @@ def _hydraulic_domain(value: object) -> HydraulicDomain:
 
 
 def _forcing(value: object) -> RootZoneForcing:
-    if isinstance(value, RootZoneForcing):
-        try:
-            return replace(value)
-        except AlmondLabError as error:
-            _scenario_invalid("root-zone forcing is invalid", "forcing", cause=error)
-    mapping = _exact_scenario_keys(value, REQUIRED_FORCING_KEYS, "forcing")
+    if isinstance(value, RootZoneForcing) and type(value) is not RootZoneForcing:
+        _scenario_invalid("root-zone forcing must be exact", "forcing")
+    if type(value) is RootZoneForcing:
+        mapping: Mapping[str, object] = {
+            field.name: getattr(value, field.name) for field in fields(RootZoneForcing)
+        }
+    else:
+        mapping = _exact_scenario_keys(value, REQUIRED_FORCING_KEYS, "forcing")
     payload = dict(mapping)
+    for field in fields(RootZoneForcing):
+        if field.name in {"evidence_label", "hydraulic_domain"}:
+            continue
+        if type(payload[field.name]) is not float:
+            _scenario_invalid(
+                "forcing numeric inputs must be primitive floats",
+                f"forcing.{field.name}",
+            )
     payload["evidence_label"] = _evidence(
         payload["evidence_label"], "forcing.evidence_label"
     )
@@ -2356,10 +2843,14 @@ REGISTERED_SCENARIO_IDS = tuple(item.value for item in SyntheticScenarioId)
 
 
 def _deep_freeze_registered_value(value: object, field_path: str) -> object:
-    if value is None or type(value) in (str, int, float, bool):
-        if type(value) is float and (value != value or abs(value) == float("inf")):
+    if value is None or type(value) is str:
+        return value
+    if type(value) is float:
+        if value != value or abs(value) == float("inf"):
             raise ValueError(f"{field_path} contains a nonfinite number")
         return value
+    if type(value) in (int, bool):
+        raise ValueError(f"{field_path} requires exact registered real values")
     if type(value) is list or type(value) is tuple:
         return tuple(
             _deep_freeze_registered_value(item, f"{field_path}[{index}]")
@@ -2385,10 +2876,22 @@ class ScenarioMechanismConfig(StrictPaper1Model):
     chassis_id: str | None
     candidate_chassis_mechanism_modifiers: Mapping[str, object]
 
+    @field_validator(
+        "biology_parameter_overrides",
+        "candidate_parameter_overrides_by_id",
+        "post_onset_biology_parameter_overrides",
+        "candidate_chassis_mechanism_modifiers",
+        mode="before",
+    )
+    @classmethod
+    def require_primitive_mechanism_maps(cls, value: object) -> object:
+        return _require_primitive_string_mapping(value, "scenario mechanism map")
+
     @model_validator(mode="after")
     def freeze_registered_mechanism(self) -> "ScenarioMechanismConfig":
         if self.onset_time_days is not None:
             _require_quantity_unit(self.onset_time_days, "day", "onset_time_days")
+            _require_positive_quantity(self.onset_time_days, "onset_time_days")
         if self.chassis_id is not None and (
             type(self.chassis_id) is not str
             or not self.chassis_id
@@ -2409,9 +2912,45 @@ class ScenarioMechanismConfig(StrictPaper1Model):
             )
         return self
 
+    @property
+    def has_synthetic_semantics(self) -> bool:
+        return bool(
+            self.biology_parameter_overrides
+            or self.candidate_parameter_overrides_by_id
+            or self.onset_time_days is not None
+            or self.post_onset_biology_parameter_overrides
+            or self.chassis_id is not None
+            or self.candidate_chassis_mechanism_modifiers
+        )
+
     @model_serializer(mode="plain")
     def serialize_registered_mechanism(self) -> dict[str, object]:
         return _registered_json_value(self)  # type: ignore[return-value]
+
+
+def _registered_registration_labels(value: object) -> tuple[EvidenceLabel, ...]:
+    """Collect every nested unit-bearing registration label exactly once."""
+
+    if type(value) in (RegisteredQuantity, RegisteredCount):
+        return (value.evidence_label,)
+    if isinstance(value, StrictPaper1Model):
+        labels: list[EvidenceLabel] = []
+        for name in type(value).model_fields:
+            labels.extend(_registered_registration_labels(getattr(value, name)))
+        return tuple(labels)
+    if isinstance(value, Mapping):
+        return tuple(
+            label
+            for item in value.values()
+            for label in _registered_registration_labels(item)
+        )
+    if isinstance(value, (tuple, list)):
+        return tuple(
+            label
+            for item in value
+            for label in _registered_registration_labels(item)
+        )
+    return ()
 
 
 class SyntheticScenarioConfig(StrictPaper1Model):
@@ -2456,6 +2995,7 @@ class SyntheticScenarioConfig(StrictPaper1Model):
     ) -> Mapping[str, tuple[RootZoneForcing, ...]]:
         if (
             type(value) not in (dict, _MAPPING_PROXY_TYPE)
+            or any(type(key) is not str for key in value)
             or tuple(value) != REGISTERED_WATER_IDS
         ):
             raise ValueError("forcings_by_water_id requires exact registered waters")
@@ -2476,7 +3016,12 @@ class SyntheticScenarioConfig(StrictPaper1Model):
                 for schedule in self.forcings_by_water_id.values()
                 for forcing in schedule
             ),
+            *_registered_registration_labels(self.generator),
         ]
+        if self.mechanism.onset_time_days is not None:
+            labels.append(self.mechanism.onset_time_days.evidence_label)
+        if self.mechanism.has_synthetic_semantics:
+            labels.append(EvidenceLabel.SYNTHETIC_ONLY)
         expected = compose_evidence_labels(*labels)
         if self.evidence_label is not expected:
             raise ValueError(
@@ -2492,6 +3037,31 @@ class SyntheticScenarioConfig(StrictPaper1Model):
                 }
             ),
         )
+        expected_duration_hours = self.generator.design.duration_days.value * 24.0
+        if not isfinite(expected_duration_hours):
+            raise ValueError("scenario duration arithmetic must remain finite")
+        for water_id, schedule in self.forcings_by_water_id.items():
+            if len(schedule) != 168 or any(
+                forcing.duration_hours != 12.0 for forcing in schedule
+            ):
+                raise ValueError(
+                    f"forcing schedule {water_id} must contain exactly "
+                    "168 registered 12-hour coordinates"
+                )
+            try:
+                observed_duration_hours = fsum(
+                    forcing.duration_hours for forcing in schedule
+                )
+            except (OverflowError, ValueError):
+                observed_duration_hours = float("inf")
+            if (
+                not isfinite(observed_duration_hours)
+                or observed_duration_hours != expected_duration_hours
+            ):
+                raise ValueError(
+                    f"forcing schedule {water_id} must cover exactly "
+                    f"{expected_duration_hours} hours"
+                )
         return self
 
     @model_serializer(mode="plain")
@@ -2521,6 +3091,39 @@ class SyntheticScenarioRegistry(StrictPaper1Model):
         observed = tuple(item.scenario_id.value for item in self.all_scenarios)
         if observed != REGISTERED_SCENARIO_IDS:
             raise ValueError("scenario registry must contain exact registered order")
+        if any(
+            item.evidence_label is not EvidenceLabel.SYNTHETIC_ONLY
+            for item in self.all_scenarios
+        ):
+            raise ValueError("all ten Task 4 scenarios must be synthetic_only")
+        anchor_inputs = tuple(
+            canonical_json_bytes(_registered_json_value(value))
+            for value in (
+                self.anchor.parameters,
+                self.anchor.initial_state,
+                self.anchor.forcings_by_water_id,
+            )
+        )
+        for scenario in self.scenarios:
+            observed_inputs = tuple(
+                canonical_json_bytes(_registered_json_value(value))
+                for value in (
+                    scenario.parameters,
+                    scenario.initial_state,
+                    scenario.forcings_by_water_id,
+                )
+            )
+            if observed_inputs != anchor_inputs:
+                raise ValueError(
+                    "non-anchor scenario base biology, state, and forcings "
+                    "must equal the anchor"
+                )
+            if (
+                scenario.mechanism.onset_time_days is not None
+                and scenario.mechanism.onset_time_days.value
+                > scenario.generator.design.duration_days.value
+            ):
+                raise ValueError("scenario onset must fall within the design")
         return self
 
     @property
@@ -2556,6 +3159,18 @@ class ScenarioMigrationInventory(StrictPaper1Model):
     items: tuple[ScenarioMigrationItem, ...]
     unclassified_source_paths: tuple[str, ...]
     multiply_classified_source_paths: tuple[str, ...]
+
+
+REGISTERED_V13_SCENARIO_RAW_SHA256 = (
+    "46286eb006fbfbaf13281dfe52d4c63c9dc00ff7b3ef0a8ee704146908f759cb"
+)
+REGISTERED_V13_SCENARIO_NORMALIZED_SHA256 = (
+    "70138e7522ffb107285d7f1ba9d6e8a995bd44198a56f77f33c1c435f33eae63"
+)
+REGISTERED_V13_MIGRATION_ITEM_COUNT = 2021
+REGISTERED_V13_MIGRATION_INVENTORY_SHA256 = (
+    "e9c438aa08ea101c4f981187b221da8bf9df0273c4dcd8050f3d1661d040ac0c"
+)
 
 
 def _iter_migration_leaves(
@@ -2698,12 +3313,12 @@ def _classify_migration_leaf(
                 MigrationDisposition.SPLIT_REQUIRES_REGISTRATION,
                 tuple(
                     "anchor.generator.observation."
-                    f"h3_observation_error_by_endpoint.{candidate}"
+                    f"h3_observation_error_by_endpoint.{candidate}.error_sd"
                     for candidate in ("C1", "C2", "C4", "C5", "C6")
                 ),
                 (
                     "anchor.generator.observation."
-                    "h3_observation_error_by_endpoint.C3",
+                    "h3_observation_error_by_endpoint.C3.error_sd",
                 ),
                 "Split the legacy scalar by candidate endpoint; C3 needs a native-unit value.",
             )
@@ -2734,11 +3349,73 @@ def _classify_migration_leaf(
                 (),
                 "Retype scenario identity metadata in the v1.4 registry.",
             )
+        scenario_prefix = f"scenarios[scenario_id={scenario_id}]"
+        if suffix.startswith("parameters."):
+            if (
+                scenario_id == "chassis_interaction"
+                and suffix == "parameters.root_conductance_l_day_mpa"
+            ):
+                return (
+                    MigrationDisposition.RETIRED,
+                    (),
+                    (),
+                    "Retire the explicitly withdrawn global conductance edit.",
+                )
+            return (
+                MigrationDisposition.PRESERVED,
+                (f"{scenario_prefix}.{suffix}",),
+                (),
+                "Preserve the expanded biology value in the detached scenario baseline.",
+            )
+        if suffix.startswith("initial_state."):
+            return (
+                MigrationDisposition.PRESERVED,
+                (f"{scenario_prefix}.{suffix}",),
+                (),
+                "Preserve the expanded initial-state value in the detached scenario baseline.",
+            )
+        if suffix.startswith("forcing."):
+            return (
+                MigrationDisposition.RETIRED,
+                (),
+                (),
+                "Retire the explicitly withdrawn one-water scenario forcing authority.",
+            )
+        if suffix.startswith("generator_parameters."):
+            name = suffix.removeprefix("generator_parameters.")
+            if name == "h3_observation_error_sd":
+                return (
+                    MigrationDisposition.SPLIT_REQUIRES_REGISTRATION,
+                    tuple(
+                        f"{scenario_prefix}.generator.observation."
+                        f"h3_observation_error_by_endpoint.{candidate}.error_sd"
+                        for candidate in ("C1", "C2", "C4", "C5", "C6")
+                    ),
+                    (
+                        f"{scenario_prefix}.generator.observation."
+                        "h3_observation_error_by_endpoint.C3.error_sd",
+                    ),
+                    "Split the expanded legacy H3 scalar by candidate endpoint.",
+                )
+            destination = _LEGACY_GENERATOR_DESTINATIONS.get(name)
+            if destination is None:
+                return (
+                    MigrationDisposition.OWNER_REQUIRED,
+                    (),
+                    (source_path,),
+                    "Require classification for an unknown expanded generator value.",
+                )
+            return (
+                MigrationDisposition.RETYPED_WITH_UNIT,
+                (destination.replace("anchor", scenario_prefix, 1),),
+                (),
+                "Retype the expanded generator scalar in the detached scenario.",
+            )
         return (
-            MigrationDisposition.RETIRED,
+            MigrationDisposition.OWNER_REQUIRED,
             (),
-            (),
-            "Retire expanded YAML duplicates or a specifically withdrawn legacy scenario edit.",
+            (source_path,),
+            "Require explicit classification for an unknown expanded scenario leaf.",
         )
     return (
         MigrationDisposition.OWNER_REQUIRED,
@@ -2894,15 +3571,7 @@ def _revalidate_scenario_registry(
             "target registry must be exact",
             "target_registry",
         )
-    return SyntheticScenarioRegistry(
-        schema_version=registry.schema_version,
-        water_recipe_registry_sha256=registry.water_recipe_registry_sha256,
-        anchor=SyntheticScenarioConfig.model_validate(registry.anchor),
-        scenarios=tuple(
-            SyntheticScenarioConfig.model_validate(scenario)
-            for scenario in registry.scenarios
-        ),
-    )
+    return SyntheticScenarioRegistry.model_validate(_registered_json_value(registry))
 
 
 def migrate_v13_scenario_document(
@@ -2924,8 +3593,27 @@ def migrate_v13_scenario_document(
             "registration",
         )
     checked_source = ScenarioMigrationInventory.model_validate(
-        source.model_dump(mode="python")
+        _registered_json_value(source)
     )
+    inventory_sha256 = hashlib.sha256(
+        canonical_json_bytes(_registered_json_value(checked_source))
+    ).hexdigest()
+    if (
+        checked_source.source_raw_sha256 != REGISTERED_V13_SCENARIO_RAW_SHA256
+        or checked_source.source_normalized_sha256
+        != REGISTERED_V13_SCENARIO_NORMALIZED_SHA256
+        or len(checked_source.items) != REGISTERED_V13_MIGRATION_ITEM_COUNT
+        or inventory_sha256 != REGISTERED_V13_MIGRATION_INVENTORY_SHA256
+    ):
+        fail(
+            "SCENARIO_MIGRATION_INVALID",
+            "source inventory does not equal the pinned whole-archive authority",
+            "source",
+            {
+                "item_count": len(checked_source.items),
+                "inventory_sha256": inventory_sha256,
+            },
+        )
     checked_registration = ScenarioMigrationRegistration(
         schema_version=registration.schema_version,
         source_raw_sha256=registration.source_raw_sha256,
@@ -2989,7 +3677,7 @@ def migrate_v13_scenario_document(
                             getattr(
                                 _resolve_registry_path(
                                     registry,
-                                    destination.split("[")[0],
+                                    destination.rsplit("[", 1)[0],
                                 ),
                                 "__iter__",
                             )()
