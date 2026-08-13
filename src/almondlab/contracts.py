@@ -392,6 +392,8 @@ class LedgerEntry:
     adapter_id: str | None = None
     adapter_version: str | None = None
     adapter_hash: str | None = None
+    treatment_model_id: str | None = None
+    treatment_model_version: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -564,6 +566,7 @@ class LedgerEntry:
 
         self._validate_capping(requested, applied, cap_fraction, amount)
         self._validate_adapter()
+        self._validate_treatment_reference()
 
     def _optional_number(
         self,
@@ -673,4 +676,43 @@ class LedgerEntry:
                 "LEDGER_ADAPTER_REFERENCE_INVALID",
                 "reaction adapter rows require a validated adapter reference",
                 "adapter_id",
+            )
+
+    def _validate_treatment_reference(self) -> None:
+        model_id_supplied = self.treatment_model_id is not None
+        version_supplied = self.treatment_model_version is not None
+        if model_id_supplied != version_supplied:
+            missing = (
+                "treatment_model_version"
+                if model_id_supplied
+                else "treatment_model_id"
+            )
+            fail(
+                "LEDGER_TREATMENT_REFERENCE_INVALID",
+                "treatment model id and version must be supplied together",
+                missing,
+            )
+        if not model_id_supplied:
+            return
+        _readable_id(
+            self.treatment_model_id,
+            code="LEDGER_TREATMENT_REFERENCE_INVALID",
+            field_path="treatment_model_id",
+        )
+        _readable_id(
+            self.treatment_model_version,
+            code="LEDGER_TREATMENT_REFERENCE_INVALID",
+            field_path="treatment_model_version",
+        )
+        if self.kind is not LedgerEntryKind.INTERNAL:
+            fail(
+                "LEDGER_TREATMENT_KIND_MISMATCH",
+                "treatment model references belong to internal treatment transfers",
+                "kind",
+            )
+        if self.phase is not OperatorPhase.TREATMENT_BLENDING:
+            fail(
+                "LEDGER_TREATMENT_PHASE_MISMATCH",
+                "treatment model references belong to treatment_blending",
+                "phase",
             )

@@ -462,6 +462,75 @@ def test_reaction_adapter_metadata_is_all_or_none_and_sha256_typed() -> None:
     assert wrong_phase.value.code == "LEDGER_ADAPTER_PHASE_MISMATCH"
 
 
+def test_treatment_metadata_is_a_complete_readable_internal_treatment_reference() -> None:
+    treatment = replace(
+        _ion_entry(),
+        phase=OperatorPhase.TREATMENT_BLENDING,
+        internal_flux_kind=None,
+        event_id="ro-permeate",
+        treatment_model_id="ro-bench",
+        treatment_model_version="1.0.0",
+    )
+
+    assert treatment.treatment_model_id == "ro-bench"
+    assert treatment.treatment_model_version == "1.0.0"
+
+
+@pytest.mark.parametrize(
+    ("changes", "code", "field_path"),
+    [
+        (
+            {
+                "phase": OperatorPhase.TREATMENT_BLENDING,
+                "internal_flux_kind": None,
+                "treatment_model_id": "ro-bench",
+            },
+            "LEDGER_TREATMENT_REFERENCE_INVALID",
+            "treatment_model_version",
+        ),
+        (
+            {
+                "phase": OperatorPhase.TREATMENT_BLENDING,
+                "internal_flux_kind": None,
+                "treatment_model_id": "ro bench",
+                "treatment_model_version": "1.0.0",
+            },
+            "LEDGER_TREATMENT_REFERENCE_INVALID",
+            "treatment_model_id",
+        ),
+        (
+            {
+                "internal_flux_kind": None,
+                "treatment_model_id": "ro-bench",
+                "treatment_model_version": "1.0.0",
+            },
+            "LEDGER_TREATMENT_PHASE_MISMATCH",
+            "phase",
+        ),
+        (
+            {
+                "kind": LedgerEntryKind.EXTERNAL,
+                "phase": OperatorPhase.TREATMENT_BLENDING,
+                "boundary_category": ExternalBoundaryCategory.AMENDMENT,
+                "internal_flux_kind": None,
+                "treatment_model_id": "ro-bench",
+                "treatment_model_version": "1.0.0",
+            },
+            "LEDGER_TREATMENT_KIND_MISMATCH",
+            "kind",
+        ),
+    ],
+)
+def test_treatment_metadata_refuses_incomplete_invalid_or_misplaced_references(
+    changes: dict[str, object], code: str, field_path: str
+) -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        _ion_entry(**changes)
+
+    assert exc_info.value.code == code
+    assert exc_info.value.field_path == field_path
+
+
 @pytest.mark.parametrize("value", [0, 1, -2, 0.5, Fraction(1, 4)])
 def test_finite_float_accepts_genuine_real_numbers(value: object) -> None:
     assert finite_float(value, code="NUMBER_INVALID", field_path="case.value") == float(
