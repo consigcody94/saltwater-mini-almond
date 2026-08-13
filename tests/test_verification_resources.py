@@ -24,6 +24,7 @@ CANONICAL_FIXTURES = frozenset(
     }
 )
 CANONICAL_POLICIES = frozenset({"thresholds.yaml", "verification.yaml"})
+HASH_LOCKED_ROOT_CONFIGS = CANONICAL_POLICIES | {"model_domains.yaml"}
 
 
 def test_authoring_and_runtime_fixture_sets_are_exact_byte_mirrors() -> None:
@@ -55,9 +56,11 @@ def test_hash_locked_resources_materialize_lf_under_windows_autocrlf(
     repository.mkdir()
     shutil.copy2(root / ".gitattributes", repository / ".gitattributes")
     relative_files = tuple(
+        (root / "configs" / name).relative_to(root)
+        for name in sorted(HASH_LOCKED_ROOT_CONFIGS)
+    ) + tuple(
         path.relative_to(root)
         for directory in (
-            root / "configs",
             root / "src" / "almondlab" / "resources" / "configs",
             root / "src" / "almondlab" / "resources" / "fixtures",
             root / "tests" / "fixtures",
@@ -71,12 +74,22 @@ def test_hash_locked_resources_materialize_lf_under_windows_autocrlf(
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / relative, destination)
         expected[relative] = (root / relative).read_bytes()
+    unrelated_config = repository / "configs" / "not-verifier-owned.yaml"
+    unrelated_config.write_bytes(b"scope_guard: true\n")
     subprocess.run(
         ["git", "init"], cwd=repository, check=True, capture_output=True
     )
     subprocess.run(
         ["git", "add", "."], cwd=repository, check=True, capture_output=True
     )
+    attribute = subprocess.run(
+        ["git", "check-attr", "eol", "--", "configs/not-verifier-owned.yaml"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert attribute.stdout.endswith("eol: unspecified\n")
     materialized = tmp_path / "materialized"
     materialized.mkdir()
     subprocess.run(

@@ -1,4 +1,6 @@
-/configs/*.yaml text eol=lf
+/configs/model_domains.yaml text eol=lf
+/configs/thresholds.yaml text eol=lf
+/configs/verification.yaml text eol=lf
 /src/almondlab/resources/configs/*.yaml text eol=lf
 /src/almondlab/resources/fixtures/*.yaml text eol=lf
 /src/almondlab/resources/fixtures/*.json text eol=lf
