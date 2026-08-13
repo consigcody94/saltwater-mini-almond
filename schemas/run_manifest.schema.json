@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://almondlab.invalid/schemas/run_manifest.schema.json",
+  "title": "AlmondLab Run Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "deterministic_demo_id",
+    "root_seed",
+    "seed_tree",
+    "started_at",
+    "ended_at",
+    "git",
+    "lockfile",
+    "config_hashes",
+    "input_hashes",
+    "artifact_hashes",
+    "model_versions",
+    "runtime",
+    "evidence_labels",
+    "bayesian_raw_draws",
+    "canonical_science_hash",
+    "manifest_hash"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "run_id": {"$ref": "#/$defs/run_id"},
+    "deterministic_demo_id": {"type": "boolean"},
+    "root_seed": {"type": "integer", "minimum": 0},
+    "seed_tree": {"$ref": "#/$defs/seed_tree"},
+    "started_at": {"$ref": "#/$defs/utc_timestamp"},
+    "ended_at": {
+      "anyOf": [
+        {"$ref": "#/$defs/utc_timestamp"},
+        {"type": "null"}
+      ]
+    },
+    "git": {"$ref": "#/$defs/git_provenance"},
+    "lockfile": {"$ref": "#/$defs/file_provenance"},
+    "config_hashes": {"$ref": "#/$defs/digest_map"},
+    "input_hashes": {"$ref": "#/$defs/digest_map"},
+    "artifact_hashes": {"$ref": "#/$defs/digest_map"},
+    "model_versions": {
+      "type": "object",
+      "propertyNames": {"type": "string", "minLength": 1},
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "runtime": {"$ref": "#/$defs/runtime_provenance"},
+    "evidence_labels": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "physics_constrained",
+          "empirically_calibrated",
+          "hypothesis_prior",
+          "synthetic_only"
+        ]
+      }
+    },
+    "bayesian_raw_draws": {"$ref": "#/$defs/json_value"},
+    "canonical_science_hash": {"$ref": "#/$defs/sha256"},
+    "manifest_hash": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "digest_map": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/portable_path"},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "portable_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[<>:\"\\\\|?*\\u0000-\\u001F])(?!.*/$).+$"
+    },
+    "file_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes",
+        "state",
+        "unavailable_reason"
+      ],
+      "properties": {
+        "path": {"$ref": "#/$defs/portable_path"},
+        "sha256": {
+          "anyOf": [
+            {"$ref": "#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "size_bytes": {
+          "anyOf": [
+            {"type": "integer", "minimum": 0},
+            {"type": "null"}
+          ]
+        },
+        "state": {"enum": ["available", "unavailable"]},
+        "unavailable_reason": {
+          "anyOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {"const": "available"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "size_bytes": {"type": "integer", "minimum": 0},
+            "unavailable_reason": {"type": "null"}
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {"const": "unavailable"},
+            "sha256": {"type": "null"},
+            "size_bytes": {"type": "null"},
+            "unavailable_reason": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "git_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit_sha",
+        "dirty",
+        "status_sha256",
+        "state",
+        "unavailable_reason",
+        "unavailable"
+      ],
+      "properties": {
+        "commit_sha": {
+          "anyOf": [
+            {"$ref": "#/$defs/git_sha"},
+            {"type": "null"}
+          ]
+        },
+        "dirty": {
+          "anyOf": [
+            {"type": "boolean"},
+            {"type": "null"}
+          ]
+        },
+        "status_sha256": {
+          "anyOf": [
+            {"$ref": "#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "state": {"enum": ["available", "unavailable"]},
+        "unavailable_reason": {
+          "anyOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        },
+        "unavailable": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["commit_sha", "dirty", "status_sha256"]
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "commit_sha": {"$ref": "#/$defs/git_sha"},
+            "dirty": {"type": "boolean"},
+            "status_sha256": {"$ref": "#/$defs/sha256"},
+            "state": {"const": "available"},
+            "unavailable_reason": {"type": "null"},
+            "unavailable": {"type": "array", "maxItems": 0}
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "commit_sha": {"type": "null"},
+            "dirty": {"type": "null"},
+            "status_sha256": {"type": "null"},
+            "state": {"const": "unavailable"},
+            "unavailable_reason": {"type": "string", "minLength": 1},
+            "unavailable": {
+              "const": ["commit_sha", "dirty", "status_sha256"]
+            }
+          }
+        }
+      ]
+    },
+    "runtime_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpreter_path",
+        "python_version",
+        "python_implementation",
+        "os_text"
+      ],
+      "properties": {
+        "interpreter_path": {"type": "string", "minLength": 1},
+        "python_version": {"type": "string", "minLength": 1},
+        "python_implementation": {"type": "string", "minLength": 1},
+        "os_text": {"type": "string", "minLength": 1}
+      }
+    },
+    "seed_tree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "root_seed", "root"],
+      "properties": {
+        "algorithm": {"const": "numpy.random.SeedSequence"},
+        "root_seed": {"type": "integer", "minimum": 0},
+        "root": {"$ref": "#/$defs/seed_node"}
+      }
+    },
+    "seed_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "entropy",
+        "spawn_key",
+        "pool_size",
+        "n_children_spawned",
+        "state",
+        "children"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+        },
+        "entropy": {"type": "integer", "minimum": 0},
+        "spawn_key": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        },
+        "pool_size": {"type": "integer", "minimum": 4},
+        "n_children_spawned": {"type": "integer", "minimum": 0},
+        "state": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        },
+        "children": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "additionalProperties": {"$ref": "#/$defs/seed_node"}
+        }
+      }
+    },
+    "json_value": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "integer"},
+        {"type": "number"},
+        {"type": "string"},
+        {
+          "type": "array",
+          "items": {"$ref": "#/$defs/json_value"}
+        },
+        {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/json_value"}
+        }
+      ]
+    }
+  }
+}
