@@ -1,0 +1,9 @@
+schema_version: 2
+run_a: RUN_A
+run_b: RUN_B
+chain: main
+start_ordinal: 7
+expected_run_a_ids:
+  - tx:RUN_A:main:000000000007
+  - tx:RUN_A:main:000000000008
+expected_next_ordinal: 9

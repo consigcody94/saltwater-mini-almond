@@ -1,11 +1,17 @@
+schema_version: 2
 initial:
-  volumes_l: {tank: 10.0}
-  stocks_mmol: {tank: {na: 20.0}}
+  tank:
+    volume_l: 10.0
+    water_mass_kg: 9.97
+    empty_reference_density_kg_l: 0.997
+    stocks: {na: 20.0}
 source_flux:
-  compartment: tank
-  boundary: dissolved_source
-  volume_rate_l_per_hour: 0.0
-  entity_rates_mmol_per_hour: {na: 2.0}
+  event_id: dissolved-source
+  boundary_id: measured-dissolved-source
+  category: amendment
+  material_mode: entity_only
+  phase: external_feed_amendment
+  na_mmol_per_hour: 2.0
 volume: 10.0
 c0: 2.0
 c_in: 0.0

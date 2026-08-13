@@ -1,0 +1,22 @@
+schema_version: 2
+initial:
+  source:
+    volume_l: 100.0
+    water_mass_kg: 99.7
+    stocks: {na: 200.0, alkalinity: 35.0}
+flow: {rate_l_per_hour: 10.0}
+duration_hours: 2.0
+expected:
+  source:
+    volume_l: 80.0
+    water_mass_kg: 79.76
+    stocks: {na: 160.0, alkalinity: 28.0}
+  target:
+    volume_l: 20.0
+    water_mass_kg: 19.94
+    stocks: {na: 40.0, alkalinity: 7.0}
+expected_per_substep:
+  volume_l: 2.5
+  water_mass_kg: 2.4925
+  na: 5.0
+  alkalinity: 0.875

@@ -1,0 +1,21 @@
+schema_version: 2
+initial: {symplast_na_mmol: 0.75}
+duration_hours: 0.25
+events:
+  - event_id: a-efflux
+    target: root-zone
+    kind: plant_efflux
+    rate_mmol_per_hour: 4.0
+  - event_id: b-sequester
+    target: vacuole
+    kind: sequestration
+    rate_mmol_per_hour: 2.0
+expected:
+  common_cap_fraction: 0.5
+  efflux_requested_mmol: 1.0
+  efflux_applied_mmol: 0.5
+  sequestration_requested_mmol: 0.5
+  sequestration_applied_mmol: 0.25
+  symplast_na_mmol: 0.0
+  root_zone_na_mmol: 0.5
+  vacuole_na_mmol: 0.25

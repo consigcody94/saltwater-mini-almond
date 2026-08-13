@@ -1,15 +1,21 @@
+schema_version: 2
 initial:
-  volumes_l: {tank: 10.0}
-  stocks_mmol: {tank: {na: 50.0}}
+  tank:
+    volume_l: 10.0
+    water_mass_kg: 9.97
+    empty_reference_density_kg_l: 0.997
+    stocks: {na: 50.0}
 influx:
-  compartment: tank
-  boundary: feed
-  volume_rate_l_per_hour: 2.0
-  entity_rates_mmol_per_hour: {na: 6.0}
+  event_id: feed
+  boundary_id: measured-feed
+  category: source_feed
+  volume_l_per_hour: 2.0
+  water_density_kg_l: 0.997
+  na_mmol_per_hour: 6.0
 purge_flux:
-  compartment: tank
-  boundary: discharge
-  volume_rate_l_per_hour: -2.0
+  event_id: purge
+  boundary_id: measured-discharge
+  volume_l_per_hour: 2.0
 volume: 10.0
 c0: 5.0
 c_in: 3.0
@@ -17,3 +23,6 @@ m_dot: 0.0
 purge: 2.0
 sample_hours: 5.0
 samples: 12
+max_substep_hours: 0.01
+relative_tolerance: 0.003
+terminal_absolute_tolerance: 0.001
