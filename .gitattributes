@@ -12,3 +12,5 @@
 /data/evidence_registry.csv text eol=lf
 /data/reference_chemistry.csv text eol=lf
 /scripts/registration/task4_registration_hash_materializer.py text eol=lf
+/configs/archive/experiment_paper1_v1_3.yaml text eol=lf
+/configs/archive/synthetic_scenarios_v1_3.yaml text eol=lf
