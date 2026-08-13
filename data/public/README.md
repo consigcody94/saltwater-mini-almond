@@ -3,7 +3,7 @@
 The audited acquisition manifest is [`public_bio_data_manifest.yaml`](public_bio_data_manifest.yaml),
 with a human-readable [`public_bio_data_audit.md`](public_bio_data_audit.md).
 
-The manifest verifies 20 public records: 16 machine-addressable resources and
+The manifest verifies 23 public records: 19 machine-addressable resources and
 four article/supplement-only packages. No multi-gigabyte read archive is stored
 in this repository. Raw downloads belong under `data/raw/`, are immutable, and
 must be accompanied by repository MD5 values where provided plus locally
@@ -37,6 +37,7 @@ The wrapper exposes three profiles:
   `data/raw/phase2_small`. It admits only the official GSE254853 processed
   supplementary directory plus these exact EFetch accession versions:
   `AJ972674.1`, `CAI99405.1`, `EU879059.1`, `ACJ63441.1`,
+  `AY282755.1`, `DQ146477.2`, `MT473962.1`,
   `XM_020565174.1`, `XP_020420763.1`, `XM_020564808.1`,
   `XP_020420397.1`, `XM_020568644.1`, `XP_020424233.1`,
   `XM_007201987.2`, and `XP_007202049.1`. GEO files must pass a positive
@@ -59,13 +60,17 @@ Phase 2 explicit acquisition command:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/acquire_public_data.ps1 -Profile phase2-small -Execute
 ```
 
-No network acquisition was run while integrating this workflow. `-Execute` is
-the only switch that permits requests or output creation.
+`-Execute` is the only switch that permits requests or output creation. The
+completed live snapshot below was explicitly authorized and is disclosed in a
+sanitized receipt.
 
-No PyAPX sequence is included because no exact public accession-version was
-verified. No Ectocarpus identifier crosswalk or sequence claim is made. Phase 2
-does not request SRA, ENA, FASTQ, FQ, BAM, CRAM, or any other raw-read payload;
-the repository still has no RNA-seq downloader.
+The guarded workflow includes paper-reported `AY282755.1`, `DQ146477.2`, and
+`MT473962.1` and independently verifies their NCBI record identities. Those
+records are **not construct-ready**: targeting, exact construct maps, and event
+mapping remain unresolved, and `MT473962.1` is a partial CDS. No Ectocarpus
+identifier crosswalk or sequence claim is made. Phase 2 does not request SRA,
+ENA, FASTQ, FQ, BAM, CRAM, or any other raw-read payload; the repository still
+has no RNA-seq downloader.
 
 `local_snapshot.sha256` freezes locally calculated hashes for the audited
 manifest, audit, evidence seed, and acquisition code at downloader integration
@@ -73,27 +78,30 @@ commit `0c61054`; it is a historical snapshot rather than an automatically
 updated current-tree manifest. These are repository snapshot hashes, not
 publisher, NCBI, ENA, or other remote checksums.
 The independent `scripts/public_data/phase2/local_snapshot.sha256` freezes the
-Phase 2 acquisition module, entry point, offline tests, and documentation.
+Phase 2 acquisition module, entry point, offline tests, and documentation at
+the accession-extension review committed as `f739404`.
 
 ## Completed Phase 2 small snapshot
 
 An explicitly authorized live acquisition completed at
-`2026-08-13T01:09:11.1264799+00:00` using downloader commit `0c61054` and no
+`2026-08-13T07:46:16.3675604+00:00` using downloader commit `f739404` and no
 injected test transport. The sanitized tracked
 [`phase2_acquisition_receipt.json`](phase2_acquisition_receipt.json) records:
 
 - five GSE254853 processed supplementary gzip files totaling 17,602,426 bytes;
-- twelve exact NCBI EFetch FASTA records totaling 20,259 bytes; and
+- fifteen exact NCBI EFetch FASTA records totaling 23,684 bytes; and
 - source URLs, response Content-Length values, locally calculated SHA-256
   hashes, listing and parsed-listing hashes, exclusions, and the original raw
   receipt SHA-256.
 
 The tracked receipt contains no absolute local paths. Before it was recorded,
-all 17 payloads were independently rehashed against the live raw receipt and
+all 20 payloads were independently rehashed against the live raw receipt and
 their sidecars; request and response URL policy was rechecked; all GEO gzip
 streams decompressed to nonempty content; and every NCBI FASTA contained exactly
 one record with the requested accession-version header. This snapshot includes
-no SRA/ENA raw reads, PyAPX sequence, or Ectocarpus crosswalk claim.
+no SRA/ENA raw reads and no Ectocarpus crosswalk claim. Inclusion of the three
+recent rice-paper sequence records verifies repository identity only and makes
+no construct-ready, efficacy, or winner claim.
 
 ## Completed reference snapshot
 

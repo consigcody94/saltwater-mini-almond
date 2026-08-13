@@ -1,10 +1,10 @@
 # AlmondLab public biological data audit
 
-Verified: 2026-08-12
+Verified: 2026-08-13
 
 ## Outcome
 
-Public data can support a serious *in silico* AlmondLab program, but it cannot currently validate the claim that an almond tree can thrive on seawater. The audit verified 16 machine-addressable reference, sequence, expression, or water/model resources and four additional article/supplement-only evidence packages. One externally cited repository record is deleted.
+Public data can support a serious *in silico* AlmondLab program, but it cannot currently validate the claim that an almond tree can thrive on seawater. The audit verified 19 machine-addressable reference, sequence, expression, or water/model resources and four additional article/supplement-only evidence packages. One externally cited repository record is deleted.
 
 The largest immediately relevant dataset is [BioProject PRJNA732909](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA732909): 24 paired-end RNA-seq runs from Rootpac40 and Nemaguard roots/leaves. The primary paper reports **233 Gb of clean reads across the 24 libraries**; that is biological sequence yield, not download size. ENA exposes file-level MD5 values and 43,527,962,230 bytes (40.539 GiB) for the canonical compressed `_1`/`_2` FASTQ pairs. The same ENA response also offers unsuffixed generated FASTQs; those are alternate representations and must not be downloaded or counted as additional samples.
 
@@ -43,9 +43,11 @@ Neither study is a seawater trial. Full-strength seawater is a high-ionic-streng
 |---|---|---|---|
 | PpHKT1 | `Prupe.1G067100`; NCBI Gene `18791946`; `XM_020565174.1`/`XP_020420763.1` and `XM_020564808.1`/`XP_020420397.1` | Reference models available | The functional paper used Nemaguard material, but no exact experimental clone/promoter accession was verified; two Lovell RefSeq isoforms differ in length. |
 | PpSOS2/PpCIPK24 | `Prupe.7G244500.1`; NCBI Gene `18770930`; `XM_020568644.1`/`XP_020424233.1` and `XM_007201987.2`/`XP_007202049.1` | Reference models available | The same locus is called PprCIPK17 in a 2022 family study and PpCIPK24/PpSOS2 in the 2024 functional study. Anchor identity to accession.version. |
-| PyKPA1 | `AJ972674.1`; protein `CAI99405.1` | Sequence-ready for computational evaluation | Current taxonomy is *Pyropia yezoensis*; older literature may use *Porphyra yezoensis*. Heterologous rice evidence does not establish almond function. |
-| SbSOS1 | `EU879059.1`; protein `ACJ63441.1` | Sequence-ready for computational evaluation | Large membrane protein; target-chassis localization and energetic burden remain unknown. |
-| PyAPX | No verified accession in the 2026 rice paper | **Not construct-ready** | The article says its datasets are in the paper/additional files; no exact donor sequence or raw RNA-seq accession was verified. |
+| PyKPA1 | `AJ972674.1`; protein `CAI99405.1` | Accession records verified; not construct-ready | Current taxonomy is *Pyropia yezoensis*; older literature may use *Porphyra yezoensis*. Source allele, transport coupling, targeting, and final construct still require validation. |
+| SbSOS1 | `EU879059.1`; protein `ACJ63441.1` | Accession records verified; not construct-ready | Large membrane protein; target-chassis localization, energetic burden, and final construct remain unknown. |
+| PyAPX | Paper-reported `AY282755.1`; independently retrieved NCBI complete-CDS record | **Not construct-ready** | Repository identity is verified, but exact targeting, construct map, and event-to-construct mapping are not. No raw RNA-seq accession was verified. |
+| PyMnSOD | Paper-reported `DQ146477.2`; independently retrieved NCBI complete-CDS record | **Not construct-ready** | Repository identity does not validate mitochondrial targeting, the experimental construct, or event mapping. |
+| KaNa+/H+ | Paper-reported `MT473962.1`; independently retrieved NCBI partial-CDS record | **Not construct-ready** | The record is partial; exact topology, localization, transport direction/selectivity, construct, and event mapping remain unresolved. |
 | Ectocarpus mannitol candidates | Reference `GCA_000310025.1`; legacy Esi identifiers and EST range `FP245546–FP312611` | Crosswalk required | `Esi0020_0181` is a second M1PDH-like model; it is not `Esi0100_0020`, the later M1Pase2 candidate. Sequence-map all Esi IDs before scoring. |
 
 The primary safety rule for the virtual screen is simple: no candidate enters sequence-level design unless its exact accession-version or a newly verified experimental sequence is frozen and hashed.
@@ -72,7 +74,7 @@ For full-strength or concentrated saline recipes, use the official [USGS PHREEQC
 
 1. **No direct seawater-almond outcome data.** No verified public dataset demonstrates almond survival, growth, flowering, yield, kernel quality, or rootstock/scion compatibility under undiluted seawater.
 2. **No per-run condition key for `PRJNA732909`.** This blocks defensible differential-expression analysis until resolved.
-3. **Missing experimental sequences.** PyAPX and the Nemaguard PpHKT1 clone are not publicly accessioned in a verified sequence repository.
+3. **Missing experimental construct maps.** `AY282755.1`, `DQ146477.2`, and partial-CDS `MT473962.1` are verified repository records, but they do not independently establish the paper's exact targeting, construct, or event mapping. The Nemaguard PpHKT1 experimental clone/promoter also remains without a verified accession.
 4. **Deleted editing evidence.** The hairy-root paper's Zenodo record is gone.
 5. **Sparse raw phenotypes.** Major almond salinity studies expose article tables, not raw machine-readable observations or instrument files.
 6. **No engineered-almond validation.** Cross-species donor evidence cannot establish expression, localization, pleiotropy, food safety, pollen containment, or perennial performance in almond.

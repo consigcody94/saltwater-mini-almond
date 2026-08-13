@@ -1,13 +1,13 @@
 schema_version: "1.0.0"
 manifest_id: "almondlab-public-biological-data-2026-08-12"
-generated_at: "2026-08-12T00:00:00-04:00"
+generated_at: "2026-08-13T03:48:29-04:00"
 verification_policy:
   repositories: "Official/primary repositories and publisher or PMC records only."
   accession_rule: "Accessions are recorded only when verified in repository metadata; absent accessions are null rather than inferred."
   size_rule: "Sizes are reported only when exposed by the repository. Alternate encodings of the same sequence are not added to totals."
   raw_download_rule: "Metadata only for multi-GB read sets; no multi-GB reads were downloaded."
 summary:
-  machine_addressable_datasets: 16
+  machine_addressable_datasets: 19
   article_or_supplement_only_packages: 4
   deleted_or_withdrawn_external_records: 1
   exposed_nonduplicated_payload_lower_bound:
@@ -587,19 +587,118 @@ datasets:
     identity_conflicts:
       - "Esi0020_0181 (second M1PDH-like model) and Esi0100_0020 (later mannitol-1-phosphatase-2 candidate) are different identifiers and functions."
 
+  - id: "PYAPX_AY282755"
+    category: "candidate_donor_gene"
+    data_class: "primary_sequence_record"
+    downloadable: true
+    verification_status: "accession_verified_construct_map_unresolved"
+    official_repository: "NCBI GenBank"
+    accession: "AY282755.1"
+    organism: "Pyropia yezoensis"
+    historical_organism_name: "Porphyra yezoensis"
+    sequence_description: "cytosolic ascorbate peroxidase mRNA, complete CDS"
+    sequence_length_bp: 1041
+    landing_url: "https://www.ncbi.nlm.nih.gov/nuccore/AY282755.1"
+    api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=AY282755.1&rettype=fasta&retmode=text"
+    linked_primary_article: {doi: "10.1016/j.plaphy.2025.110839"}
+    paper_reported_identity: true
+    acquired_fasta:
+      bytes: 1138
+      local_sha256: "1fa50794a31470077978611121ada346a9a0d5f8fe8a1bd58864617e3804113a"
+      receipt: "phase2_acquisition_receipt.json"
+      acquired_at_utc: "2026-08-13T07:46:16.3675604+00:00"
+    file_types: ["GenBank", "nucleotide FASTA"]
+    approximate_download_size: "kilobytes"
+    access_conditions: "public; no login"
+    license: "INSDC repository data"
+    checksum_availability: "no remote per-record checksum exposed; locally calculated SHA-256 recorded after guarded fetch"
+    exact_relevance: "Repository identity for the PyAPX record reported by the recent rice paper."
+    limitations:
+      - "The repository record does not independently verify the exact targeting sequence, experimental construct map, or event-to-construct mapping."
+      - "The record is not evidence of function, safety, or ion fate in almond and is not construct-ready."
+    supersession: null
+    identity_conflicts:
+      - "The NCBI record uses the historical organism name Porphyra yezoensis; current usage includes Pyropia yezoensis."
+
+  - id: "PYMNSOD_DQ146477"
+    category: "candidate_donor_gene"
+    data_class: "primary_sequence_record"
+    downloadable: true
+    verification_status: "accession_verified_construct_map_unresolved"
+    official_repository: "NCBI GenBank"
+    accession: "DQ146477.2"
+    organism: "Pyropia yezoensis"
+    sequence_description: "manganese superoxide dismutase mRNA, complete CDS"
+    sequence_length_bp: 910
+    landing_url: "https://www.ncbi.nlm.nih.gov/nuccore/DQ146477.2"
+    api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=DQ146477.2&rettype=fasta&retmode=text"
+    linked_primary_article: {doi: "10.1016/j.plaphy.2025.110839"}
+    paper_reported_identity: true
+    acquired_fasta:
+      bytes: 1004
+      local_sha256: "cd64caf3868d196b869e45415fbb09b21a97c0a7d96e555f11e449ba69da0d0d"
+      receipt: "phase2_acquisition_receipt.json"
+      acquired_at_utc: "2026-08-13T07:46:16.3675604+00:00"
+    file_types: ["GenBank", "nucleotide FASTA"]
+    approximate_download_size: "kilobytes"
+    access_conditions: "public; no login"
+    license: "INSDC repository data"
+    checksum_availability: "no remote per-record checksum exposed; locally calculated SHA-256 recorded after guarded fetch"
+    exact_relevance: "Repository identity for the PyMnSOD comparator record reported by the recent rice paper."
+    limitations:
+      - "The repository record does not independently verify mitochondrial targeting, the experimental construct map, or event-to-construct mapping."
+      - "This comparator remains a prequalification hypothesis and is not construct-ready."
+    supersession: "DQ146477.2 is the exact current accession-version used here"
+    identity_conflicts: []
+
+  - id: "KANAH_MT473962"
+    category: "candidate_donor_gene"
+    data_class: "primary_sequence_record"
+    downloadable: true
+    verification_status: "accession_verified_partial_cds_construct_map_unresolved"
+    official_repository: "NCBI GenBank"
+    accession: "MT473962.1"
+    organism: "Kappaphycus alvarezii"
+    sequence_description: "Na+/H+ antiporter mRNA, partial CDS"
+    sequence_length_bp: 1194
+    landing_url: "https://www.ncbi.nlm.nih.gov/nuccore/MT473962.1"
+    api_endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=MT473962.1&rettype=fasta&retmode=text"
+    linked_primary_articles:
+      - {doi: "10.1016/j.plaphy.2025.110839"}
+      - {doi: "10.1007/s11033-022-07213-7"}
+    paper_reported_identity: true
+    acquired_fasta:
+      bytes: 1283
+      local_sha256: "182bc6de02e53212b7319f7ed9f1549ad32e34f8f12654492b12cbe8fdf14733"
+      receipt: "phase2_acquisition_receipt.json"
+      acquired_at_utc: "2026-08-13T07:46:16.3675604+00:00"
+    file_types: ["GenBank", "nucleotide FASTA"]
+    approximate_download_size: "kilobytes"
+    access_conditions: "public; no login"
+    license: "INSDC repository data"
+    checksum_availability: "no remote per-record checksum exposed; locally calculated SHA-256 recorded after guarded fetch"
+    exact_relevance: "Repository identity for the Kappaphycus Na+/H+ antiporter comparator reported by the recent rice paper."
+    limitations:
+      - "The deposited sequence is a partial CDS and is not a complete construct specification."
+      - "Topology, localization, direction, substrate selectivity, targeting, construct map, and event mapping remain unresolved; it is not construct-ready."
+    supersession: "MT473962.1 is the resolved accession-version for paper-reported MT473962"
+    identity_conflicts: []
+
   - id: "PYAPX_RICE_2026_ARTICLE"
     category: "candidate_donor_evidence"
     data_class: "article_additional_files_only"
     downloadable: true
-    verification_status: "article_verified_sequence_accession_absent"
+    verification_status: "full_text_design_and_reported_accessions_verified"
     official_repository: "Plant Physiology and Biochemistry publisher record"
     accession: null
     doi: "10.1016/j.plaphy.2025.110839"
-    organism: ["Pyropia yezoensis donor", "Oryza sativa transgenic chassis"]
-    cultivar_or_chassis: "transgenic rice"
+    organism: ["Pyropia yezoensis donors", "Kappaphycus alvarezii donor", "Oryza sativa transgenic chassis"]
+    cultivar_or_chassis: "Oryza sativa cultivar ZH11"
     tissue: "rice tissues as specified in article"
-    treatment_chemistry: "salt stress; exact design in article/additional files"
-    sample_count: "article-specific; no repository sample table verified"
+    treatment_chemistry: "250 mM NaCl applied every 3 days; germination read on day 10; no complete multi-ion recipe"
+    sample_count:
+      homozygous_t1_lines: {PyAPX: 12, PyMnSOD: 11, "KaNa+/H+": 9}
+      germination: "30 seeds per dish x 3 replicate dishes"
     assay: "physiological, biochemical, and transcriptomic analysis of PyAPX-expressing rice"
     landing_url: "https://pubmed.ncbi.nlm.nih.gov/?term=10.1016%2Fj.plaphy.2025.110839"
     file_types: ["publisher article", "additional files if exposed by publisher"]
@@ -607,11 +706,19 @@ datasets:
     access_conditions: "article availability subject to publisher page; no independent raw-data repository identified"
     license: "no dataset-specific license verified"
     checksum_availability: "not exposed"
+    paper_reported_accessions:
+      PyAPX: "AY282755.1"
+      PyMnSOD: "DQ146477.2"
+      "KaNa+/H+": "MT473962.1"
+    repository_verification:
+      status: "independently fetched and hashed through guarded NCBI EFetch workflow"
+      receipt: "phase2_acquisition_receipt.json"
+      boundary: "record identity only; no independent construct or event mapping"
     exact_relevance: "Recent heterologous evidence that a Pyropia APX candidate may improve oxidative-stress handling under salinity."
     limitations:
-      - "No exact PyAPX nucleotide/protein accession was verified."
       - "No raw RNA-seq repository accession was stated in the verified data-availability text."
-      - "Not construct-ready; sequence identity must be obtained from authors or independently cloned/verified."
+      - "Paper-reported accessions and independently verified repository identities do not establish targeting, exact construct maps, or event-to-construct mappings."
+      - "The accession records are not construct-ready; MT473962.1 is a partial CDS."
     supersession: null
     identity_conflicts: []
 
@@ -732,9 +839,9 @@ critical_gaps:
   - id: "GAP_NO_SEAWATER_ALMOND_DATA"
     severity: "critical"
     statement: "No verified public almond dataset demonstrates survival, growth, or nut yield under undiluted seawater. Existing studies use EC 3 dS/m irrigation, mixed salts, or up to 150 mM NaCl."
-  - id: "GAP_PYAPX_SEQUENCE"
+  - id: "GAP_PYAPX_CONSTRUCT_MAP"
     severity: "critical"
-    statement: "The exact PyAPX sequence/accession used in the recent rice paper was not verified; it is not construct-ready."
+    statement: "The paper reports PyAPX AY282755.1 and its repository identity is independently verified, but exact targeting, construct-map, and event mapping remain unresolved; it is not construct-ready."
   - id: "GAP_HKT1_CLONE"
     severity: "critical"
     statement: "The functional paper's Nemaguard PpHKT1 clone/promoter has no verified accession; two Lovell RefSeq isoforms exist."
@@ -759,7 +866,7 @@ critical_gaps:
 
 recommended_acquisition_order:
   - priority: 1
-    datasets: ["ALM_REF_TEXAS_V2", "ALM_REF_NONPAREIL", "PEACH_REF_LOVELL_V2", "PPHKT1_PPRUPE1G067100", "PPSOS2_PPCIPK24_PPRUPE7G244500", "PYKPA1_AJ972674", "SBSOS1_EU879059"]
+    datasets: ["ALM_REF_TEXAS_V2", "ALM_REF_NONPAREIL", "PEACH_REF_LOVELL_V2", "PPHKT1_PPRUPE1G067100", "PPSOS2_PPCIPK24_PPRUPE7G244500", "PYKPA1_AJ972674", "SBSOS1_EU879059", "PYAPX_AY282755", "PYMNSOD_DQ146477", "KANAH_MT473962"]
     action: "Download small reference packages/records, capture repository metadata, and compute SHA-256."
   - priority: 2
     datasets: ["ROOTSTOCK_14_PHENOTYPE_ION_SUPPLEMENT", "ROOT_GRADIENT_SALINITY_FRONTIERS", "ALMOND_HAIRY_ROOT_CRISPR_2024", "ECTOCARPUS_STRESS_MICROARRAY_2009"]

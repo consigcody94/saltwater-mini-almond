@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
   "receipt_type": "sanitized_live_acquisition_snapshot",
-  "generated_at_utc": "2026-08-13T01:09:11.1264799+00:00",
-  "recorded_at_utc": "2026-08-13T01:11:39.3317106+00:00",
-  "downloader_commit": "0c61054",
+  "generated_at_utc": "2026-08-13T07:46:16.3675604+00:00",
+  "recorded_at_utc": "2026-08-13T07:48:29.5639976+00:00",
+  "downloader_commit": "f739404",
   "test_transport": false,
   "test_transport_injected": false,
-  "original_raw_receipt_sha256": "08cc20312695bceceb49eb342bd95c13325a3d7e3084ba8c2d98e78a873f4cf1",
+  "original_raw_receipt_sha256": "6a414634e72db373b86dbd702e40e47db31a58acb2fb0a124cbe30cac5aaeb06",
   "totals": {
     "geo_processed_file_count": 5,
     "geo_processed_bytes": 17602426,
-    "ncbi_fasta_record_count": 12,
-    "ncbi_fasta_bytes": 20259,
-    "all_payload_bytes_excluding_listing": 17622685
+    "ncbi_fasta_record_count": 15,
+    "ncbi_fasta_bytes": 23684,
+    "all_payload_bytes_excluding_listing": 17626110
   },
   "sources": {
     "geo_gse254853": {
@@ -21,7 +21,7 @@
         "bytes": 1200,
         "content_length_bytes": 1200,
         "local_sha256": "8ecc0744931e440ee5766e78270e20f0c9c990bf82de25b4990e24d5debcbb16",
-        "parsed_listing_local_sha256": "0c940fe52716acdd3a71659e96eb67c8a54684bacecd5e050ba86a93067ae5fd"
+        "parsed_listing_local_sha256": "cc6bd076e8a2ebca152f19edd0700866a9d56cc0e680aad4a5ec344045c90fa6"
       },
       "processed_files": [
         {
@@ -77,6 +77,30 @@
         "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&id=CAI99405.1&rettype=fasta&retmode=text&tool=AlmondLabPhase2",
         "bytes": 1233,
         "local_sha256": "636b349aab13e615ac1799498a2f250359369e08c8e41b6a381947c91a8d8f2f"
+      },
+      {
+        "accession": "AY282755.1",
+        "database": "nuccore",
+        "molecule": "nucleotide",
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=AY282755.1&rettype=fasta&retmode=text&tool=AlmondLabPhase2",
+        "bytes": 1138,
+        "local_sha256": "1fa50794a31470077978611121ada346a9a0d5f8fe8a1bd58864617e3804113a"
+      },
+      {
+        "accession": "DQ146477.2",
+        "database": "nuccore",
+        "molecule": "nucleotide",
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=DQ146477.2&rettype=fasta&retmode=text&tool=AlmondLabPhase2",
+        "bytes": 1004,
+        "local_sha256": "cd64caf3868d196b869e45415fbb09b21a97c0a7d96e555f11e449ba69da0d0d"
+      },
+      {
+        "accession": "MT473962.1",
+        "database": "nuccore",
+        "molecule": "nucleotide",
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=MT473962.1&rettype=fasta&retmode=text&tool=AlmondLabPhase2",
+        "bytes": 1283,
+        "local_sha256": "182bc6de02e53212b7319f7ed9f1549ad32e34f8f12654492b12cbe8fdf14733"
       },
       {
         "accession": "EU879059.1",
@@ -163,11 +187,11 @@
   "exclusions": [
     "No SRA or ENA raw reads and no FASTQ/FQ/SRA payloads.",
     "No publisher article scraping.",
-    "No PyAPX sequence because no exact accession.version is verified.",
+    "AY282755.1, DQ146477.2, and MT473962.1 verify repository record identity only; they are not construct-ready without targeting, construct-map, and event validation.",
     "No Ectocarpus gene-model crosswalk or sequence claim."
   ],
   "validation": {
-    "statement": "All 17 payload files were independently rehashed and matched both the original raw receipt and their local SHA-256 sidecars. The raw receipt, GEO listing, parsed listing, request artifacts, and response-metadata sidecars were also rechecked. All five GEO payloads decompressed as nonempty gzip streams. All twelve NCBI FASTA payloads contained exactly one record with the exact accession.version header and a nonempty valid sequence. Exact allowlisted requested and final HTTPS URLs, EFetch accession/database/query mappings, successful status, compatible content types, byte counts, and Content-Length values were rechecked. No network request was made during this validation.",
+    "statement": "All 20 payload files were independently rehashed and matched both the original raw receipt and their local SHA-256 sidecars. The raw receipt, GEO listing, parsed listing, request artifacts, and response-metadata sidecars were also rechecked. All five GEO payloads decompressed as nonempty gzip streams. All fifteen NCBI FASTA payloads contained exactly one record with the exact accession.version header and a nonempty valid sequence. Exact allowlisted requested and final HTTPS URLs, EFetch accession/database/query mappings, successful status, compatible content types, byte counts, and Content-Length values were rechecked. The guarded downloader used live network requests for acquisition; the subsequent independent local revalidation did not make network requests.",
     "sidecars_rechecked": true,
     "content_rechecked": true,
     "url_policy_rechecked": true,

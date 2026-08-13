@@ -1,7 +1,7 @@
 # Saltwater Mini-Almond — evidence-registry seed
 
 **Registry status:** curated seed, not a completed systematic review  
-**Prepared:** 2026-08-12  
+**Prepared:** 2026-08-13  
 **Scope:** the six primary Paper 1 candidate modules, plus the highest-leverage almond/rootstock, containment, and desalination sources.  
 **Evidence-tier convention:** E1 = native *Prunus* gene with stable functional complementation; E2 = stable heterologous land-plant phenotype plus functional evidence; E3 = stable phenotype with incomplete identity/mechanism/localization; E4 = association/expression/anatomy only; E5 = algal/microbial evidence only. Context, policy, and method records are marked `N/A — non-candidate`, never forced into a biological tier.
 
@@ -25,28 +25,28 @@
 - **Sample size:** n=12 for fresh-weight comparison, as reported for the salinity assay.
 - **Endpoint:** total and root fresh biomass; transgene transcript; transient PyKPA1::GFP localization in onion epidermis; plasma-membrane ATPase activity.
 - **Effect as reported:** under 50 mM NaCl, the null transformant lost about 20% total biomass, while lines #28 and #115 showed about +8% and −10%, respectively, neither reported as significantly changed from their unsalted condition. The authors also reported vanadate-sensitive Na+-ATPase activity in the transformed-rice membrane fraction.
-- **Accession IDs:** GenBank `AJ972674` (candidate identifier); rice actin control `AK100267` is not candidate sequence evidence.
-- **Sequence status:** `accession_claimed_in_program; construct insert and present-day sequence retrieval still required before synthesis`.
+- **Accession IDs:** GenBank nucleotide `AJ972674.1`; protein `CAI99405.1`; rice actin control `AK100267` is not candidate sequence evidence.
+- **Sequence status:** `accession_verified; source allele, targeting/topology, transport coupling, and final construct remain unverified`.
 - **Key limitation:** two rice events and an acute, single-salt tissue-culture assay; the “animal-type Na+/K+-ATPase” functional annotation is inference rather than a direct transport-stoichiometry measurement in almond roots. The study does not measure effluent fate, xylem Na, Cl, B, or a woody rootstock outcome.
 - **Metadata / correction check:** publisher metadata matches DOI, volume, pages, and authors. No correction or retraction notice was located on the publisher record on 2026-08-12. **Conflict flag:** title says “Na+-ATPase,” while the text describes KPA as a putative animal-type Na+/K+-ATPase; retain the uncertainty in all construct claims.
 - **Access date:** 2026-08-12.
 
 ### EV-C2-PYAPX-2026
 
-- **Candidate / tier:** C2 `PyAPX`; **E2 only provisionally for phenotype**, not sequence-qualified.
+- **Candidate / tier:** C2 `PyAPX`; **E2 only provisionally for phenotype**. The accession record is verified, but the candidate is not construct-ready.
 - **Exact title:** *Physiological, biochemical, and transcriptomic analyses revealed enhanced salt tolerance in rice via heterologous expression of Pyropia yezoensis APX gene*.
 - **Primary source:** Lu X, Gillani SW, Meng C, Li Y, Wang K, Xu Z. *Plant Physiology and Biochemistry* 230 (2026), 110839. DOI: [10.1016/j.plaphy.2025.110839](https://doi.org/10.1016/j.plaphy.2025.110839); indexed record: [PubMed PMID 41353893](https://pubmed.ncbi.nlm.nih.gov/41353893/).
-- **Donor organism:** *Pyropia yezoensis* (red alga); donor life stage not reported in accessible article metadata.
-- **Chassis / life stage:** stable transgenic rice cultivar ZH11; developmental stage and independent-event count require transcription from the full methods/supplement.
-- **Salinity chemistry / duration:** salt challenge is reported, but the accessible publisher abstract does not provide a complete ion recipe, concentration, or all exposure times. Do **not** infer this from EC or from other Pyropia papers.
-- **Sample size:** `NR in accessible primary abstract/index record`; full-text/supplement extraction remains required.
+- **Donor organism:** *Pyropia yezoensis* (red alga), with a *P. yezoensis* PyMnSOD comparator and a *Kappaphycus alvarezii* `KaNa+/H+` comparator; donor life stages were not material to the rice assay extraction.
+- **Chassis / life stage:** stable transgenic rice cultivar ZH11; the full text reports 12 PyAPX, 11 PyMnSOD, and 9 `KaNa+/H+` homozygous T1 lines.
+- **Salinity chemistry / duration:** 250 mM NaCl applied every 3 days; germination was read on day 10. This is a single-salt challenge, not a complete multi-ion seawater recipe.
+- **Sample size:** 12/11/9 homozygous T1 lines for PyAPX/PyMnSOD/`KaNa+/H+`; the germination assay used 30 seeds per dish and three replicate dishes.
 - **Endpoint:** germination, growth, ROS/oxidative-damage and ion-homeostasis measures, transcriptomics/WGCNA.
-- **Effect as reported:** the authors report that PyAPX-overexpressing lines outperformed PyMnSOD- and `KaNa+/H+`-overexpressing rice lines under their salt conditions, with better germination and growth, lower oxidative damage/ROS, and improved ion-homeostasis readouts.
-- **Accession IDs:** **none verified** for the exact public PyAPX nucleotide or protein sequence in the accessible primary paper/index record.
-- **Sequence status:** `PENDING_SEQUENCE_AUDIT — DO NOT ORDER, CODE-OPTIMIZE, OR NAME A SPECIFIC ACCESSION`.
-- **Key limitation:** very recent rice evidence only; current accessible record does not establish exact donor accession, targeting peptide, construct sequence, independent event number, or a full salinity chemistry. Antioxidant improvement cannot substitute for a Na/Cl/B fate result.
-- **Metadata / correction check:** DOI, title, authors, journal, volume and article number agree between publisher indexing and PubMed. No correction or retraction notice was located on the DOI/index record on 2026-08-12. **Conflict flag:** publication carries a 2025 DOI and 2026 issue date; cite the version-of-record date/journal year, not a guessed online-publication year.
-- **Access date:** 2026-08-12.
+- **Effect as reported:** the authors report stronger salt-stress phenotypes for PyAPX-overexpressing rice than for the PyMnSOD and `KaNa+/H+` comparators, including germination, growth, oxidative-damage/ROS, and ion-homeostasis readouts. This is a source-reported rice comparison, not almond efficacy or a program winner claim.
+- **Accession IDs:** the paper reports PyAPX `AY282755.1`, PyMnSOD `DQ146477.2`, and `KaNa+/H+` `MT473962.1`. Guarded NCBI EFetch independently retrieved `AY282755.1` (complete CDS), `DQ146477.2` (complete CDS), and `MT473962.1` (partial CDS), with locally calculated SHA-256 hashes in the Phase 2 acquisition receipt.
+- **Sequence status:** `accession_verified_construct_map_unresolved`; these repository identities are **not construct-ready**.
+- **Key limitation:** the paper-reported accessions and independently verified records do not establish the exact targeting sequences, construct maps, or event-to-construct mappings. `MT473962.1` is partial. The study also lacks complete multi-ion chemistry and almond Na/Cl/B fate evidence; antioxidant improvement cannot substitute for those outcomes.
+- **Metadata / correction check:** DOI, title, authors, journal, volume and article number agree between publisher indexing and PubMed. Full-text design fields were independently reviewed on 2026-08-13. No correction or retraction notice was located on the DOI/index record. **Conflict flag:** publication carries a 2025 DOI and 2026 issue date; cite the version-of-record date/journal year, not a guessed online-publication year.
+- **Access date:** 2026-08-13.
 
 ### EV-C3-ESMANNITOL-2020
 
@@ -76,8 +76,8 @@
 - **Sample size:** 70 independent T0 events were initially screened; selected-line endpoint n varies by assay and should be transcribed from each figure before numerical meta-analysis.
 - **Endpoint:** germination, root/shoot growth, biomass, RWC, chlorophyll, Na/K/Ca, xylem-sap Na, ROS/MDA, electrolyte leakage, osmolytes, and donor expression.
 - **Effect as reported:** selected transgenics had higher salt-stress growth and K/Na ratio and lower root/leaf Na, ROS and electrolyte leakage than wild type. Crucially, they had **higher stem and xylem-sap Na**, consistent with enhanced xylem loading.
-- **Accession IDs:** GenBank `EU879059`; 3,774-bp cDNA / 3,480-bp ORF / 1,159-aa protein reported in the primary paper.
-- **Sequence status:** `accession_claimed_and_ORF_described; independently retrieve, translate, topology-check, and resequence the final construct`.
+- **Accession IDs:** GenBank nucleotide `EU879059.1`; protein `ACJ63441.1`; 3,774-bp cDNA / 3,480-bp ORF / 1,159-aa protein reported in the primary paper.
+- **Sequence status:** `accession_verified; independently validate the target-chassis topology/localization and resequence the final construct`.
 - **Key limitation:** the claimed tolerance includes a mechanism that can raise xylem/scion Na—directly hazardous for a rootstock-first almond strategy. This is why C4 cannot progress without cortex-facing/exodermal expression, xylem-sap and whole-system ion-balance gates.
 - **Correction/retraction check:** no notice located on the BMC/PMC record on 2026-08-12.
 - **Access date:** 2026-08-12.
@@ -243,11 +243,11 @@
 
 ## Critical unresolved items before a construct or numerical prior is admitted
 
-1. **PyAPX is sequence-pending.** No exact public nucleotide/protein accession, coding sequence, transit peptide or construct map was verified from the 2026 primary paper’s accessible record. It must remain non-deployable.
+1. **PyAPX is accession-verified but not construct-ready.** The paper reports `AY282755.1`, and guarded repository retrieval verifies that complete-CDS record identity. The targeting sequence, exact construct map, and event mapping remain unresolved, so sequence build stays blocked.
 2. **All donor sequences require retrieval and identity checks.** Even accession-backed C1/C4 and reference-locus-backed C5/C6 need source-allele/ORF, translation, topology/targeting, and final-plasmid sequencing. Peach reference loci are not a Rootpac 40 or Nemaguard allele certificate.
 3. **C4 has a known adverse route.** Its primary paper reports higher xylem Na. It cannot be treated as a root-exclusion gene without the registered cell-layer, xylem-sap and whole-system balance gates.
 4. **C1 functional label is not transport stoichiometry proof.** Keep its pump direction, coupling and energy burden as hypotheses.
 5. **No candidate record is evidence for raw seawater irrigation.** All primary candidate evidence uses simplified NaCl/MS treatments, not an ion-complete seawater, brackish-water, or concentrate treatment.
-6. **Quantitative reuse needs figure-level extraction.** C2 is especially incomplete; C3/C5/C6 have per-assay n/duration details that must be copied from full methods/figures, not reconstructed from summaries.
+6. **Quantitative reuse needs figure-level extraction.** C2's 250 mM NaCl schedule, day-10 germination read, dish replication, and T1 line counts are transcribed, but endpoint-specific effect sizes still require figure-level extraction; C3/C5/C6 likewise require per-assay n/duration details from full methods/figures.
 7. **Rootstock results do not make a locus causal.** The R40/E1 records support chassis and mechanism priors only; they cannot promote associated genes beyond E4.
 8. **Compliance sources are context, not authorizations.** A contained greenhouse still needs IBC, waste/concentrate disposition and any applicable permit review.
