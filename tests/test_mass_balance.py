@@ -18,6 +18,7 @@ from almondlab.contracts import (
     InternalWaterFlowKind,
     LedgerCursor,
     LedgerEntry,
+    LedgerEntryKind,
     MaterialTransferMode,
     OperatorPhase,
     StockUnit,
@@ -28,6 +29,7 @@ from almondlab.mass_balance import (
     ExternalBoundaryFlux,
     InternalEntityFlux,
     InternalWaterFlow,
+    LedgerTransactionExpectation,
     NetworkState,
     ReactionFlux,
     ValidatedAdapterRef,
@@ -930,6 +932,217 @@ def test_event_authority_catches_systematic_generator_metadata_drift(
     assert not audit.balanced
 
 
+def _single_flow_expectation(
+    *,
+    event_id: str = "irrigate",
+    ordinal: int = 0,
+    dt_hours: float = 0.25,
+    water_mass_kg: float = 2.4925,
+    na_mmol: float = 0.5,
+) -> LedgerTransactionExpectation:
+    return LedgerTransactionExpectation(
+        transaction_id=f"tx:TEST:main:{ordinal:012d}",
+        event_id=event_id,
+        dt_hours=dt_hours,
+        amounts={
+            ConservedEntity.WATER: water_mass_kg,
+            ConservedEntity.NA: na_mmol,
+        },
+    )
+
+
+def test_audit_authority_orders_source_and_target_and_pins_event_rate() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    event = _flow()
+    result = _step(state, duration=0.25, water_flows=(event,))
+    expected = (_single_flow_expectation(),)
+
+    reversed_endpoint = audit_ledger(
+        state,
+        result.state,
+        result.ledger,
+        expected_events=(replace(event, source="target", target="source"),),
+        expected_transactions=expected,
+    )
+    wrong_rate = audit_ledger(
+        state,
+        result.state,
+        result.ledger,
+        expected_events=(replace(event, rate_l_per_hour=20.0),),
+        expected_transactions=expected,
+    )
+
+    assert not reversed_endpoint.balanced
+    assert not wrong_rate.balanced
+
+
+def test_explicit_empty_authority_means_no_events_or_transactions() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    result = _step(state, duration=0.25, water_flows=(_flow(),))
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        result.ledger,
+        expected_events=(),
+        expected_transactions=(),
+    )
+
+    assert any("unknown ledger event" in error for error in audit.structural_errors)
+    assert any("unexpected transaction" in error for error in audit.structural_errors)
+    assert not audit.balanced
+
+
+def test_audit_rejects_systematic_row_evidence_drift_without_event_authority() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    result = _step(state, duration=0.25, water_flows=(_flow(),))
+    corrupted = tuple(
+        replace(row, evidence_label=EvidenceLabel.SYNTHETIC_ONLY)
+        for row in result.ledger
+    )
+
+    audit = audit_ledger(state, result.state, corrupted)
+
+    assert any("evidence disagrees" in error for error in audit.structural_errors)
+    assert not audit.balanced
+
+
+def test_audit_rejects_no_event_state_evidence_promotion() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    promoted = object.__new__(NetworkState)
+    object.__setattr__(promoted, "compartments", state.compartments)
+    object.__setattr__(promoted, "tracked_entities", state.tracked_entities)
+    object.__setattr__(
+        promoted,
+        "evidence_label",
+        EvidenceLabel.EMPIRICALLY_CALIBRATED,
+    )
+
+    audit = audit_ledger(
+        state,
+        promoted,
+        (),
+        expected_events=(),
+        expected_transactions=(),
+    )
+
+    assert any("evidence" in error for error in audit.structural_errors)
+    assert not audit.balanced
+
+
+def test_literal_transaction_authority_rejects_swapped_event_quantities() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 100.0})
+    first = _flow(event_id="a-flow", rate=2.0)
+    second = _flow(event_id="b-flow", rate=1.0)
+    result = _step(state, duration=0.25, water_flows=(first, second))
+    rows = list(result.ledger)
+    for index, row in enumerate(rows):
+        if row.entity is not ConservedEntity.NA:
+            continue
+        magnitude = 0.25 if row.event_id == "a-flow" else 0.5
+        rows[index] = replace(row, amount=-magnitude if row.amount < 0.0 else magnitude)
+    expectations = (
+        LedgerTransactionExpectation(
+            transaction_id="tx:TEST:main:000000000000",
+            event_id="a-flow",
+            dt_hours=0.25,
+            amounts={ConservedEntity.WATER: 0.4985, ConservedEntity.NA: 0.5},
+        ),
+        LedgerTransactionExpectation(
+            transaction_id="tx:TEST:main:000000000001",
+            event_id="b-flow",
+            dt_hours=0.25,
+            amounts={ConservedEntity.WATER: 0.24925, ConservedEntity.NA: 0.25},
+        ),
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        tuple(rows),
+        expected_events=(first, second),
+        expected_transactions=expectations,
+    )
+
+    assert any("literal authority" in error for error in audit.structural_errors)
+    assert not audit.balanced
+
+
+def test_literal_transaction_authority_covers_external_rows_and_zero_events() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    feed = ExternalBoundaryFlux(
+        event_id="feed",
+        compartment="source",
+        boundary_id="measured-feed",
+        category=ExternalBoundaryCategory.SOURCE_FEED,
+        material_mode=MaterialTransferMode.ADVECTIVE_AQUEOUS,
+        volume_rate_l_per_hour=2.0,
+        water_density_kg_l=0.997,
+        entity_rates_per_hour={ConservedEntity.NA: 6.0},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+    measured_zero = ExternalBoundaryFlux(
+        event_id="measured-zero",
+        compartment="source",
+        boundary_id="measured-amendment",
+        category=ExternalBoundaryCategory.AMENDMENT,
+        material_mode=MaterialTransferMode.ENTITY_ONLY,
+        volume_rate_l_per_hour=0.0,
+        entity_rates_per_hour={ConservedEntity.NA: 0.0},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+    result = _step(
+        state,
+        duration=0.25,
+        boundary_fluxes=(feed, measured_zero),
+    )
+    expectations = (
+        LedgerTransactionExpectation(
+            transaction_id="tx:TEST:main:000000000000",
+            event_id="feed",
+            dt_hours=0.25,
+            amounts={ConservedEntity.WATER: 0.4985, ConservedEntity.NA: 1.5},
+        ),
+        LedgerTransactionExpectation(
+            transaction_id="tx:TEST:main:000000000001",
+            event_id="measured-zero",
+            dt_hours=0.25,
+            amounts={ConservedEntity.NA: 0.0},
+        ),
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        result.ledger,
+        expected_events=(feed, measured_zero),
+        expected_transactions=expectations,
+    )
+
+    assert audit.balanced, audit.structural_errors
+
+
+def test_literal_transaction_authority_is_deeply_immutable() -> None:
+    amounts = {ConservedEntity.NA: 0.5}
+    expectation = LedgerTransactionExpectation(
+        transaction_id="tx:TEST:main:000000000000",
+        event_id="transfer",
+        dt_hours=0.25,
+        amounts=amounts,
+    )
+    amounts[ConservedEntity.NA] = 99.0
+
+    assert expectation.amounts[ConservedEntity.NA] == 0.5
+    with pytest.raises(TypeError):
+        expectation.amounts[ConservedEntity.NA] = 1.0  # type: ignore[index]
+    with pytest.raises(FrozenInstanceError):
+        expectation.dt_hours = 1.0  # type: ignore[misc]
+
+
 def test_audit_rejects_complete_internal_ledger_deletion_by_compartment() -> None:
     state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
     event = _flow()
@@ -1064,19 +1277,105 @@ def test_audit_rejects_coordinated_cap_metadata_mutation() -> None:
     )
     result = _step(state, duration=0.25, entity_fluxes=(event,))
     rows = list(result.ledger)
-    rows[0] = replace(
-        rows[0],
-        requested_amount=1.0,
-        applied_amount=0.5,
-        cap_fraction=0.5,
+    rows = [
+        replace(
+            row,
+            requested_amount=1.0,
+            applied_amount=0.5,
+            cap_fraction=0.5,
+        )
+        for row in rows
+    ]
+    expectation = LedgerTransactionExpectation(
+        transaction_id="tx:TEST:main:000000000000",
+        event_id="sequester",
+        dt_hours=0.25,
+        amounts={ConservedEntity.NA: 0.5},
     )
 
     audit = audit_ledger(
-        state, result.state, tuple(rows), expected_events=(event,)
+        state,
+        result.state,
+        tuple(rows),
+        expected_events=(event,),
+        expected_transactions=(expectation,),
     )
 
     assert audit.structural_errors
     assert not audit.balanced
+
+
+def test_external_boundary_id_cannot_launder_an_internal_compartment() -> None:
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 1.0})
+    flux = ExternalBoundaryFlux(
+        event_id="laundered-amendment",
+        compartment="source",
+        boundary_id="target",
+        category=ExternalBoundaryCategory.AMENDMENT,
+        material_mode=MaterialTransferMode.ENTITY_ONLY,
+        volume_rate_l_per_hour=0.0,
+        entity_rates_per_hour={ConservedEntity.NA: 1.0},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _step(state, duration=0.25, boundary_fluxes=(flux,))
+
+    assert exc_info.value.code == "EXTERNAL_BOUNDARY_NAMESPACE_COLLISION"
+    assert exc_info.value.field_path == "boundary_fluxes.0.boundary_id"
+
+
+def test_cross_loop_plant_transfer_generates_a_self_auditing_ledger() -> None:
+    state = _state(
+        {
+            "root-zone": _compartment(
+                "root-zone",
+                CompartmentKind.ROOT_ZONE,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 1.0},
+                loop_id="hydraulic-loop",
+            ),
+            "symplast": _compartment(
+                "symplast",
+                CompartmentKind.ROOT_SYMPLAST,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 0.0},
+                loop_id="plant-loop",
+            ),
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    event = InternalEntityFlux(
+        event_id="uptake",
+        source="root-zone",
+        target="symplast",
+        kind=InternalEntityFluxKind.PLANT_UPTAKE,
+        entity=ConservedEntity.NA,
+        rate_per_hour=1.0,
+        phase=OperatorPhase.PLANT_ION_TRANSITIONS,
+        evidence_label=EvidenceLabel.HYPOTHESIS_PRIOR,
+    )
+    result = _step(state, duration=0.25, entity_fluxes=(event,))
+    expectation = LedgerTransactionExpectation(
+        transaction_id="tx:TEST:main:000000000000",
+        event_id="uptake",
+        dt_hours=0.25,
+        amounts={ConservedEntity.NA: 0.25},
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        result.ledger,
+        expected_events=(event,),
+        expected_transactions=(expectation,),
+    )
+
+    assert audit.balanced, audit.structural_errors
 
 
 def test_event_authority_rejects_constructor_valid_water_flow_kind_mutation() -> None:
@@ -1364,6 +1663,257 @@ def test_every_event_and_step_numeric_boundary_is_strict(bad: object) -> None:
             cursor=LedgerCursor("STRICT", "main"),
             max_substep_hours=bad,  # type: ignore[arg-type]
         )
+
+
+def _assert_mass_numeric_error(
+    exc_info: pytest.ExceptionInfo[AlmondLabError], field_path: str
+) -> None:
+    assert exc_info.value.code == "MASS_NUMERIC_INVALID"
+    assert exc_info.value.field_path == field_path
+
+
+@pytest.mark.parametrize(
+    ("quantity", "field_path"),
+    [
+        ("density", "density_kg_l"),
+        ("concentration", "stocks.na.concentration"),
+    ],
+)
+def test_nonfinite_derived_compartment_quantities_fail_structurally(
+    quantity: str, field_path: str
+) -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        _compartment(
+            "tank",
+            CompartmentKind.BLEND_TANK,
+            volume_l=1e-320,
+            water_mass_kg=1e308 if quantity == "density" else 1e-320,
+            stocks={
+                ConservedEntity.NA: 0.0 if quantity == "density" else 1e308
+            },
+        )
+
+    _assert_mass_numeric_error(exc_info, field_path)
+
+
+@pytest.mark.parametrize(
+    ("quantity", "field_path"),
+    [
+        ("volume", "total_volume_l"),
+        ("water", "total_water_mass_kg"),
+        ("stock", "total_stock.na"),
+    ],
+)
+def test_network_totals_map_fsum_overflow_to_structured_errors(
+    quantity: str, field_path: str
+) -> None:
+    compartments = {
+        compartment_id: _compartment(
+            compartment_id,
+            CompartmentKind.BLEND_TANK,
+            volume_l=1e308,
+            water_mass_kg=1e308,
+            stocks={ConservedEntity.NA: 1e308},
+        )
+        for compartment_id in ("a", "b")
+    }
+    state = _state(compartments, frozenset({ConservedEntity.NA}))
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        if quantity == "volume":
+            state.total_volume_l()
+        elif quantity == "water":
+            state.total_water_mass_kg()
+        else:
+            state.total_stock(ConservedEntity.NA)
+
+    _assert_mass_numeric_error(exc_info, field_path)
+
+
+def test_boundary_volume_density_overflow_fails_at_the_derived_water_quantity() -> None:
+    state = _state(
+        {
+            "tank": _compartment(
+                "tank",
+                CompartmentKind.BLEND_TANK,
+                volume_l=1e308,
+                water_mass_kg=1e308,
+                stocks={ConservedEntity.NA: 0.0},
+            )
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    feed = ExternalBoundaryFlux(
+        event_id="feed",
+        compartment="tank",
+        boundary_id="source",
+        category=ExternalBoundaryCategory.SOURCE_FEED,
+        material_mode=MaterialTransferMode.ADVECTIVE_AQUEOUS,
+        volume_rate_l_per_hour=1e308,
+        water_density_kg_l=1e308,
+        entity_rates_per_hour={ConservedEntity.NA: 0.0},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _step(state, duration=0.25, boundary_fluxes=(feed,))
+
+    _assert_mass_numeric_error(exc_info, "boundary_fluxes.feed.water_mass_kg")
+
+
+def test_advective_concentration_product_preserves_a_finite_mathematical_result() -> None:
+    state = _two_tank_state(
+        source_volume_l=100.0,
+        source_density=1.0,
+        source_stocks={ConservedEntity.NA: 1e308},
+    )
+
+    result = _step(state, duration=0.25, water_flows=(_flow(rate=40.0),))
+
+    assert result.state.compartments["target"].stocks[ConservedEntity.NA] == pytest.approx(
+        1e307
+    )
+
+
+def test_competing_request_sum_overflow_fails_structurally() -> None:
+    tracked = frozenset({ConservedEntity.NA})
+    state = _state(
+        {
+            "symplast": _compartment(
+                "symplast",
+                CompartmentKind.ROOT_SYMPLAST,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 1e308},
+            ),
+            "root": _compartment(
+                "root",
+                CompartmentKind.ROOT_ZONE,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 0.0},
+            ),
+        },
+        tracked,
+    )
+    events = tuple(
+        InternalEntityFlux(
+            event_id=f"efflux-{index}",
+            source="symplast",
+            target="root",
+            kind=InternalEntityFluxKind.PLANT_EFFLUX,
+            entity=ConservedEntity.NA,
+            rate_per_hour=1e308,
+            phase=OperatorPhase.PLANT_ION_TRANSITIONS,
+            evidence_label=EvidenceLabel.HYPOTHESIS_PRIOR,
+        )
+        for index in range(8)
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _step(state, duration=0.25, entity_fluxes=events)
+
+    _assert_mass_numeric_error(
+        exc_info, "compartments.symplast.requested_stock.na"
+    )
+
+
+def test_rate_duration_accumulation_overflow_fails_at_the_state_delta() -> None:
+    state = _state(
+        {
+            "tank": _compartment(
+                "tank",
+                CompartmentKind.BLEND_TANK,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 1e308},
+            )
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    amendment = ExternalBoundaryFlux(
+        event_id="amend",
+        compartment="tank",
+        boundary_id="measured-amendment",
+        category=ExternalBoundaryCategory.AMENDMENT,
+        material_mode=MaterialTransferMode.ENTITY_ONLY,
+        volume_rate_l_per_hour=0.0,
+        entity_rates_per_hour={ConservedEntity.NA: 1e308},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _step(state, duration=1.0, boundary_fluxes=(amendment,))
+
+    _assert_mass_numeric_error(exc_info, "compartments.tank.stocks.na")
+
+
+def test_audit_ledger_total_overflow_fails_structurally() -> None:
+    state = _state(
+        {
+            "tank": _compartment(
+                "tank",
+                CompartmentKind.BLEND_TANK,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 0.0},
+            )
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    rows = tuple(
+        LedgerEntry(
+            transaction_id=f"tx:AUDIT:main:{index:012d}",
+            event_id=f"amend-{index}",
+            kind=LedgerEntryKind.EXTERNAL,
+            phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+            transfer_mode=MaterialTransferMode.ENTITY_ONLY,
+            compartment="tank",
+            counterparty="measured-amendment",
+            entity=ConservedEntity.NA,
+            amount=1e308,
+            unit=StockUnit.MMOL,
+            evidence_label=PHYSICS,
+            boundary_category=ExternalBoundaryCategory.AMENDMENT,
+        )
+        for index in range(2)
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        audit_ledger(state, state, rows)
+
+    _assert_mass_numeric_error(exc_info, "audit.ledger.na")
+
+
+def test_closed_form_overflow_fails_structurally() -> None:
+    with pytest.raises(AlmondLabError) as exc_info:
+        closed_form_tank_concentration(0.0, 0.0, 1e308, 1.0, 0.0, 1e308)
+
+    _assert_mass_numeric_error(exc_info, "closed_form_tank_concentration")
+
+
+def test_finite_extremes_remain_supported() -> None:
+    tank = _compartment(
+        "tank",
+        CompartmentKind.BLEND_TANK,
+        volume_l=1e308,
+        water_mass_kg=1e308,
+        stocks={ConservedEntity.NA: 1e308},
+    )
+    state = _state({"tank": tank}, frozenset({ConservedEntity.NA}))
+
+    assert tank.density_kg_l == 1.0
+    assert tank.concentration(ConservedEntity.NA) == 1.0
+    assert state.total_volume_l() == 1e308
+    assert state.total_water_mass_kg() == 1e308
+    assert state.total_stock(ConservedEntity.NA) == 1e308
+    assert closed_form_tank_concentration(
+        1.0, 0.0, 1e308, 1.0, 0.0, 1e-308
+    ) == pytest.approx(2.0)
 
 
 def test_fixture_authoring_and_packaged_copies_are_byte_identical() -> None:

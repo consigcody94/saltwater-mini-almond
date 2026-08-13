@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from math import exp, fsum, isclose
+from math import exp, fsum, isclose, isfinite
 import re
 from types import MappingProxyType
 from typing import Final
@@ -43,6 +43,11 @@ MAX_ADVECTIVE_WITHDRAWAL_FRACTION: Final[float] = 0.10
 
 _READABLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z", re.ASCII)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+_TRANSACTION_ID = re.compile(
+    r"tx:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:"
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]{12}\Z",
+    re.ASCII,
+)
 _REACTION_ALIASES: Final[tuple[str, ...]] = (
     "uptake",
     "efflux",
@@ -96,6 +101,8 @@ _OUTPUT_PHASES: Final[frozenset[OperatorPhase]] = frozenset(
     {OperatorPhase.PURGE_DISPOSAL}
 )
 
+_MASS_NUMERIC_CODE: Final[str] = "MASS_NUMERIC_INVALID"
+
 
 def _id(value: object, field_path: str, *, code: str = "IDENTIFIER_INVALID") -> str:
     if not isinstance(value, str) or _READABLE_ID.fullmatch(value) is None:
@@ -128,6 +135,88 @@ def _positive(value: object, field_path: str, code: str) -> float:
         field_path=field_path,
         positive=True,
     )
+
+
+def _finite_result(
+    value: object,
+    field_path: str,
+    *,
+    code: str = _MASS_NUMERIC_CODE,
+) -> float:
+    """Validate one derived floating-point result at its public quantity path."""
+
+    return finite_float(value, code=code, field_path=field_path)
+
+
+def _finite_sum(
+    values: Iterable[float],
+    field_path: str,
+    *,
+    code: str = _MASS_NUMERIC_CODE,
+) -> float:
+    """Sum finite quantities without leaking native ``fsum`` failures."""
+
+    try:
+        result = fsum(values)
+    except (OverflowError, ValueError) as error:
+        fail(code, "derived sum must remain finite", field_path, {"cause": type(error).__name__})
+    return _finite_result(result, field_path, code=code)
+
+
+def _finite_product(
+    left: float,
+    right: float,
+    field_path: str,
+    *,
+    code: str = _MASS_NUMERIC_CODE,
+) -> float:
+    try:
+        result = left * right
+    except OverflowError as error:
+        fail(
+            code,
+            "derived product must remain finite",
+            field_path,
+            {"cause": type(error).__name__},
+        )
+    return _finite_result(result, field_path, code=code)
+
+
+def _finite_ratio(
+    numerator: float,
+    denominator: float,
+    field_path: str,
+    *,
+    code: str = _MASS_NUMERIC_CODE,
+) -> float:
+    try:
+        result = numerator / denominator
+    except (OverflowError, ZeroDivisionError) as error:
+        fail(code, "derived ratio must remain finite", field_path, {"cause": type(error).__name__})
+    return _finite_result(result, field_path, code=code)
+
+
+def _finite_multiply_divide(
+    left: float,
+    right: float,
+    denominator: float,
+    field_path: str,
+    *,
+    code: str = _MASS_NUMERIC_CODE,
+) -> float:
+    """Evaluate ``left * right / denominator`` without avoidable overflow."""
+
+    if denominator == 0.0:
+        fail(code, "derived ratio denominator must be nonzero", field_path)
+    candidates: list[float] = []
+    for numerator, multiplier in ((left / denominator, right), (right / denominator, left)):
+        if isfinite(numerator):
+            result = numerator * multiplier
+            if isfinite(result):
+                candidates.append(result)
+    if not candidates:
+        fail(code, "derived multiply/divide result must remain finite", field_path)
+    return _finite_result(candidates[0], field_path, code=code)
 
 
 def _freeze_stocks(
@@ -270,6 +359,18 @@ class CompartmentState:
                 "positive volume requires positive water mass",
                 "water_mass_kg",
             )
+        else:
+            _finite_ratio(
+                water_mass,
+                volume,
+                "density_kg_l",
+            )
+            for entity, amount in stocks.items():
+                _finite_ratio(
+                    amount,
+                    volume,
+                    f"stocks.{entity.value}.concentration",
+                )
         object.__setattr__(self, "volume_l", volume)
         object.__setattr__(self, "water_mass_kg", water_mass)
         object.__setattr__(self, "empty_reference_density_kg_l", reference_density)
@@ -279,7 +380,11 @@ class CompartmentState:
     def density_kg_l(self) -> float:
         if self.volume_l == 0.0:
             return self.empty_reference_density_kg_l
-        return self.water_mass_kg / self.volume_l
+        return _finite_ratio(
+            self.water_mass_kg,
+            self.volume_l,
+            "density_kg_l",
+        )
 
     def concentration(self, entity: ConservedEntity) -> float:
         _enum(entity, ConservedEntity, "entity")
@@ -297,7 +402,11 @@ class CompartmentState:
             )
         if self.volume_l == 0.0:
             return 0.0
-        return self.stocks[entity] / self.volume_l
+        return _finite_ratio(
+            self.stocks[entity],
+            self.volume_l,
+            f"stocks.{entity.value}.concentration",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -355,17 +464,26 @@ class NetworkState:
         object.__setattr__(self, "tracked_entities", frozenset(self.tracked_entities))
 
     def total_volume_l(self) -> float:
-        return fsum(item.volume_l for item in self.compartments.values())
+        return _finite_sum(
+            (item.volume_l for item in self.compartments.values()),
+            "total_volume_l",
+        )
 
     def total_water_mass_kg(self) -> float:
-        return fsum(item.water_mass_kg for item in self.compartments.values())
+        return _finite_sum(
+            (item.water_mass_kg for item in self.compartments.values()),
+            "total_water_mass_kg",
+        )
 
     def total_stock(self, entity: ConservedEntity) -> float:
         if not isinstance(entity, ConservedEntity) or entity is ConservedEntity.WATER:
             fail("ENTITY_TYPE_REQUIRED", "entity must be a tracked solute", "entity")
         if entity not in self.tracked_entities:
             fail("UNREGISTERED_ENTITY", "entity is not tracked by this run", "entity")
-        return fsum(item.stocks[entity] for item in self.compartments.values())
+        return _finite_sum(
+            (item.stocks[entity] for item in self.compartments.values()),
+            f"total_stock.{entity.value}",
+        )
 
     def concentration(self, compartment_id: str, entity: ConservedEntity) -> float:
         if compartment_id not in self.compartments:
@@ -680,6 +798,60 @@ class StepResult:
     evidence_label: EvidenceLabel
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LedgerTransactionExpectation:
+    """Independent literal authority for one expected ledger transaction.
+
+    ``amounts`` contains canonical positive magnitudes, including water mass in
+    kg.  Event objects authorize semantics and rates; these literals authorize
+    the transaction occurrence, interval, and quantities without consulting
+    the observed ledger or simulator output.
+    """
+
+    transaction_id: str
+    event_id: str
+    dt_hours: float
+    amounts: Mapping[ConservedEntity, float]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.transaction_id, str)
+            or _TRANSACTION_ID.fullmatch(self.transaction_id) is None
+        ):
+            fail(
+                "AUDIT_AUTHORITY_INVALID",
+                "transaction_id must be issued by LedgerCursor",
+                "transaction_id",
+            )
+        _id(self.event_id, "event_id", code="AUDIT_AUTHORITY_INVALID")
+        interval = _positive(
+            self.dt_hours,
+            "dt_hours",
+            "AUDIT_AUTHORITY_INVALID",
+        )
+        if not isinstance(self.amounts, Mapping) or not self.amounts:
+            fail(
+                "AUDIT_AUTHORITY_INVALID",
+                "amounts must be a nonempty entity-to-magnitude mapping",
+                "amounts",
+            )
+        amounts: dict[ConservedEntity, float] = {}
+        for raw_entity, raw_amount in self.amounts.items():
+            if not isinstance(raw_entity, ConservedEntity):
+                fail(
+                    "AUDIT_AUTHORITY_INVALID",
+                    "amount keys must be ConservedEntity values",
+                    "amounts",
+                )
+            amounts[raw_entity] = _nonnegative(
+                raw_amount,
+                f"amounts.{raw_entity.value}",
+                "AUDIT_AUTHORITY_INVALID",
+            )
+        object.__setattr__(self, "dt_hours", interval)
+        object.__setattr__(self, "amounts", MappingProxyType(amounts))
+
+
 @dataclass(frozen=True, slots=True)
 class BalanceAudit:
     residuals: Mapping[ConservedEntity, float]
@@ -744,7 +916,11 @@ class _MutableCompartment:
     def density_kg_l(self) -> float:
         if self.volume_l == 0.0:
             return self.template.empty_reference_density_kg_l
-        return self.water_mass_kg / self.volume_l
+        return _finite_ratio(
+            self.water_mass_kg,
+            self.volume_l,
+            f"compartments.{self.template.compartment_id}.density_kg_l",
+        )
 
 
 def _event_tuple(values: object, expected: type, field_path: str) -> tuple:
@@ -816,6 +992,12 @@ def _validate_events(
                 "boundary flux references an unknown compartment",
                 f"boundary_fluxes.{index}.compartment",
             )
+        if flux.boundary_id in compartments:
+            fail(
+                "EXTERNAL_BOUNDARY_NAMESPACE_COLLISION",
+                "external boundary IDs must not name an internal compartment",
+                f"boundary_fluxes.{index}.boundary_id",
+            )
         if set(flux.entity_rates_per_hour) - set(state.tracked_entities):
             fail(
                 "UNREGISTERED_ENTITY",
@@ -852,7 +1034,11 @@ def _validate_events(
                 "aqueous output must explicitly advect the current mixture",
                 f"boundary_fluxes.{index}.current_mixture_advection",
             )
-        if flux.category in _OUTPUT_BOUNDARIES and flux.current_mixture_advection and flux.entity_rates_per_hour:
+        if (
+            flux.category in _OUTPUT_BOUNDARIES
+            and flux.current_mixture_advection
+            and flux.entity_rates_per_hour
+        ):
             fail(
                 "BOUNDARY_INVENTORY_WITH_ADVECTION",
                 "aqueous output inventory is derived from the current mixture",
@@ -1037,26 +1223,53 @@ def _substep_limit(
                 or flux.material_mode is MaterialTransferMode.ENTITY_ONLY
             ):
                 continue
-            signed_rate = flux.direction * flux.volume_rate_l_per_hour
+            signed_rate = _finite_product(
+                flux.direction,
+                flux.volume_rate_l_per_hour,
+                f"boundary_fluxes.{flux.event_id}.signed_volume_rate_l_per_hour",
+            )
             phase_net[flux.compartment].append(signed_rate)
             if signed_rate < 0.0:
                 outgoing[flux.compartment].append(-signed_rate)
         for compartment_id, rates in outgoing.items():
-            withdrawal_rate = fsum(rates)
+            withdrawal_rate = _finite_sum(
+                rates,
+                f"compartments.{compartment_id}.withdrawal_rate_l_per_hour",
+            )
             initial_volume = mutable[compartment_id].volume_l
             earlier_rate = prior_net_rate[compartment_id]
-            denominator = (
-                withdrawal_rate
-                - MAX_ADVECTIVE_WITHDRAWAL_FRACTION * earlier_rate
+            denominator = _finite_sum(
+                (
+                    withdrawal_rate,
+                    -_finite_product(
+                        MAX_ADVECTIVE_WITHDRAWAL_FRACTION,
+                        earlier_rate,
+                        f"compartments.{compartment_id}.withdrawal_denominator",
+                    ),
+                ),
+                f"compartments.{compartment_id}.withdrawal_denominator",
             )
             if denominator > 0.0:
                 allowed = min(
                     allowed,
-                    MAX_ADVECTIVE_WITHDRAWAL_FRACTION
-                    * initial_volume
-                    / denominator,
+                    _finite_multiply_divide(
+                        MAX_ADVECTIVE_WITHDRAWAL_FRACTION,
+                        initial_volume,
+                        denominator,
+                        f"compartments.{compartment_id}.substep_hours",
+                    ),
                 )
-            phase_start = initial_volume + earlier_rate * allowed
+            phase_start = _finite_sum(
+                (
+                    initial_volume,
+                    _finite_product(
+                        earlier_rate,
+                        allowed,
+                        f"compartments.{compartment_id}.phase_start_volume_l",
+                    ),
+                ),
+                f"compartments.{compartment_id}.phase_start_volume_l",
+            )
             if phase_start <= NEGATIVE_TOLERANCE and withdrawal_rate > 0.0:
                 fail(
                     "FLOW_EXCEEDS_SOURCE",
@@ -1064,7 +1277,16 @@ def _substep_limit(
                     f"compartments.{compartment_id}.volume_l",
                 )
         for compartment_id, rates in phase_net.items():
-            prior_net_rate[compartment_id] += fsum(rates)
+            prior_net_rate[compartment_id] = _finite_sum(
+                (
+                    prior_net_rate[compartment_id],
+                    _finite_sum(
+                        rates,
+                        f"compartments.{compartment_id}.phase_net_rate_l_per_hour",
+                    ),
+                ),
+                f"compartments.{compartment_id}.prior_net_rate_l_per_hour",
+            )
     return allowed
 
 
@@ -1076,7 +1298,11 @@ def _ledger_water_pair(
     density_kg_l: float,
     evidence_label: EvidenceLabel,
 ) -> tuple[LedgerEntry, LedgerEntry]:
-    amount = volume_l * density_kg_l
+    amount = _finite_product(
+        volume_l,
+        density_kg_l,
+        f"water_flows.{event.event_id}.water_mass_kg",
+    )
     common = dict(
         transaction_id=transaction_id,
         event_id=event.event_id,
@@ -1133,7 +1359,11 @@ def _apply_water_phase(
     next_cursor = cursor
     for event in sorted(events, key=lambda item: item.event_id):
         source_volume, _, source_stocks, density = snapshot[event.source]
-        requested_volume = event.rate_l_per_hour * dt
+        requested_volume = _finite_product(
+            event.rate_l_per_hour,
+            dt,
+            f"water_flows.{event.event_id}.requested_volume_l",
+        )
         if requested_volume > source_volume + NEGATIVE_TOLERANCE:
             fail(
                 "FLOW_EXCEEDS_SOURCE",
@@ -1143,7 +1373,11 @@ def _apply_water_phase(
         transaction_id, next_cursor = next_cursor.issue()
         volume_delta[event.source].append(-requested_volume)
         volume_delta[event.target].append(requested_volume)
-        water_amount = requested_volume * density
+        water_amount = _finite_product(
+            requested_volume,
+            density,
+            f"water_flows.{event.event_id}.water_mass_kg",
+        )
         water_delta[event.source].append(-water_amount)
         water_delta[event.target].append(water_amount)
         ledger.extend(
@@ -1157,7 +1391,16 @@ def _apply_water_phase(
         )
         if event.transfer_mode is MaterialTransferMode.ADVECTIVE_AQUEOUS:
             for entity in sorted(tracked_entities, key=lambda item: item.value):
-                amount = 0.0 if source_volume == 0.0 else requested_volume * source_stocks[entity] / source_volume
+                amount = (
+                    0.0
+                    if source_volume == 0.0
+                    else _finite_multiply_divide(
+                        requested_volume,
+                        source_stocks[entity],
+                        source_volume,
+                        f"water_flows.{event.event_id}.amounts.{entity.value}",
+                    )
+                )
                 stock_delta[(event.source, entity)].append(-amount)
                 stock_delta[(event.target, entity)].append(amount)
                 common = dict(
@@ -1188,11 +1431,38 @@ def _apply_water_phase(
                     )
                 )
     for compartment_id, values in volume_delta.items():
-        mutable[compartment_id].volume_l += fsum(values)
+        mutable[compartment_id].volume_l = _finite_sum(
+            (
+                mutable[compartment_id].volume_l,
+                _finite_sum(
+                    values,
+                    f"compartments.{compartment_id}.volume_delta_l",
+                ),
+            ),
+            f"compartments.{compartment_id}.volume_l",
+        )
     for compartment_id, values in water_delta.items():
-        mutable[compartment_id].water_mass_kg += fsum(values)
+        mutable[compartment_id].water_mass_kg = _finite_sum(
+            (
+                mutable[compartment_id].water_mass_kg,
+                _finite_sum(
+                    values,
+                    f"compartments.{compartment_id}.water_mass_delta_kg",
+                ),
+            ),
+            f"compartments.{compartment_id}.water_mass_kg",
+        )
     for (compartment_id, entity), values in stock_delta.items():
-        mutable[compartment_id].stocks[entity] += fsum(values)
+        mutable[compartment_id].stocks[entity] = _finite_sum(
+            (
+                mutable[compartment_id].stocks[entity],
+                _finite_sum(
+                    values,
+                    f"compartments.{compartment_id}.stocks.{entity.value}.delta",
+                ),
+            ),
+            f"compartments.{compartment_id}.stocks.{entity.value}",
+        )
     return ledger, next_cursor
 
 
@@ -1234,7 +1504,11 @@ def _apply_boundary_phase(
         transaction_id, next_cursor = next_cursor.issue()
         direction = event.direction
         source_volume, _, source_stocks, source_density = snapshot[event.compartment]
-        volume = event.volume_rate_l_per_hour * dt
+        volume = _finite_product(
+            event.volume_rate_l_per_hour,
+            dt,
+            f"boundary_fluxes.{event.event_id}.volume_l",
+        )
         density: float | None = None
         entity_amounts: dict[ConservedEntity, float] = {}
         if event.material_mode is not MaterialTransferMode.ENTITY_ONLY:
@@ -1248,26 +1522,45 @@ def _apply_boundary_phase(
             )
         if event.material_mode is MaterialTransferMode.ADVECTIVE_AQUEOUS and direction < 0.0:
             for entity in tracked_entities:
-                amount = 0.0 if source_volume == 0.0 else volume * source_stocks[entity] / source_volume
+                amount = (
+                    0.0
+                    if source_volume == 0.0
+                    else _finite_multiply_divide(
+                        volume,
+                        source_stocks[entity],
+                        source_volume,
+                        f"boundary_fluxes.{event.event_id}.amounts.{entity.value}",
+                    )
+                )
                 entity_amounts[entity] = amount
                 requested_outputs[(event.compartment, entity)].append(amount)
         else:
             for entity, rate in event.entity_rates_per_hour.items():
-                amount = rate * dt
+                amount = _finite_product(
+                    rate,
+                    dt,
+                    f"boundary_fluxes.{event.event_id}.amounts.{entity.value}",
+                )
                 entity_amounts[entity] = amount
                 if direction < 0.0:
                     requested_outputs[(event.compartment, entity)].append(amount)
         staged.append((event, transaction_id, volume, density, entity_amounts))
 
     for compartment_id, amounts in requested_water.items():
-        if fsum(amounts) > snapshot[compartment_id][0] + NEGATIVE_TOLERANCE:
+        if _finite_sum(
+            amounts,
+            f"compartments.{compartment_id}.requested_boundary_volume_l",
+        ) > snapshot[compartment_id][0] + NEGATIVE_TOLERANCE:
             fail(
                 "BOUNDARY_EXCEEDS_SOURCE",
                 "boundary water output exceeds phase-start volume",
                 f"compartments.{compartment_id}.volume_l",
             )
     for (compartment_id, entity), amounts in requested_outputs.items():
-        if fsum(amounts) > snapshot[compartment_id][2][entity] + NEGATIVE_TOLERANCE:
+        if _finite_sum(
+            amounts,
+            f"compartments.{compartment_id}.requested_boundary_stock.{entity.value}",
+        ) > snapshot[compartment_id][2][entity] + NEGATIVE_TOLERANCE:
             fail(
                 "BOUNDARY_EXCEEDS_SOURCE",
                 "boundary entity output exceeds phase-start stock",
@@ -1284,9 +1577,25 @@ def _apply_boundary_phase(
                     "water ledger construction requires density",
                     f"boundary_fluxes.{event.event_id}.water_density_kg_l",
                 )
-            water = volume * density
-            volume_delta[event.compartment].append(direction * volume)
-            water_delta[event.compartment].append(direction * water)
+            water = _finite_product(
+                volume,
+                density,
+                f"boundary_fluxes.{event.event_id}.water_mass_kg",
+            )
+            volume_delta[event.compartment].append(
+                _finite_product(
+                    direction,
+                    volume,
+                    f"boundary_fluxes.{event.event_id}.signed_volume_l",
+                )
+            )
+            water_delta[event.compartment].append(
+                _finite_product(
+                    direction,
+                    water,
+                    f"boundary_fluxes.{event.event_id}.signed_water_mass_kg",
+                )
+            )
             ledger.append(
                 LedgerEntry(
                     transaction_id=transaction_id,
@@ -1297,7 +1606,11 @@ def _apply_boundary_phase(
                     compartment=event.compartment,
                     counterparty=event.boundary_id,
                     entity=ConservedEntity.WATER,
-                    amount=direction * water,
+                    amount=_finite_product(
+                        direction,
+                        water,
+                        f"boundary_fluxes.{event.event_id}.signed_water_mass_kg",
+                    ),
                     unit=StockUnit.KG,
                     evidence_label=evidence_label,
                     boundary_category=event.category,
@@ -1307,7 +1620,13 @@ def _apply_boundary_phase(
             )
         for entity in sorted(entity_amounts, key=lambda item: item.value):
             amount = entity_amounts[entity]
-            stock_delta[(event.compartment, entity)].append(direction * amount)
+            stock_delta[(event.compartment, entity)].append(
+                _finite_product(
+                    direction,
+                    amount,
+                    f"boundary_fluxes.{event.event_id}.signed_amounts.{entity.value}",
+                )
+            )
             ledger.append(
                 LedgerEntry(
                     transaction_id=transaction_id,
@@ -1318,18 +1637,43 @@ def _apply_boundary_phase(
                     compartment=event.compartment,
                     counterparty=event.boundary_id,
                     entity=entity,
-                    amount=direction * amount,
+                    amount=_finite_product(
+                        direction,
+                        amount,
+                        f"boundary_fluxes.{event.event_id}.signed_amounts.{entity.value}",
+                    ),
                     unit=entity_spec(entity).stock_unit,
                     evidence_label=evidence_label,
                     boundary_category=event.category,
                 )
             )
     for compartment_id, values in volume_delta.items():
-        mutable[compartment_id].volume_l += fsum(values)
+        mutable[compartment_id].volume_l = _finite_sum(
+            (
+                mutable[compartment_id].volume_l,
+                _finite_sum(values, f"compartments.{compartment_id}.volume_delta_l"),
+            ),
+            f"compartments.{compartment_id}.volume_l",
+        )
     for compartment_id, values in water_delta.items():
-        mutable[compartment_id].water_mass_kg += fsum(values)
+        mutable[compartment_id].water_mass_kg = _finite_sum(
+            (
+                mutable[compartment_id].water_mass_kg,
+                _finite_sum(values, f"compartments.{compartment_id}.water_mass_delta_kg"),
+            ),
+            f"compartments.{compartment_id}.water_mass_kg",
+        )
     for (compartment_id, entity), values in stock_delta.items():
-        mutable[compartment_id].stocks[entity] += fsum(values)
+        mutable[compartment_id].stocks[entity] = _finite_sum(
+            (
+                mutable[compartment_id].stocks[entity],
+                _finite_sum(
+                    values,
+                    f"compartments.{compartment_id}.stocks.{entity.value}.delta",
+                ),
+            ),
+            f"compartments.{compartment_id}.stocks.{entity.value}",
+        )
     return ledger, next_cursor
 
 
@@ -1346,25 +1690,52 @@ def _apply_entity_phase(
         compartment_id: dict(item.stocks)
         for compartment_id, item in mutable.items()
     }
-    demands: dict[tuple[str, ConservedEntity], list[tuple[InternalEntityFlux, float]]] = defaultdict(list)
+    demands: dict[
+        tuple[str, ConservedEntity], list[tuple[InternalEntityFlux, float]]
+    ] = defaultdict(list)
     for event in events:
         demands[(event.source, event.entity)].append(
-            (event, event.rate_per_hour * dt)
+            (
+                event,
+                _finite_product(
+                    event.rate_per_hour,
+                    dt,
+                    f"entity_fluxes.{event.event_id}.requested_amount",
+                ),
+            )
         )
     scales: dict[tuple[str, ConservedEntity], float] = {}
     for key, requests in demands.items():
         available = snapshot[key[0]][key[1]]
-        total_requested = fsum(requested for _, requested in requests)
-        scales[key] = min(1.0, available / total_requested)
+        total_requested = _finite_sum(
+            (requested for _, requested in requests),
+            f"compartments.{key[0]}.requested_stock.{key[1].value}",
+        )
+        scales[key] = min(
+            1.0,
+            _finite_ratio(
+                available,
+                total_requested,
+                f"compartments.{key[0]}.cap_fraction.{key[1].value}",
+            ),
+        )
 
     stock_delta: dict[tuple[str, ConservedEntity], list[float]] = defaultdict(list)
     ledger: list[LedgerEntry] = []
     outcomes: list[InternalFluxOutcome] = []
     next_cursor = cursor
     for event in sorted(events, key=lambda item: item.event_id):
-        requested = event.rate_per_hour * dt
+        requested = _finite_product(
+            event.rate_per_hour,
+            dt,
+            f"entity_fluxes.{event.event_id}.requested_amount",
+        )
         cap_fraction = scales[(event.source, event.entity)]
-        applied = requested * cap_fraction
+        applied = _finite_product(
+            requested,
+            cap_fraction,
+            f"entity_fluxes.{event.event_id}.applied_amount",
+        )
         transaction_id, next_cursor = next_cursor.issue()
         stock_delta[(event.source, event.entity)].append(-applied)
         stock_delta[(event.target, event.entity)].append(applied)
@@ -1411,7 +1782,16 @@ def _apply_entity_phase(
             )
         )
     for (compartment_id, entity), values in stock_delta.items():
-        mutable[compartment_id].stocks[entity] += fsum(values)
+        mutable[compartment_id].stocks[entity] = _finite_sum(
+            (
+                mutable[compartment_id].stocks[entity],
+                _finite_sum(
+                    values,
+                    f"compartments.{compartment_id}.stocks.{entity.value}.delta",
+                ),
+            ),
+            f"compartments.{compartment_id}.stocks.{entity.value}",
+        )
     return ledger, outcomes, next_cursor
 
 
@@ -1467,9 +1847,15 @@ def step_state(
     next_cursor = cursor
     elapsed = 0.0
     substeps = 0
-    numerical_epsilon = max(1e-15, 1e-14 * max(1.0, duration))
+    numerical_epsilon = max(
+        1e-15,
+        _finite_product(1e-14, max(1.0, duration), "dt_hours.epsilon"),
+    )
     while elapsed < duration:
-        requested = min(maximum_step, duration - elapsed)
+        requested = min(
+            maximum_step,
+            _finite_sum((duration, -elapsed), "dt_hours.remaining"),
+        )
         substep = _substep_limit(
             mutable, typed_water, typed_boundaries, requested
         )
@@ -1507,7 +1893,7 @@ def step_state(
             )
             ledger.extend(entity_rows)
             outcomes.extend(phase_outcomes)
-        elapsed += substep
+        elapsed = _finite_sum((elapsed, substep), "dt_hours.elapsed")
         substeps += 1
         if substeps > 1_000_000:
             fail(
@@ -1537,8 +1923,16 @@ def _quantity(state: NetworkState, compartment: str, entity: ConservedEntity) ->
     return item.stocks[entity]
 
 
-def _relative(residual: float, *coordinates: float) -> float:
-    return abs(residual) / max(*(abs(item) for item in coordinates), 1e-30)
+def _relative(
+    residual: float,
+    *coordinates: float,
+    field_path: str,
+) -> float:
+    return _finite_ratio(
+        abs(residual),
+        max(*(abs(item) for item in coordinates), 1e-30),
+        field_path,
+    )
 
 
 def _freeze_nested(
@@ -1579,6 +1973,10 @@ def _audit_transactions(
                 "internal counterparty is absent from both states",
                 f"ledger.{index}.counterparty",
             )
+        if row.kind is LedgerEntryKind.EXTERNAL and row.counterparty in compartments:
+            errors.append(
+                f"{row.transaction_id}: external boundary collides with compartment registry"
+            )
         transactions[row.transaction_id].append(row)
 
     for transaction_id, rows in transactions.items():
@@ -1607,7 +2005,11 @@ def _audit_transactions(
         if first.kind is LedgerEntryKind.EXTERNAL:
             if len({row.entity for row in rows}) != len(rows):
                 errors.append(f"{transaction_id}: duplicate external entity row")
-            if any(row.compartment != first.compartment or row.counterparty != first.counterparty for row in rows):
+            if any(
+                row.compartment != first.compartment
+                or row.counterparty != first.counterparty
+                for row in rows
+            ):
                 errors.append(f"{transaction_id}: inconsistent external endpoints")
             observed_entities = frozenset(row.entity for row in rows)
             if first.transfer_mode is MaterialTransferMode.ADVECTIVE_AQUEOUS:
@@ -1688,7 +2090,8 @@ def _audit_transactions(
                 elif direction != common_direction:
                     errors.append(f"{transaction_id}:{entity.value}: direction disagrees")
             if (
-                before.compartments[left.compartment].loop_id
+                first.transfer_mode is not MaterialTransferMode.ENTITY_ONLY
+                and before.compartments[left.compartment].loop_id
                 != before.compartments[left.counterparty].loop_id
                 and not left.physical_transfer_id
             ):
@@ -1705,16 +2108,25 @@ def _audit_event_authority(
     expected_events: tuple[
         InternalWaterFlow | ExternalBoundaryFlux | InternalEntityFlux | ReactionFlux,
         ...,
-    ],
+    ] | None,
 ) -> tuple[str, ...]:
     """Compare ledger metadata with independent caller-supplied event authority."""
 
-    if not expected_events:
-        return ()
+    errors: list[str] = []
+    if expected_events is None:
+        expected_evidence = after.evidence_label
+        if (
+            compose_evidence_labels(before.evidence_label, after.evidence_label)
+            is not after.evidence_label
+        ):
+            errors.append("after-state evidence is stronger than pre-state authority")
+        if any(row.evidence_label is not expected_evidence for row in ledger):
+            errors.append("ledger evidence disagrees with after-state evidence")
+        return tuple(errors)
+
     by_id: dict[
         str, InternalWaterFlow | ExternalBoundaryFlux | InternalEntityFlux | ReactionFlux
     ] = {}
-    errors: list[str] = []
     for event in expected_events:
         if event.event_id in by_id:
             fail(
@@ -1723,6 +2135,13 @@ def _audit_event_authority(
                 "expected_events",
             )
         by_id[event.event_id] = event
+    _validate_events(
+        before,
+        tuple(event for event in expected_events if isinstance(event, InternalWaterFlow)),
+        tuple(event for event in expected_events if isinstance(event, ExternalBoundaryFlux)),
+        tuple(event for event in expected_events if isinstance(event, InternalEntityFlux)),
+        tuple(event for event in expected_events if isinstance(event, ReactionFlux)),
+    )
     observed_ids = {row.event_id for row in ledger}
     unknown = observed_ids - set(by_id)
     missing = set(by_id) - observed_ids
@@ -1753,13 +2172,32 @@ def _audit_event_authority(
                 row.kind is not LedgerEntryKind.INTERNAL
                 or row.phase is not event.phase
                 or row.transfer_mode is not event.transfer_mode
-                or frozenset((row.compartment, row.counterparty))
-                != frozenset((event.source, event.target))
+                or (row.compartment, row.counterparty)
+                not in {
+                    (event.source, event.target),
+                    (event.target, event.source),
+                }
+                or (row.amount < 0.0 and row.compartment != event.source)
+                or (row.amount > 0.0 and row.compartment != event.target)
                 or row.physical_transfer_id != event.physical_transfer_id
                 for row in rows
             ):
                 errors.append(
                     f"{transaction_id}: water transaction metadata disagrees with event"
+                )
+            grouped_rows: dict[ConservedEntity, list[LedgerEntry]] = defaultdict(list)
+            for row in rows:
+                grouped_rows[row.entity].append(row)
+            if any(
+                len(pair) != 2
+                or (pair[0].compartment, pair[0].counterparty)
+                != (event.source, event.target)
+                or (pair[1].compartment, pair[1].counterparty)
+                != (event.target, event.source)
+                for pair in grouped_rows.values()
+            ):
+                errors.append(
+                    f"{transaction_id}: ordered water endpoints disagree with event"
                 )
             for row in rows:
                 expected_kind = (
@@ -1790,17 +2228,270 @@ def _audit_event_authority(
                 or row.transfer_mode is not MaterialTransferMode.ENTITY_ONLY
                 or row.entity is not event.entity
                 or row.internal_flux_kind is not event.kind
-                or frozenset((row.compartment, row.counterparty))
-                != frozenset((event.source, event.target))
+                or (row.compartment, row.counterparty)
+                not in {
+                    (event.source, event.target),
+                    (event.target, event.source),
+                }
+                or (row.amount < 0.0 and row.compartment != event.source)
+                or (row.amount > 0.0 and row.compartment != event.target)
                 for row in rows
             ):
                 errors.append(
                     f"{transaction_id}: entity transaction metadata disagrees with event"
                 )
+            if (
+                len(rows) != 2
+                or (rows[0].compartment, rows[0].counterparty)
+                != (event.source, event.target)
+                or (rows[1].compartment, rows[1].counterparty)
+                != (event.target, event.source)
+            ):
+                errors.append(
+                    f"{transaction_id}: ordered entity endpoints disagree with event"
+                )
         else:
             errors.append(
                 f"{transaction_id}: core_v1 cannot contain a reaction transaction"
             )
+    return tuple(errors)
+
+
+def _literal_equal(observed: float, expected: float) -> bool:
+    return isclose(observed, expected, rel_tol=1e-12, abs_tol=1e-12)
+
+
+def _audit_transaction_authority(
+    before: NetworkState,
+    ledger: tuple[LedgerEntry, ...],
+    expected_events: tuple[
+        InternalWaterFlow | ExternalBoundaryFlux | InternalEntityFlux | ReactionFlux,
+        ...,
+    ] | None,
+    expected_transactions: tuple[LedgerTransactionExpectation, ...] | None,
+) -> tuple[str, ...]:
+    """Compare observed rows with caller-owned, literal transaction quantities."""
+
+    if expected_transactions is None:
+        return ()
+    if expected_events is None:
+        fail(
+            "AUDIT_AUTHORITY_INVALID",
+            "transaction authority requires explicit expected_events authority",
+            "expected_transactions",
+        )
+
+    errors: list[str] = []
+    events = {event.event_id: event for event in expected_events}
+    expected_by_id: dict[str, LedgerTransactionExpectation] = {}
+    for expectation in expected_transactions:
+        if expectation.transaction_id in expected_by_id:
+            fail(
+                "AUDIT_AUTHORITY_INVALID",
+                "expected transaction IDs must be unique",
+                "expected_transactions",
+            )
+        if expectation.event_id not in events:
+            fail(
+                "AUDIT_AUTHORITY_INVALID",
+                "expected transaction references an unauthorized event",
+                "expected_transactions.event_id",
+            )
+        expected_by_id[expectation.transaction_id] = expectation
+
+    observed: dict[str, list[LedgerEntry]] = defaultdict(list)
+    observed_order: list[str] = []
+    for row in ledger:
+        if row.transaction_id not in observed:
+            observed_order.append(row.transaction_id)
+        observed[row.transaction_id].append(row)
+    expected_order = [item.transaction_id for item in expected_transactions]
+    unexpected = set(observed) - set(expected_by_id)
+    missing = set(expected_by_id) - set(observed)
+    if unexpected:
+        errors.append(f"unexpected transaction IDs: {sorted(unexpected)}")
+    if missing:
+        errors.append(f"expected transaction IDs absent from ledger: {sorted(missing)}")
+    if observed_order != expected_order:
+        errors.append("transaction order disagrees with literal authority")
+
+    for transaction_id, expectation in expected_by_id.items():
+        rows = observed.get(transaction_id)
+        if not rows:
+            continue
+        event = events[expectation.event_id]
+        if any(row.event_id != expectation.event_id for row in rows):
+            errors.append(f"{transaction_id}: event ID disagrees with literal authority")
+            continue
+        by_entity: dict[ConservedEntity, list[LedgerEntry]] = defaultdict(list)
+        for row in rows:
+            by_entity[row.entity].append(row)
+        if frozenset(by_entity) != frozenset(expectation.amounts):
+            errors.append(f"{transaction_id}: entity set disagrees with literal authority")
+            continue
+
+        if isinstance(event, (InternalWaterFlow, InternalEntityFlux)):
+            for entity, magnitude in expectation.amounts.items():
+                pair = by_entity[entity]
+                source_rows = [
+                    row
+                    for row in pair
+                    if row.compartment == event.source
+                    and row.counterparty == event.target
+                ]
+                target_rows = [
+                    row
+                    for row in pair
+                    if row.compartment == event.target
+                    and row.counterparty == event.source
+                ]
+                if len(source_rows) != 1 or len(target_rows) != 1:
+                    errors.append(
+                        f"{transaction_id}:{entity.value}: ordered endpoints "
+                        "disagree with literal authority"
+                    )
+                    continue
+                if not _literal_equal(source_rows[0].amount, -magnitude) or not _literal_equal(
+                    target_rows[0].amount, magnitude
+                ):
+                    errors.append(
+                        f"{transaction_id}:{entity.value}: amount disagrees with literal authority"
+                    )
+
+        if isinstance(event, InternalWaterFlow):
+            expected_entities = (
+                frozenset({ConservedEntity.WATER, *before.tracked_entities})
+                if event.transfer_mode is MaterialTransferMode.ADVECTIVE_AQUEOUS
+                else frozenset({ConservedEntity.WATER})
+            )
+            if frozenset(expectation.amounts) != expected_entities:
+                errors.append(f"{transaction_id}: water-event literal inventory is incomplete")
+                continue
+            carrier = _finite_product(
+                event.rate_l_per_hour,
+                expectation.dt_hours,
+                f"expected_transactions.{transaction_id}.carrier_volume_l",
+            )
+            water_magnitude = expectation.amounts[ConservedEntity.WATER]
+            density = _finite_ratio(
+                water_magnitude,
+                carrier,
+                f"expected_transactions.{transaction_id}.water_density_kg_l",
+            )
+            if any(
+                row.carrier_volume_l is None
+                or not _literal_equal(row.carrier_volume_l, carrier)
+                or row.water_density_kg_l is None
+                or not _literal_equal(row.water_density_kg_l, density)
+                for row in by_entity[ConservedEntity.WATER]
+            ):
+                errors.append(
+                    f"{transaction_id}: water carrier disagrees with literal authority"
+                )
+        elif isinstance(event, InternalEntityFlux):
+            if frozenset(expectation.amounts) != frozenset({event.entity}):
+                errors.append(f"{transaction_id}: entity-event literal inventory is invalid")
+                continue
+            requested = _finite_product(
+                event.rate_per_hour,
+                expectation.dt_hours,
+                f"expected_transactions.{transaction_id}.requested_amount",
+            )
+            applied = expectation.amounts[event.entity]
+            cap = _finite_ratio(
+                applied,
+                requested,
+                f"expected_transactions.{transaction_id}.cap_fraction",
+            )
+            if cap > 1.0 + 1e-12:
+                errors.append(f"{transaction_id}: literal applied amount exceeds request")
+            if any(
+                row.requested_amount is None
+                or not _literal_equal(row.requested_amount, requested)
+                or row.applied_amount is None
+                or not _literal_equal(row.applied_amount, applied)
+                or row.cap_fraction is None
+                or not _literal_equal(row.cap_fraction, cap)
+                for row in rows
+            ):
+                errors.append(
+                    f"{transaction_id}: cap metadata disagrees with literal authority"
+                )
+        elif isinstance(event, ExternalBoundaryFlux):
+            direction = event.direction
+            for entity, magnitude in expectation.amounts.items():
+                entity_rows = by_entity[entity]
+                if len(entity_rows) != 1:
+                    errors.append(
+                        f"{transaction_id}:{entity.value}: external literal requires one row"
+                    )
+                    continue
+                row = entity_rows[0]
+                expected_signed = _finite_product(
+                    direction,
+                    magnitude,
+                    f"expected_transactions.{transaction_id}.amounts.{entity.value}",
+                )
+                if not _literal_equal(row.amount, expected_signed):
+                    errors.append(
+                        f"{transaction_id}:{entity.value}: amount disagrees with literal authority"
+                    )
+            expected_entities = (
+                frozenset({ConservedEntity.WATER, *before.tracked_entities})
+                if event.material_mode is MaterialTransferMode.ADVECTIVE_AQUEOUS
+                else frozenset({ConservedEntity.WATER})
+                if event.material_mode is MaterialTransferMode.WATER_ONLY
+                else frozenset(event.entity_rates_per_hour)
+            )
+            if frozenset(expectation.amounts) != expected_entities:
+                errors.append(f"{transaction_id}: boundary literal inventory is incomplete")
+                continue
+            if event.material_mode is not MaterialTransferMode.ENTITY_ONLY:
+                carrier = _finite_product(
+                    event.volume_rate_l_per_hour,
+                    expectation.dt_hours,
+                    f"expected_transactions.{transaction_id}.carrier_volume_l",
+                )
+                water = expectation.amounts[ConservedEntity.WATER]
+                density = _finite_ratio(
+                    water,
+                    carrier,
+                    f"expected_transactions.{transaction_id}.water_density_kg_l",
+                )
+                water_row = by_entity[ConservedEntity.WATER][0]
+                if (
+                    water_row.carrier_volume_l is None
+                    or not _literal_equal(water_row.carrier_volume_l, carrier)
+                    or water_row.water_density_kg_l is None
+                    or not _literal_equal(water_row.water_density_kg_l, density)
+                ):
+                    errors.append(
+                        f"{transaction_id}: boundary carrier disagrees with literal authority"
+                    )
+                if event.direction > 0.0 and event.water_density_kg_l is not None:
+                    derived_water = _finite_product(
+                        carrier,
+                        event.water_density_kg_l,
+                        f"expected_transactions.{transaction_id}.water_mass_kg",
+                    )
+                    if not _literal_equal(water, derived_water):
+                        errors.append(
+                            f"{transaction_id}: boundary water literal disagrees "
+                            "with event rate/density"
+                        )
+            if event.direction > 0.0 or not event.current_mixture_advection:
+                for entity, rate in event.entity_rates_per_hour.items():
+                    derived = _finite_product(
+                        rate,
+                        expectation.dt_hours,
+                        f"expected_transactions.{transaction_id}.amounts.{entity.value}",
+                    )
+                    if not _literal_equal(expectation.amounts.get(entity, -1.0), derived):
+                        errors.append(
+                            f"{transaction_id}:{entity.value}: literal disagrees with event rate"
+                        )
+        else:
+            errors.append(f"{transaction_id}: core_v1 cannot authorize reactions")
     return tuple(errors)
 
 
@@ -1811,7 +2502,8 @@ def audit_ledger(
     *,
     expected_events: Iterable[
         InternalWaterFlow | ExternalBoundaryFlux | InternalEntityFlux | ReactionFlux
-    ] = (),
+    ] | None = None,
+    expected_transactions: Iterable[LedgerTransactionExpectation] | None = None,
 ) -> BalanceAudit:
     """Audit water mass, hydraulic volume, solutes, and transaction shapes."""
 
@@ -1832,26 +2524,47 @@ def audit_ledger(
     if isinstance(ledger, (str, bytes, Mapping)) or not isinstance(ledger, Iterable):
         fail("LEDGER_COLLECTION_INVALID", "ledger must be iterable", "ledger")
     rows = tuple(ledger)
-    if (
-        isinstance(expected_events, (str, bytes, Mapping))
-        or not isinstance(expected_events, Iterable)
-    ):
-        fail(
-            "EVENT_COLLECTION_INVALID",
-            "expected_events must be an iterable",
-            "expected_events",
-        )
-    typed_expected_events = tuple(expected_events)
-    for index, event in enumerate(typed_expected_events):
-        if not isinstance(
-            event,
-            (InternalWaterFlow, ExternalBoundaryFlux, InternalEntityFlux, ReactionFlux),
+    typed_expected_events = None
+    if expected_events is not None:
+        if (
+            isinstance(expected_events, (str, bytes, Mapping))
+            or not isinstance(expected_events, Iterable)
         ):
             fail(
-                "EVENT_TYPE_INVALID",
-                "expected_events contains an unsupported event",
-                f"expected_events.{index}",
+                "EVENT_COLLECTION_INVALID",
+                "expected_events must be an iterable or None",
+                "expected_events",
             )
+        typed_expected_events = tuple(expected_events)
+        for index, event in enumerate(typed_expected_events):
+            if not isinstance(
+                event,
+                (InternalWaterFlow, ExternalBoundaryFlux, InternalEntityFlux, ReactionFlux),
+            ):
+                fail(
+                    "EVENT_TYPE_INVALID",
+                    "expected_events contains an unsupported event",
+                    f"expected_events.{index}",
+                )
+    typed_expected_transactions = None
+    if expected_transactions is not None:
+        if (
+            isinstance(expected_transactions, (str, bytes, Mapping))
+            or not isinstance(expected_transactions, Iterable)
+        ):
+            fail(
+                "AUDIT_AUTHORITY_INVALID",
+                "expected_transactions must be an iterable or None",
+                "expected_transactions",
+            )
+        typed_expected_transactions = tuple(expected_transactions)
+        for index, expectation in enumerate(typed_expected_transactions):
+            if not isinstance(expectation, LedgerTransactionExpectation):
+                fail(
+                    "AUDIT_AUTHORITY_INVALID",
+                    "expected transaction must be a LedgerTransactionExpectation",
+                    f"expected_transactions.{index}",
+                )
     quantities = frozenset({ConservedEntity.WATER, *before.tracked_entities})
     compartments = frozenset({*before.compartments, *after.compartments})
     ledger_net = {entity: 0.0 for entity in quantities}
@@ -1880,8 +2593,14 @@ def audit_ledger(
                 "ledger row references an unknown compartment",
                 f"ledger.{index}.compartment",
             )
-        ledger_net[row.entity] += row.amount
-        compartment_net[row.compartment][row.entity] += row.amount
+        ledger_net[row.entity] = _finite_sum(
+            (ledger_net[row.entity], row.amount),
+            f"audit.ledger.{row.entity.value}",
+        )
+        compartment_net[row.compartment][row.entity] = _finite_sum(
+            (compartment_net[row.compartment][row.entity], row.amount),
+            f"audit.compartments.{row.compartment}.{row.entity.value}",
+        )
         if row.entity is ConservedEntity.WATER:
             if row.carrier_volume_l is None:
                 fail(
@@ -1896,8 +2615,14 @@ def audit_ledger(
                 if row.amount < 0.0
                 else 0.0
             )
-            volume_net += signed_volume
-            compartment_volume_net[row.compartment] += signed_volume
+            volume_net = _finite_sum(
+                (volume_net, signed_volume),
+                "audit.ledger.volume_l",
+            )
+            compartment_volume_net[row.compartment] = _finite_sum(
+                (compartment_volume_net[row.compartment], signed_volume),
+                f"audit.compartments.{row.compartment}.volume_l",
+            )
 
     residuals: dict[ConservedEntity, float] = {}
     relative: dict[ConservedEntity, float] = {}
@@ -1912,10 +2637,17 @@ def audit_ledger(
             if entity is ConservedEntity.WATER
             else after.total_stock(entity)
         )
-        residual = after_total - before_total - ledger_net[entity]
+        residual = _finite_sum(
+            (after_total, -before_total, -ledger_net[entity]),
+            f"audit.residuals.{entity.value}",
+        )
         residuals[entity] = residual
         relative[entity] = _relative(
-            residual, before_total, after_total, ledger_net[entity]
+            residual,
+            before_total,
+            after_total,
+            ledger_net[entity],
+            field_path=f"audit.relative_residuals.{entity.value}",
         )
     compartment_residuals: dict[str, dict[ConservedEntity, float]] = {}
     relative_compartment: dict[str, dict[ConservedEntity, float]] = {}
@@ -1926,14 +2658,31 @@ def audit_ledger(
             before_amount = _quantity(before, compartment, entity)
             after_amount = _quantity(after, compartment, entity)
             ledger_amount = compartment_net[compartment][entity]
-            residual = after_amount - before_amount - ledger_amount
+            residual = _finite_sum(
+                (after_amount, -before_amount, -ledger_amount),
+                f"audit.compartment_residuals.{compartment}.{entity.value}",
+            )
             compartment_residuals[compartment][entity] = residual
             relative_compartment[compartment][entity] = _relative(
-                residual, before_amount, after_amount, ledger_amount
+                residual,
+                before_amount,
+                after_amount,
+                ledger_amount,
+                field_path=(
+                    f"audit.relative_compartment_residuals."
+                    f"{compartment}.{entity.value}"
+                ),
             )
-    volume_residual = after.total_volume_l() - before.total_volume_l() - volume_net
+    volume_residual = _finite_sum(
+        (after.total_volume_l(), -before.total_volume_l(), -volume_net),
+        "audit.volume_residual_l",
+    )
     relative_volume = _relative(
-        volume_residual, before.total_volume_l(), after.total_volume_l(), volume_net
+        volume_residual,
+        before.total_volume_l(),
+        after.total_volume_l(),
+        volume_net,
+        field_path="audit.relative_volume_residual",
     )
     compartment_volume_residuals: dict[str, float] = {}
     relative_compartment_volumes: dict[str, float] = {}
@@ -1948,13 +2697,21 @@ def audit_ledger(
             if compartment in after.compartments
             else 0.0
         )
-        residual = after_volume - before_volume - compartment_volume_net[compartment]
+        residual = _finite_sum(
+            (
+                after_volume,
+                -before_volume,
+                -compartment_volume_net[compartment],
+            ),
+            f"audit.compartment_volume_residuals.{compartment}",
+        )
         compartment_volume_residuals[compartment] = residual
         relative_compartment_volumes[compartment] = _relative(
             residual,
             before_volume,
             after_volume,
             compartment_volume_net[compartment],
+            field_path=f"audit.relative_compartment_volume.{compartment}",
         )
     return BalanceAudit(
         residuals=MappingProxyType(residuals),
@@ -1964,6 +2721,12 @@ def audit_ledger(
             *_audit_transactions(before, after, rows),
             *_audit_event_authority(
                 before, after, rows, typed_expected_events
+            ),
+            *_audit_transaction_authority(
+                before,
+                rows,
+                typed_expected_events,
+                typed_expected_transactions,
             ),
         ),
         compartment_residuals=_freeze_nested(compartment_residuals),
@@ -2009,13 +2772,49 @@ def closed_form_tank_concentration(
             "closed_form_tank_concentration",
         )
     if converted["purge"] == 0.0:
-        return (
-            converted["c0"]
-            + converted["m_dot"] * converted["time"] / converted["volume"]
+        return _finite_sum(
+            (
+                converted["c0"],
+                _finite_multiply_divide(
+                    converted["m_dot"],
+                    converted["time"],
+                    converted["volume"],
+                    "closed_form_tank_concentration",
+                ),
+            ),
+            "closed_form_tank_concentration",
         )
-    steady_state = converted["c_in"] + converted["m_dot"] / converted["purge"]
-    return steady_state + (converted["c0"] - steady_state) * exp(
-        -converted["purge"] * converted["time"] / converted["volume"]
+    steady_state = _finite_sum(
+        (
+            converted["c_in"],
+            _finite_ratio(
+                converted["m_dot"],
+                converted["purge"],
+                "closed_form_tank_concentration",
+            ),
+        ),
+        "closed_form_tank_concentration",
+    )
+    decay_exponent = -_finite_multiply_divide(
+        converted["purge"],
+        converted["time"],
+        converted["volume"],
+        "closed_form_tank_concentration",
+    )
+    departure = _finite_sum(
+        (converted["c0"], -steady_state),
+        "closed_form_tank_concentration",
+    )
+    return _finite_sum(
+        (
+            steady_state,
+            _finite_product(
+                departure,
+                exp(decay_exponent),
+                "closed_form_tank_concentration",
+            ),
+        ),
+        "closed_form_tank_concentration",
     )
 
 
@@ -2027,6 +2826,7 @@ __all__ = [
     "InternalFluxOutcome",
     "InternalWaterFlow",
     "LedgerEntry",
+    "LedgerTransactionExpectation",
     "NetworkState",
     "ReactionFlux",
     "StepResult",
