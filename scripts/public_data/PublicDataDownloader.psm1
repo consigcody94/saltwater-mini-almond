@@ -84,7 +84,7 @@ function Write-ChecksumSidecar {
     $partial = "$sidecar.partial"
     $fileName = [IO.Path]::GetFileName($LiteralPath)
     $encoding = New-Object Text.UTF8Encoding($false)
-    [IO.File]::WriteAllText($partial, ('{0}  {1}{2}' -f $Hash.ToLowerInvariant(), $fileName, [Environment]::NewLine), $encoding)
+    $null = [IO.File]::WriteAllText($partial, ('{0}  {1}{2}' -f $Hash.ToLowerInvariant(), $fileName, [Environment]::NewLine), $encoding)
     Move-Item -LiteralPath $partial -Destination $sidecar -Force
     return $sidecar
 }
@@ -112,7 +112,7 @@ function Get-BytesSha256 {
         -join ($sha.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') })
     }
     finally {
-        $sha.Dispose()
+        $null = $sha.Dispose()
     }
 }
 
@@ -134,7 +134,7 @@ function Write-TextArtifact {
     }
 
     $partial = "$LiteralPath.partial"
-    [IO.File]::WriteAllBytes($partial, $bytes)
+    $null = [IO.File]::WriteAllBytes($partial, $bytes)
     $actualHash = Get-FileSha256 -LiteralPath $partial
     if ($actualHash -ne $intendedHash) { throw "In-memory and on-disk hashes differ for $partial" }
     Move-Item -LiteralPath $partial -Destination $LiteralPath -Force
@@ -150,7 +150,7 @@ function Test-ZipArchive {
     try {
         $zip = [IO.Compression.ZipFile]::OpenRead($LiteralPath)
         try { return $zip.Entries.Count -gt 0 }
-        finally { $zip.Dispose() }
+        finally { $null = $zip.Dispose() }
     }
     catch { return $false }
 }
@@ -239,18 +239,18 @@ function Invoke-HttpGetWithRetry {
             }
 
             $delay = Get-RetryDelaySeconds -Response $response -Attempt $attempt -BaseDelaySeconds $BaseDelaySeconds -MaximumDelaySeconds $MaximumDelaySeconds
-            $response.Dispose()
+            $null = $response.Dispose()
             $response = $null
             Write-Warning ('HTTP {0} from {1}; retrying attempt {2}/{3} after {4:N0} second(s).' -f $statusCode, $Uri.Host, ($attempt + 1), $MaximumAttempts, $delay)
-            & $SleepAction $delay
+            $null = & $SleepAction $delay
         }
     }
     catch {
-        if ($null -ne $response) { $response.Dispose() }
+        if ($null -ne $response) { $null = $response.Dispose() }
         throw
     }
     finally {
-        if ($ownsClient -and $null -ne $Client) { $Client.Dispose() }
+        if ($ownsClient -and $null -ne $Client) { $null = $Client.Dispose() }
     }
 }
 
@@ -273,6 +273,8 @@ function Invoke-StreamDownload {
         [Parameter(Mandatory)][string]$DestinationPath,
         [ValidateRange(30, 86400)][int]$TimeoutSeconds = 1800,
         [ValidateRange(1, 10)][int]$MaximumAttempts = 4,
+        [scriptblock]$RequestInvoker,
+        [scriptblock]$SleepAction,
         [scriptblock]$Validator
     )
 
@@ -300,15 +302,15 @@ function Invoke-StreamDownload {
     $inputStream = $null
     $outputStream = $null
     try {
-        $response = Invoke-HttpGetWithRetry -Uri $Uri -Client $client -MaximumAttempts $MaximumAttempts
-        $response.EnsureSuccessStatusCode()
+        $response = Invoke-HttpGetWithRetry -Uri $Uri -Client $client -MaximumAttempts $MaximumAttempts -RequestInvoker $RequestInvoker -SleepAction $SleepAction
+        $null = $response.EnsureSuccessStatusCode()
         $inputStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         $outputStream = New-Object IO.FileStream($partial, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None, 1048576, [IO.FileOptions]::SequentialScan)
-        $inputStream.CopyTo($outputStream, 1048576)
-        $outputStream.Flush($true)
-        $outputStream.Dispose()
+        $null = $inputStream.CopyTo($outputStream, 1048576)
+        $null = $outputStream.Flush($true)
+        $null = $outputStream.Dispose()
         $outputStream = $null
-        $inputStream.Dispose()
+        $null = $inputStream.Dispose()
         $inputStream = $null
 
         if ($Validator -and -not (& $Validator $partial)) {
@@ -322,11 +324,11 @@ function Invoke-StreamDownload {
         return [pscustomobject]@{ Path = $DestinationPath; Status = 'Downloaded'; Sha256 = $hash; Bytes = $bytes }
     }
     finally {
-        if ($outputStream) { $outputStream.Dispose() }
-        if ($inputStream) { $inputStream.Dispose() }
-        if ($response) { $response.Dispose() }
-        $client.Dispose()
-        $handler.Dispose()
+        if ($outputStream) { $null = $outputStream.Dispose() }
+        if ($inputStream) { $null = $inputStream.Dispose() }
+        if ($response) { $null = $response.Dispose() }
+        $null = $client.Dispose()
+        $null = $handler.Dispose()
         # On failure the .partial is intentionally retained and can never satisfy
         # Test-VerifiedFile for the final path.
     }
@@ -357,13 +359,13 @@ function Export-DatasetCatalog {
         if (-not $entry) { return $null }
         $inputStream = $entry.Open()
         $outputStream = New-Object IO.FileStream($partial, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
-        try { $inputStream.CopyTo($outputStream) }
+        try { $null = $inputStream.CopyTo($outputStream) }
         finally {
-            $outputStream.Dispose()
-            $inputStream.Dispose()
+            $null = $outputStream.Dispose()
+            $null = $inputStream.Dispose()
         }
     }
-    finally { $zip.Dispose() }
+    finally { $null = $zip.Dispose() }
 
     if (-not (Test-JsonDocument -LiteralPath $partial)) {
         throw "Extracted dataset catalog is not valid JSON: $partial"

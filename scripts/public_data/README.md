@@ -63,6 +63,11 @@ The catalog is extracted only if NCBI includes `dataset_catalog.json`. If absent
 
 Downloads stream to `<final-name>.partial`. Only a completed, format-validated file is promoted to its final name and assigned a locally computed SHA-256 sidecar. Existing final files are skipped only after the sidecar hash is recomputed and matches. A failed transfer leaves `.partial`, which is never considered complete.
 
+Each successful or verified-skip call emits exactly one structured result with
+`Status`, `Path`, `Sha256`, and `Bytes`. Internal .NET response objects are
+suppressed so the result can be used directly to decide whether the package
+catalog needs forced re-extraction.
+
 Requests are serial. HTTP 429 and 5xx responses receive at most four attempts
 with bounded exponential backoff; a valid `Retry-After` delay is honored up to
 the configured 120-second safety cap. There is no parallel NCBI request fanout.
@@ -71,7 +76,10 @@ remains unknown because NCBI does not expose complete sizes for every package.
 
 ## Tests
 
-No Pester installation is required. Tests use local temporary fixtures and do not contact NCBI:
+No Pester installation is required. Tests use local temporary fixtures and
+in-memory HTTP responses; they exercise the real streaming, validation,
+promotion, hashing, result, and catalog-extraction paths without contacting
+NCBI:
 
 ```powershell
 .\scripts\public_data\Test-PublicDataDownloader.ps1

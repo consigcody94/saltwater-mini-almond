@@ -179,18 +179,59 @@ try {
         Assert-True (Test-VerifiedFile -LiteralPath $file) 'Rewritten text did not verify.'
     }
 
-    Invoke-SmokeCase 'catalog extraction requires a verified package and hashes output' {
+    Invoke-SmokeCase 'successful stream download emits exactly one result object' {
+        Add-Type -AssemblyName System.Net.Http
+        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes('{"fixture":true}')
+        $request = {
+            param($client, $uri)
+            $response = New-Object Net.Http.HttpResponseMessage([Net.HttpStatusCode]::OK)
+            $response.Content = New-Object Net.Http.ByteArrayContent -ArgumentList (,$bytes)
+            return $response
+        }
+        $destination = Join-Path $testRoot 'stream-result\dataset_report.json'
+        $results = @(Invoke-StreamDownload -Uri 'https://example.invalid/report' -DestinationPath $destination -RequestInvoker $request -SleepAction { throw 'Unexpected retry sleep.' } -Validator {
+            param($path) Test-JsonDocument -LiteralPath $path
+        })
+        Assert-True ($results.Count -eq 1) "Expected one download result, got $($results.Count)."
+        $result = $results[0]
+        Assert-True ($result.GetType().FullName -eq 'System.Management.Automation.PSCustomObject') "Unexpected result type: $($result.GetType().FullName)."
+        Assert-True ($result.PSObject.Properties.Name -contains 'Status') 'Download result lacks Status.'
+        Assert-True ($result.PSObject.Properties.Name -contains 'Path') 'Download result lacks Path.'
+        Assert-True ($result.PSObject.Properties.Name -contains 'Sha256') 'Download result lacks Sha256.'
+        Assert-True ($result.PSObject.Properties.Name -contains 'Bytes') 'Download result lacks Bytes.'
+        Assert-True ($result.Status -eq 'Downloaded') "Unexpected status: $($result.Status)."
+        Assert-True ($result.Path -eq $destination) 'Download result path differs.'
+        Assert-True ($result.Bytes -eq $bytes.Length) 'Download result byte count differs.'
+        Assert-True ($result.Sha256 -eq (Get-FileSha256 -LiteralPath $destination)) 'Download result SHA-256 differs.'
+        Assert-True (Test-VerifiedFile -LiteralPath $destination) 'Downloaded file and sidecar did not verify.'
+    }
+
+    Invoke-SmokeCase 'download result drives catalog extraction from a valid local zip' {
+        Add-Type -AssemblyName System.Net.Http
         Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $package = Join-Path $testRoot 'fixture.zip'
-        $sourceDir = Join-Path $testRoot 'zip-source'
+        $fixturePackage = Join-Path $testRoot 'catalog-fixture.zip'
+        $sourceDir = Join-Path $testRoot 'catalog-zip-source'
         $catalogDir = Join-Path $sourceDir 'ncbi_dataset\data'
         $null = New-Item -ItemType Directory -Path $catalogDir -Force
         [IO.File]::WriteAllText((Join-Path $catalogDir 'dataset_catalog.json'), '{"assemblies":["fixture"]}', (New-Object Text.UTF8Encoding($false)))
-        [IO.Compression.ZipFile]::CreateFromDirectory($sourceDir, $package)
-        $packageHash = Get-FileSha256 -LiteralPath $package
-        $null = Write-ChecksumSidecar -LiteralPath $package -Hash $packageHash
+        [IO.Compression.ZipFile]::CreateFromDirectory($sourceDir, $fixturePackage)
+        $zipBytes = [IO.File]::ReadAllBytes($fixturePackage)
+        $request = {
+            param($client, $uri)
+            $response = New-Object Net.Http.HttpResponseMessage([Net.HttpStatusCode]::OK)
+            $response.Content = New-Object Net.Http.ByteArrayContent -ArgumentList (,$zipBytes)
+            return $response
+        }
+        $package = Join-Path $testRoot 'downloaded-package\ncbi_dataset.zip'
+        $downloadResults = @(Invoke-StreamDownload -Uri 'https://example.invalid/package' -DestinationPath $package -RequestInvoker $request -SleepAction { throw 'Unexpected retry sleep.' } -Validator {
+            param($path) Test-ZipArchive -LiteralPath $path
+        })
+        Assert-True ($downloadResults.Count -eq 1) "Expected one package result, got $($downloadResults.Count)."
+        $packageResult = $downloadResults[0]
+        Assert-True ($packageResult.GetType().FullName -eq 'System.Management.Automation.PSCustomObject') "Unexpected package result type: $($packageResult.GetType().FullName)."
+        Assert-True ($packageResult.Status -eq 'Downloaded') "Unexpected package status: $($packageResult.Status)."
         $destination = Join-Path $testRoot 'metadata\dataset_catalog.json'
-        $result = Export-DatasetCatalog -PackagePath $package -DestinationPath $destination
+        $result = Export-DatasetCatalog -PackagePath $package -DestinationPath $destination -Force:($packageResult.Status -eq 'Downloaded')
         Assert-True ($result.Status -eq 'Extracted') 'Catalog was not extracted.'
         Assert-True (Test-VerifiedFile -LiteralPath $destination) 'Catalog output did not verify.'
         Assert-True (Test-JsonDocument -LiteralPath $destination) 'Catalog output is invalid JSON.'
