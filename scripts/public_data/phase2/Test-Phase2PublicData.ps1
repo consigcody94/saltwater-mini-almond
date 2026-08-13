@@ -61,24 +61,26 @@ $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('almondlab-phase2-smoke-' + [g
 $null = New-Item -ItemType Directory -Path $testRoot
 
 try {
-    Invoke-SmokeCase 'NCBI allowlist is exactly the twelve approved accession versions' {
+    Invoke-SmokeCase 'NCBI allowlist is exactly the fifteen approved accession versions' {
         $plan = @(Get-Phase2NcbiRecordPlan)
         $expected = @(
             'AJ972674.1', 'CAI99405.1', 'EU879059.1', 'ACJ63441.1',
+            'AY282755.1', 'DQ146477.2', 'MT473962.1',
             'XM_020565174.1', 'XP_020420763.1', 'XM_020564808.1', 'XP_020420397.1',
             'XM_020568644.1', 'XP_020424233.1', 'XM_007201987.2', 'XP_007202049.1'
         )
         $expectedDb = @{
             'AJ972674.1' = 'nuccore'; 'CAI99405.1' = 'protein'
             'EU879059.1' = 'nuccore'; 'ACJ63441.1' = 'protein'
+            'AY282755.1' = 'nuccore'; 'DQ146477.2' = 'nuccore'; 'MT473962.1' = 'nuccore'
             'XM_020565174.1' = 'nuccore'; 'XP_020420763.1' = 'protein'
             'XM_020564808.1' = 'nuccore'; 'XP_020420397.1' = 'protein'
             'XM_020568644.1' = 'nuccore'; 'XP_020424233.1' = 'protein'
             'XM_007201987.2' = 'nuccore'; 'XP_007202049.1' = 'protein'
         }
-        Assert-True ($plan.Count -eq 12) "Expected 12 records, found $($plan.Count)."
+        Assert-True ($plan.Count -eq 15) "Expected 15 records, found $($plan.Count)."
         Assert-True ((@($plan.Accession | Sort-Object) -join ',') -eq (@($expected | Sort-Object) -join ',')) 'NCBI accession allowlist differs.'
-        Assert-True ((@($plan | Where-Object Db -eq 'nuccore').Count) -eq 6) 'Expected six nucleotide records.'
+        Assert-True ((@($plan | Where-Object Db -eq 'nuccore').Count) -eq 9) 'Expected nine nucleotide records.'
         Assert-True ((@($plan | Where-Object Db -eq 'protein').Count) -eq 6) 'Expected six protein records.'
         foreach ($record in $plan) {
             Assert-True ($record.Db -eq $expectedDb[$record.Accession]) "Wrong database for $($record.Accession)."
@@ -546,12 +548,12 @@ try {
         $results = @(& $acquirePath -Profile All -Execute -OutputRoot $outputRoot -AllowTestTransport -RequestInvoker $request -RetrySleepAction { throw 'Unexpected retry sleep.' } -PacingAction { param($milliseconds) })
         Assert-True ($results.Count -eq 1 -and $results[0].Status -eq 'Complete') 'Full orchestration did not emit one completion result.'
         Assert-True ($results[0].GeoFileCount -eq 2) 'Full receipt GEO count differs.'
-        Assert-True ($results[0].NcbiRecordCount -eq 12) 'Full receipt NCBI count differs.'
+        Assert-True ($results[0].NcbiRecordCount -eq 15) 'Full receipt NCBI count differs.'
         Assert-True (Test-VerifiedFile -LiteralPath $results[0].ReceiptPath) 'Full acquisition receipt did not verify.'
         $receipt = Get-Content -LiteralPath $results[0].ReceiptPath -Raw | ConvertFrom-Json
         Assert-True ($receipt.test_transport_injected -eq $true) 'Injected transport was not disclosed in receipt.'
         Assert-True (@($receipt.sources.geo_processed_files).Count -eq 2) 'Serialized GEO receipt array differs.'
-        Assert-True (@($receipt.sources.ncbi_fasta_records).Count -eq 12) 'Serialized NCBI receipt array differs.'
+        Assert-True (@($receipt.sources.ncbi_fasta_records).Count -eq 15) 'Serialized NCBI receipt array differs.'
         foreach ($entry in @($receipt.sources.geo_processed_files) + @($receipt.sources.ncbi_fasta_records)) {
             Assert-True (Test-VerifiedFile -LiteralPath $entry.path) "Receipt payload failed hash check: $($entry.path)"
             Assert-True (Test-VerifiedFile -LiteralPath $entry.response_metadata_path) "Receipt response metadata failed hash check: $($entry.response_metadata_path)"

@@ -1,8 +1,9 @@
 # Phase 2 small public-data acquisition
 
-Repository-integrated implementation. Integration and offline verification did
-not execute it against the network; live acquisition still requires explicit
-`-Execute`.
+Repository-integrated implementation. Offline verification uses injected local
+fixtures; an explicitly authorized live run is separately recorded in the
+sanitized Phase 2 receipt. Every future live acquisition still requires
+explicit `-Execute`.
 
 ## Scope
 
@@ -16,7 +17,7 @@ The workflow has two allowlisted profiles:
    for review. Exact integer byte sizes are preserved when the listing exposes
    them; HTTP `Content-Length` is preserved separately. The expected current
    payload is about 16.8 MB, but the live directory remains authoritative.
-2. `NcbiRecords` fetches exactly twelve accession-version FASTA records from
+2. `NcbiRecords` fetches exactly fifteen accession-version FASTA records from
    official NCBI EFetch. Nucleotide records use `db=nuccore`; protein records
    use `db=protein`.
 
@@ -28,6 +29,9 @@ writes or requests. `-Execute` is mandatory for network access.
 | Module | Nucleotide | Protein |
 |---|---|---|
 | PyKPA1 | `AJ972674.1` | `CAI99405.1` |
+| PyAPX | `AY282755.1` | not requested |
+| PyMnSOD | `DQ146477.2` | not requested |
+| Kappaphycus Na+/H+ antiporter | `MT473962.1` (partial CDS) | not requested |
 | SbSOS1 | `EU879059.1` | `ACJ63441.1` |
 | PpHKT1 isoform 1 | `XM_020565174.1` | `XP_020420763.1` |
 | PpHKT1 isoform 2 | `XM_020564808.1` | `XP_020420397.1` |
@@ -40,9 +44,12 @@ The endpoint template is:
 https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db={nuccore|protein}&id={accession.version}&rettype=fasta&retmode=text&tool=AlmondLabPhase2
 ```
 
-No PyAPX sequence is admitted because no exact public accession-version was
-verified. No Ectocarpus crosswalk is asserted. The code does not call SRA or
-ENA and does not scrape article pages.
+The 2025 paper reports `AY282755.1`, `DQ146477.2`, and `MT473962.1`, and the
+guarded workflow independently verifies those repository record identities.
+They are **not construct-ready**: the records do not independently validate
+targeting, the exact construct maps, or event-to-construct mappings, and
+`MT473962.1` is a partial CDS. No Ectocarpus crosswalk is asserted. The code
+does not call SRA or ENA and does not scrape article pages.
 
 The GEO filename policy is a positive allowlist. It accepts uncompressed
 `.csv`, `.tsv`, `.txt`, `.fasta`, `.fa`, `.gff`, `.gff3`, `.gtf`, `.xlsx`, and

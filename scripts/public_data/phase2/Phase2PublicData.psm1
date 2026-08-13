@@ -8,6 +8,9 @@ function Get-Phase2NcbiRecordPlan {
     $records = @(
         [pscustomobject]@{ Group = 'PyKPA1'; Label = 'PyKPA1 nucleotide'; Accession = 'AJ972674.1'; Db = 'nuccore'; Molecule = 'nucleotide' }
         [pscustomobject]@{ Group = 'PyKPA1'; Label = 'PyKPA1 protein'; Accession = 'CAI99405.1'; Db = 'protein'; Molecule = 'protein' }
+        [pscustomobject]@{ Group = 'PyAPX'; Label = 'PyAPX complete CDS'; Accession = 'AY282755.1'; Db = 'nuccore'; Molecule = 'nucleotide' }
+        [pscustomobject]@{ Group = 'PyMnSOD'; Label = 'PyMnSOD complete CDS'; Accession = 'DQ146477.2'; Db = 'nuccore'; Molecule = 'nucleotide' }
+        [pscustomobject]@{ Group = 'KaNaH'; Label = 'Kappaphycus Na+/H+ antiporter partial CDS'; Accession = 'MT473962.1'; Db = 'nuccore'; Molecule = 'nucleotide' }
         [pscustomobject]@{ Group = 'SbSOS1'; Label = 'SbSOS1 nucleotide'; Accession = 'EU879059.1'; Db = 'nuccore'; Molecule = 'nucleotide' }
         [pscustomobject]@{ Group = 'SbSOS1'; Label = 'SbSOS1 protein'; Accession = 'ACJ63441.1'; Db = 'protein'; Molecule = 'protein' }
         [pscustomobject]@{ Group = 'PpHKT1'; Label = 'PpHKT1 isoform 1 transcript'; Accession = 'XM_020565174.1'; Db = 'nuccore'; Molecule = 'nucleotide' }

@@ -37,7 +37,7 @@ Write-Host 'AlmondLab Phase 2 small public-data acquisition'
 Write-Host ('Mode: {0}' -f $(if ($Execute) { 'EXECUTE' } else { 'DRY RUN (no writes and no network requests)' }))
 Write-Host ('Profile: {0}' -f $Profile)
 Write-Host ('Output root: {0}' -f [IO.Path]::GetFullPath($OutputRoot))
-Write-Host 'Scope exclusions: no SRA/ENA FASTQs, no article scraping, no unverified donor sequence, and no Ectocarpus identifier crosswalk.'
+Write-Host 'Scope exclusions: no SRA/ENA FASTQs, no article scraping, no construct-ready inference from accession records, and no Ectocarpus identifier crosswalk.'
 
 if ($includeGeo) {
     Write-Host ('GEO listing: {0}' -f $geoPlan.ListingUrl)
@@ -211,7 +211,7 @@ $receipt = [pscustomobject][ordered]@{
     exclusions = @(
         'No SRA or ENA raw reads and no FASTQ/FQ/SRA payloads.',
         'No publisher article scraping.',
-        'No PyAPX sequence because no exact accession.version is verified.',
+        'AY282755.1, DQ146477.2, and MT473962.1 verify repository record identity only; they are not construct-ready without targeting, construct-map, and event validation.',
         'No Ectocarpus gene-model crosswalk or sequence claim.'
     )
     checksum_policy = 'SHA-256 values are calculated locally after streamed download and validation; no remote checksum is invented.'
