@@ -47,3 +47,19 @@ Scientific constraints: visually distinguish physics-constrained water balance f
 Constraints: practical UI hierarchy, readable text, consistent spacing, no company logos, no decorative DNA helix, no fake photographs, no watermark beyond the requested synthetic banner.
 Avoid: stock-trading dashboard, neon cyberpunk, medical monitor, tiny unreadable labels, green PASS indicators that imply biological success.
 ```
+
+## 04 — Four-stream closed-loop greenhouse, version 2
+
+```text
+Use case: scientific-educational
+Asset type: publication and investor-deck concept visualization
+Primary request: Create a wide architectural cutaway rendering of a contained California research greenhouse for dwarf almond trees irrigated from treated seawater.
+Scene/backdrop: sunlit California coastal agricultural research campus, but the greenhouse floor is sealed and no salty water contacts native soil.
+Subject: a transparent glass greenhouse containing two orderly rows of compact 1.2–1.5 meter almond trees, each in an individual sealed root-zone container. Show color-coded closed-loop plumbing beneath a raised service floor. Seawater enters pretreatment plus nanofiltration/reverse osmosis. Product water passes through remineralization and blending before drip irrigation. Drainage returns to a recirculation tank. Roof dehumidifiers recover transpired condensate. Concentrated brine goes only to a sealed holding tank for managed disposal. Include EC, sodium, chloride, flow, tank-level, leaf-temperature, and humidity sensors plus a control console.
+Style/medium: believable high-end 3D scientific architectural visualization, photoreal materials, precise pipes and equipment, not science fiction.
+Composition/framing: 16:9 landscape, three-quarter elevated cutaway, treatment train readable left to right, greenhouse and mini trees as the visual focus.
+Color palette: white and light gray structures, almond green, clean-water pipes cyan, saline/feed pipes navy, concentrate pipes amber, sensor accents magenta.
+Text: no paragraphs or tiny typography; only large simple equipment abbreviations if rendered accurately: "RO", "BLEND", "DRAIN", "BRINE".
+Constraints: scientifically plausible closed water and salt loops; dwarf almond trees; every saline stream contained; separate product, drainage, condensate, and brine paths; no roots in native soil; no open wastewater channel.
+Avoid: claims of proven seawater tolerance, giant orchard trees, open-field irrigation, salt dumped on land, fantasy machinery, people, logos, watermarks, illegible dense labels.
+```

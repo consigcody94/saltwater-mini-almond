@@ -25,6 +25,14 @@ ledger, a mini-tree compartment model, and uncertainty/sensitivity displays.
 All candidate states are `NOT EVALUATED`. The values visible in this concept
 are illustrative interface content, not outputs from the AlmondLab simulator.
 
+## 04 — Four-stream closed-loop greenhouse, version 2
+
+Adds explicit, color-separated feed seawater, clean product water, captured
+drainage, and brine-concentrate paths. It also shows remineralization/blending,
+condensate recovery, sealed root-zone containers, secondary brine containment,
+and EC/Na/Cl/flow/tank/environment sensing. This is an architectural research
+concept, not a construction drawing or a biological result.
+
 Built-in OpenAI image generation was used. The exact production prompts are in
 [PROMPTS.md](PROMPTS.md).
 
