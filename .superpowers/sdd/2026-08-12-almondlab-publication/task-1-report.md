@@ -125,6 +125,13 @@ rerun, with no edit, passed `1 passed in 0.72s`; this is recorded as a transient
 concurrent shared-worktree verifier failure, not hidden as a clean full result.
 The post-edit Task 1 suite above is the authoritative focused result.
 
+After the owned-only commit, a stable cache-disabled full rerun with an
+isolated temporary directory completed separately:
+
+```text
+694 passed in 114.86s
+```
+
 Independent Draft 2020-12 schema check using the preinstalled external runtime:
 
 ```text
