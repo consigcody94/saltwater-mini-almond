@@ -1406,6 +1406,176 @@ def test_event_authority_rejects_constructor_valid_water_flow_kind_mutation() ->
     assert not audit.balanced
 
 
+def test_authority_forbids_treatment_provenance_on_core_internal_water_flow() -> None:
+    """Core transport cannot acquire treatment provenance absent event authority."""
+
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    event = _flow(phase=OperatorPhase.TREATMENT_BLENDING)
+    result = _step(state, duration=0.25, water_flows=(event,))
+    forged = tuple(
+        replace(
+            row,
+            treatment_model_id="fake-ro",
+            treatment_model_version="9.9",
+        )
+        for row in result.ledger
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        forged,
+        expected_events=(event,),
+        expected_transactions=(_single_flow_expectation(),),
+    )
+
+    assert audit.structural_errors
+    assert not audit.balanced
+
+
+def test_authority_forbids_cap_metadata_on_internal_water_only_flow() -> None:
+    """A water-flow transaction cannot forge selective-flux cap metadata."""
+
+    state = _two_tank_state(
+        source_stocks={ConservedEntity.NA: 20.0},
+        target_kind=CompartmentKind.GREENHOUSE_AIR,
+    )
+    event = _flow(
+        event_id="evaporate",
+        rate=1.0,
+        phase=OperatorPhase.EVAPORATION_TRANSPIRATION,
+        flow_kind=InternalWaterFlowKind.EVAPORATION,
+    )
+    result = _step(state, duration=0.25, water_flows=(event,))
+    forged = tuple(
+        replace(
+            row,
+            requested_amount=0.24925,
+            applied_amount=0.24925,
+            cap_fraction=1.0,
+        )
+        for row in result.ledger
+    )
+    expectation = LedgerTransactionExpectation(
+        transaction_id="tx:TEST:main:000000000000",
+        event_id="evaporate",
+        dt_hours=0.25,
+        amounts={ConservedEntity.WATER: 0.24925},
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        forged,
+        expected_events=(event,),
+        expected_transactions=(expectation,),
+    )
+
+    assert audit.structural_errors
+    assert not audit.balanced
+
+
+def test_authority_forbids_physical_transfer_id_on_internal_entity_flux() -> None:
+    """Selective plant transfers cannot masquerade as physical water links."""
+
+    state = _state(
+        {
+            "symplast": _compartment(
+                "symplast",
+                CompartmentKind.ROOT_SYMPLAST,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 1.0},
+            ),
+            "vacuole": _compartment(
+                "vacuole",
+                CompartmentKind.ROOT_VACUOLE,
+                volume_l=1.0,
+                water_mass_kg=1.0,
+                stocks={ConservedEntity.NA: 0.0},
+            ),
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    event = InternalEntityFlux(
+        event_id="sequester",
+        source="symplast",
+        target="vacuole",
+        kind=InternalEntityFluxKind.SEQUESTRATION,
+        entity=ConservedEntity.NA,
+        rate_per_hour=1.0,
+        phase=OperatorPhase.PLANT_ION_TRANSITIONS,
+        evidence_label=EvidenceLabel.HYPOTHESIS_PRIOR,
+    )
+    result = _step(state, duration=0.25, entity_fluxes=(event,))
+    forged = tuple(
+        replace(row, physical_transfer_id="fake-pipe") for row in result.ledger
+    )
+    expectation = LedgerTransactionExpectation(
+        transaction_id="tx:TEST:main:000000000000",
+        event_id="sequester",
+        dt_hours=0.25,
+        amounts={ConservedEntity.NA: 0.25},
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        forged,
+        expected_events=(event,),
+        expected_transactions=(expectation,),
+    )
+
+    assert audit.structural_errors
+    assert not audit.balanced
+
+
+def test_authority_forbids_internal_metadata_on_external_entity_flux() -> None:
+    """External amendment rows cannot carry physical-link or cap provenance."""
+
+    state = _two_tank_state(source_stocks={ConservedEntity.NA: 20.0})
+    event = ExternalBoundaryFlux(
+        event_id="amend",
+        compartment="source",
+        boundary_id="measured-amendment",
+        category=ExternalBoundaryCategory.AMENDMENT,
+        material_mode=MaterialTransferMode.ENTITY_ONLY,
+        volume_rate_l_per_hour=0.0,
+        entity_rates_per_hour={ConservedEntity.NA: 1.0},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+    result = _step(state, duration=0.25, boundary_fluxes=(event,))
+    forged = tuple(
+        replace(
+            row,
+            physical_transfer_id="fake-pipe",
+            requested_amount=0.25,
+            applied_amount=0.25,
+            cap_fraction=1.0,
+        )
+        for row in result.ledger
+    )
+    expectation = LedgerTransactionExpectation(
+        transaction_id="tx:TEST:main:000000000000",
+        event_id="amend",
+        dt_hours=0.25,
+        amounts={ConservedEntity.NA: 0.25},
+    )
+
+    audit = audit_ledger(
+        state,
+        result.state,
+        forged,
+        expected_events=(event,),
+        expected_transactions=(expectation,),
+    )
+
+    assert audit.structural_errors
+    assert not audit.balanced
+
+
 def test_phase_start_inventory_cannot_be_reused_by_same_phase_transfer() -> None:
     state = _state(
         {
@@ -1699,6 +1869,163 @@ def test_nonfinite_derived_compartment_quantities_fail_structurally(
 @pytest.mark.parametrize(
     ("quantity", "field_path"),
     [
+        ("density", "density_kg_l"),
+        ("concentration", "stocks.na.concentration"),
+    ],
+)
+def test_positive_derived_compartment_underflow_fails_structurally(
+    quantity: str, field_path: str
+) -> None:
+    """A positive physical quantity must not silently round down to zero."""
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _compartment(
+            "tank",
+            CompartmentKind.BLEND_TANK,
+            volume_l=1e300,
+            water_mass_kg=1e-300 if quantity == "density" else 1e300,
+            stocks={
+                ConservedEntity.NA: 0.0 if quantity == "density" else 1e-300
+            },
+        )
+
+    _assert_mass_numeric_error(exc_info, field_path)
+
+
+def test_positive_external_flow_underflow_fails_at_caller_quantity_path() -> None:
+    """A nonzero feed smaller than one subnormal cannot become a zero event."""
+
+    state = _state(
+        {
+            "tank": _compartment(
+                "tank",
+                CompartmentKind.BLEND_TANK,
+                volume_l=0.0,
+                water_mass_kg=0.0,
+                stocks={ConservedEntity.NA: 0.0},
+                empty_reference_density_kg_l=1.0,
+            )
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    smallest = float.fromhex("0x0.0000000000001p-1022")
+    feed = ExternalBoundaryFlux(
+        event_id="tiny-feed",
+        compartment="tank",
+        boundary_id="measured-feed",
+        category=ExternalBoundaryCategory.SOURCE_FEED,
+        material_mode=MaterialTransferMode.ADVECTIVE_AQUEOUS,
+        volume_rate_l_per_hour=smallest,
+        water_density_kg_l=1.0,
+        entity_rates_per_hour={ConservedEntity.NA: 0.0},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        _step(state, duration=0.25, boundary_fluxes=(feed,))
+
+    _assert_mass_numeric_error(exc_info, "boundary_fluxes.tiny-feed.volume_l")
+
+
+def test_minimum_subnormal_density_concentration_and_flow_remain_representable() -> None:
+    """Representable subnormals survive ratios and rate-duration products."""
+
+    smallest = float.fromhex("0x0.0000000000001p-1022")
+    tank = _compartment(
+        "small",
+        CompartmentKind.BLEND_TANK,
+        volume_l=1.0,
+        water_mass_kg=smallest,
+        stocks={ConservedEntity.NA: smallest},
+    )
+    assert tank.density_kg_l == smallest
+    assert tank.concentration(ConservedEntity.NA) == smallest
+
+    state = _state(
+        {
+            "tank": _compartment(
+                "tank",
+                CompartmentKind.BLEND_TANK,
+                volume_l=0.0,
+                water_mass_kg=0.0,
+                stocks={ConservedEntity.NA: 0.0},
+                empty_reference_density_kg_l=1.0,
+            )
+        },
+        frozenset({ConservedEntity.NA}),
+    )
+    feed = ExternalBoundaryFlux(
+        event_id="tiny-feed",
+        compartment="tank",
+        boundary_id="measured-feed",
+        category=ExternalBoundaryCategory.SOURCE_FEED,
+        material_mode=MaterialTransferMode.ADVECTIVE_AQUEOUS,
+        volume_rate_l_per_hour=4.0 * smallest,
+        water_density_kg_l=1.0,
+        entity_rates_per_hour={ConservedEntity.NA: 4.0 * smallest},
+        current_mixture_advection=False,
+        phase=OperatorPhase.EXTERNAL_FEED_AMENDMENT,
+        evidence_label=PHYSICS,
+    )
+
+    result = _step(state, duration=0.25, boundary_fluxes=(feed,))
+
+    assert result.state.compartments["tank"].volume_l == smallest
+    assert result.state.compartments["tank"].water_mass_kg == smallest
+    assert result.state.compartments["tank"].stocks[ConservedEntity.NA] == smallest
+
+
+@pytest.mark.parametrize("m_dot", [1e-300, -1e-300])
+def test_multiply_divide_preserves_finite_result_across_extreme_scale(
+    m_dot: float,
+) -> None:
+    """Evaluation order must not erase a representable signed result."""
+
+    assert closed_form_tank_concentration(
+        0.0, 0.0, m_dot, 1e300, 0.0, 1e300
+    ) == m_dot
+
+
+def test_multiply_divide_preserves_minimum_subnormal_when_representable() -> None:
+    smallest = float.fromhex("0x0.0000000000001p-1022")
+
+    assert closed_form_tank_concentration(
+        0.0, 0.0, 4.0 * smallest, 4.0, 0.0, 1.0
+    ) == smallest
+
+
+def test_positive_multiply_divide_underflow_fails_at_caller_quantity_path() -> None:
+    smallest = float.fromhex("0x0.0000000000001p-1022")
+
+    with pytest.raises(AlmondLabError) as exc_info:
+        closed_form_tank_concentration(
+            0.0, 0.0, smallest, 4.0, 0.0, 1.0
+        )
+
+    _assert_mass_numeric_error(exc_info, "closed_form_tank_concentration")
+
+
+def test_huge_safe_withdrawal_limit_saturates_at_requested_substep() -> None:
+    """An unrepresentably huge safe limit must not reject a small requested step."""
+
+    state = _two_tank_state(
+        source_volume_l=1e300,
+        source_density=1.0,
+        source_stocks={ConservedEntity.NA: 0.0},
+    )
+    event = _flow(rate=1e-300)
+
+    result = _step(state, duration=0.25, water_flows=(event,))
+
+    assert result.substeps == 1
+    assert result.state.compartments["target"].volume_l == 2.5e-301
+
+
+@pytest.mark.parametrize(
+    ("quantity", "field_path"),
+    [
         ("volume", "total_volume_l"),
         ("water", "total_water_mass_kg"),
         ("stock", "total_stock.na"),
@@ -1896,6 +2223,32 @@ def test_closed_form_overflow_fails_structurally() -> None:
     _assert_mass_numeric_error(exc_info, "closed_form_tank_concentration")
 
 
+@pytest.mark.parametrize(
+    ("c0", "c_in"),
+    [
+        (1.0, 1e16),
+        (1e-17, 1.0),
+        (1e-12, 1e4),
+    ],
+)
+def test_closed_form_zero_time_returns_initial_condition_exactly(
+    c0: float, c_in: float
+) -> None:
+    """The analytical initial condition is exact despite disparate scales."""
+
+    assert closed_form_tank_concentration(c0, c_in, 0.0, 1.0, 1.0, 0.0) == c0
+
+
+def test_closed_form_small_positive_time_uses_stable_exponential_increment() -> None:
+    """Tiny positive time must not be rounded into the zero-time cancellation path."""
+
+    observed = closed_form_tank_concentration(
+        1.0, 1e16, 0.0, 1.0, 1.0, 1e-20
+    )
+
+    assert observed == pytest.approx(1.0001, rel=1e-15, abs=0.0)
+
+
 def test_finite_extremes_remain_supported() -> None:
     tank = _compartment(
         "tank",
@@ -2091,7 +2444,15 @@ def test_step_halving_reduces_split_phase_purge_error() -> None:
 
 @given(
     volume=st.floats(min_value=1.0, max_value=1e5, allow_nan=False, allow_infinity=False),
-    stock=st.floats(min_value=0.0, max_value=1e8, allow_nan=False, allow_infinity=False),
+    stock=st.one_of(
+        st.just(0.0),
+        st.floats(
+            min_value=1e-300,
+            max_value=1e8,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
+    ),
     fraction=st.floats(min_value=1e-6, max_value=0.9, allow_nan=False, allow_infinity=False),
 )
 def test_property_internal_transfer_preserves_nonnegativity_and_both_carriers(

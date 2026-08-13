@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from math import exp, fsum, isclose, isfinite
+from fractions import Fraction
+from math import expm1, fsum, isclose
 import re
 from types import MappingProxyType
 from typing import Final
@@ -170,16 +171,15 @@ def _finite_product(
     *,
     code: str = _MASS_NUMERIC_CODE,
 ) -> float:
-    try:
-        result = left * right
-    except OverflowError as error:
-        fail(
-            code,
-            "derived product must remain finite",
-            field_path,
-            {"cause": type(error).__name__},
-        )
-    return _finite_result(result, field_path, code=code)
+    exact = _exact_fraction(left, field_path, code=code) * _exact_fraction(
+        right, field_path, code=code
+    )
+    return _rounded_fraction(
+        exact,
+        field_path,
+        code=code,
+        operation="product",
+    )
 
 
 def _finite_ratio(
@@ -189,11 +189,75 @@ def _finite_ratio(
     *,
     code: str = _MASS_NUMERIC_CODE,
 ) -> float:
+    if denominator == 0.0:
+        fail(code, "derived ratio denominator must be nonzero", field_path)
+    exact = _exact_fraction(numerator, field_path, code=code) / _exact_fraction(
+        denominator, field_path, code=code
+    )
+    return _rounded_fraction(
+        exact,
+        field_path,
+        code=code,
+        operation="ratio",
+    )
+
+
+def _exact_fraction(
+    value: float,
+    field_path: str,
+    *,
+    code: str,
+) -> Fraction:
+    """Return the exact rational represented by one finite binary64 value."""
+
+    converted = _finite_result(value, field_path, code=code)
+    return Fraction.from_float(converted)
+
+
+def _rounded_fraction(
+    exact: Fraction,
+    field_path: str,
+    *,
+    code: str,
+    operation: str,
+) -> float:
+    """Correctly round an exact result and reject overflow or silent underflow."""
+
+    if exact == 0:
+        return 0.0
     try:
-        result = numerator / denominator
-    except (OverflowError, ZeroDivisionError) as error:
-        fail(code, "derived ratio must remain finite", field_path, {"cause": type(error).__name__})
+        result = float(exact)
+    except OverflowError as error:
+        fail(
+            code,
+            f"derived {operation} must remain finite",
+            field_path,
+            {"cause": type(error).__name__},
+        )
+    if result == 0.0:
+        fail(
+            code,
+            f"derived {operation} must not underflow a nonzero quantity",
+            field_path,
+        )
     return _finite_result(result, field_path, code=code)
+
+
+def _exact_multiply_divide(
+    left: float,
+    right: float,
+    denominator: float,
+    field_path: str,
+    *,
+    code: str,
+) -> Fraction:
+    if denominator == 0.0:
+        fail(code, "derived ratio denominator must be nonzero", field_path)
+    return (
+        _exact_fraction(left, field_path, code=code)
+        * _exact_fraction(right, field_path, code=code)
+        / _exact_fraction(denominator, field_path, code=code)
+    )
 
 
 def _finite_multiply_divide(
@@ -204,19 +268,55 @@ def _finite_multiply_divide(
     *,
     code: str = _MASS_NUMERIC_CODE,
 ) -> float:
-    """Evaluate ``left * right / denominator`` without avoidable overflow."""
+    """Correctly round ``left * right / denominator`` as one exact expression."""
 
-    if denominator == 0.0:
-        fail(code, "derived ratio denominator must be nonzero", field_path)
-    candidates: list[float] = []
-    for numerator, multiplier in ((left / denominator, right), (right / denominator, left)):
-        if isfinite(numerator):
-            result = numerator * multiplier
-            if isfinite(result):
-                candidates.append(result)
-    if not candidates:
-        fail(code, "derived multiply/divide result must remain finite", field_path)
-    return _finite_result(candidates[0], field_path, code=code)
+    exact = _exact_multiply_divide(
+        left,
+        right,
+        denominator,
+        field_path,
+        code=code,
+    )
+    return _rounded_fraction(
+        exact,
+        field_path,
+        code=code,
+        operation="multiply/divide result",
+    )
+
+
+def _finite_multiply_divide_capped(
+    left: float,
+    right: float,
+    denominator: float,
+    upper_bound: float,
+    field_path: str,
+    *,
+    code: str = _MASS_NUMERIC_CODE,
+) -> float:
+    """Return ``min(left * right / denominator, upper_bound)`` exactly.
+
+    Comparing exact rationals before binary64 conversion lets a conservative
+    limiter retain its already-safe requested interval when the unconstrained
+    safe limit is larger than binary64 can represent.
+    """
+
+    exact = _exact_multiply_divide(
+        left,
+        right,
+        denominator,
+        field_path,
+        code=code,
+    )
+    exact_upper_bound = _exact_fraction(upper_bound, field_path, code=code)
+    if exact >= exact_upper_bound:
+        return upper_bound
+    return _rounded_fraction(
+        exact,
+        field_path,
+        code=code,
+        operation="multiply/divide result",
+    )
 
 
 def _freeze_stocks(
@@ -1250,14 +1350,12 @@ def _substep_limit(
                 f"compartments.{compartment_id}.withdrawal_denominator",
             )
             if denominator > 0.0:
-                allowed = min(
+                allowed = _finite_multiply_divide_capped(
+                    MAX_ADVECTIVE_WITHDRAWAL_FRACTION,
+                    initial_volume,
+                    denominator,
                     allowed,
-                    _finite_multiply_divide(
-                        MAX_ADVECTIVE_WITHDRAWAL_FRACTION,
-                        initial_volume,
-                        denominator,
-                        f"compartments.{compartment_id}.substep_hours",
-                    ),
+                    f"compartments.{compartment_id}.substep_hours",
                 )
             phase_start = _finite_sum(
                 (
@@ -2172,6 +2270,8 @@ def _audit_event_authority(
                 row.kind is not LedgerEntryKind.INTERNAL
                 or row.phase is not event.phase
                 or row.transfer_mode is not event.transfer_mode
+                or row.boundary_category is not None
+                or row.internal_flux_kind is not None
                 or (row.compartment, row.counterparty)
                 not in {
                     (event.source, event.target),
@@ -2180,6 +2280,28 @@ def _audit_event_authority(
                 or (row.amount < 0.0 and row.compartment != event.source)
                 or (row.amount > 0.0 and row.compartment != event.target)
                 or row.physical_transfer_id != event.physical_transfer_id
+                or row.requested_amount is not None
+                or row.applied_amount is not None
+                or row.cap_fraction is not None
+                or row.adapter_id is not None
+                or row.adapter_version is not None
+                or row.adapter_hash is not None
+                or row.treatment_model_id is not None
+                or row.treatment_model_version is not None
+                or (
+                    row.entity is ConservedEntity.WATER
+                    and (
+                        row.carrier_volume_l is None
+                        or row.water_density_kg_l is None
+                    )
+                )
+                or (
+                    row.entity is not ConservedEntity.WATER
+                    and (
+                        row.carrier_volume_l is not None
+                        or row.water_density_kg_l is not None
+                    )
+                )
                 for row in rows
             ):
                 errors.append(
@@ -2216,6 +2338,31 @@ def _audit_event_authority(
                 or row.counterparty != event.boundary_id
                 or row.boundary_category is not event.category
                 or (row.amount < 0.0 if event.direction > 0.0 else row.amount > 0.0)
+                or row.internal_flux_kind is not None
+                or row.internal_water_flow_kind is not None
+                or row.physical_transfer_id is not None
+                or row.requested_amount is not None
+                or row.applied_amount is not None
+                or row.cap_fraction is not None
+                or row.adapter_id is not None
+                or row.adapter_version is not None
+                or row.adapter_hash is not None
+                or row.treatment_model_id is not None
+                or row.treatment_model_version is not None
+                or (
+                    row.entity is ConservedEntity.WATER
+                    and (
+                        row.carrier_volume_l is None
+                        or row.water_density_kg_l is None
+                    )
+                )
+                or (
+                    row.entity is not ConservedEntity.WATER
+                    and (
+                        row.carrier_volume_l is not None
+                        or row.water_density_kg_l is not None
+                    )
+                )
                 for row in rows
             ):
                 errors.append(
@@ -2227,7 +2374,20 @@ def _audit_event_authority(
                 or row.phase is not event.phase
                 or row.transfer_mode is not MaterialTransferMode.ENTITY_ONLY
                 or row.entity is not event.entity
+                or row.boundary_category is not None
                 or row.internal_flux_kind is not event.kind
+                or row.internal_water_flow_kind is not None
+                or row.physical_transfer_id is not None
+                or row.carrier_volume_l is not None
+                or row.water_density_kg_l is not None
+                or row.requested_amount is None
+                or row.applied_amount is None
+                or row.cap_fraction is None
+                or row.adapter_id is not None
+                or row.adapter_version is not None
+                or row.adapter_hash is not None
+                or row.treatment_model_id is not None
+                or row.treatment_model_version is not None
                 or (row.compartment, row.counterparty)
                 not in {
                     (event.source, event.target),
@@ -2771,6 +2931,8 @@ def closed_form_tank_concentration(
             "volume must be positive and purge/time nonnegative",
             "closed_form_tank_concentration",
         )
+    if converted["time"] == 0.0:
+        return converted["c0"]
     if converted["purge"] == 0.0:
         return _finite_sum(
             (
@@ -2784,35 +2946,36 @@ def closed_form_tank_concentration(
             ),
             "closed_form_tank_concentration",
         )
-    steady_state = _finite_sum(
-        (
-            converted["c_in"],
-            _finite_ratio(
-                converted["m_dot"],
-                converted["purge"],
-                "closed_form_tank_concentration",
-            ),
-        ),
-        "closed_form_tank_concentration",
-    )
     decay_exponent = -_finite_multiply_divide(
         converted["purge"],
         converted["time"],
         converted["volume"],
         "closed_form_tank_concentration",
     )
-    departure = _finite_sum(
-        (converted["c0"], -steady_state),
+    transition_fraction = _finite_result(
+        -expm1(decay_exponent),
+        "closed_form_tank_concentration.transition_fraction",
+    )
+    inflow_departure = _finite_sum(
+        (converted["c_in"], -converted["c0"]),
+        "closed_form_tank_concentration",
+    )
+    inflow_change = _finite_product(
+        inflow_departure,
+        transition_fraction,
+        "closed_form_tank_concentration",
+    )
+    source_change = _finite_multiply_divide(
+        converted["m_dot"],
+        transition_fraction,
+        converted["purge"],
         "closed_form_tank_concentration",
     )
     return _finite_sum(
         (
-            steady_state,
-            _finite_product(
-                departure,
-                exp(decay_exponent),
-                "closed_form_tank_concentration",
-            ),
+            converted["c0"],
+            inflow_change,
+            source_change,
         ),
         "closed_form_tank_concentration",
     )
