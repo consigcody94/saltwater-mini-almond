@@ -4,26 +4,40 @@
 
 **Goal:** Close every contract, physical-design, chemistry, scenario, and calibration blocker that must be resolved before the Task 4 synthetic discovery/confirmation generator can enter GREEN implementation.
 
-**Architecture:** Keep the registered 720-plant discovery design immutable, add a separate confirmation-design contract, and require canonical whole-bundle revalidation before Task 4 creates RNG or files. Replace the v1.3 synthetic-scenario shape with an explicit v1.4 schema whose unit-bearing values, two-water forcing schedules, scenario edit paths, water-recipe lineage, and calibration registration are complete inputs rather than code defaults.
+**Architecture:** Keep the registered 720-plant discovery design immutable, add a separate confirmation-design contract, and require canonical whole-bundle revalidation before any future Task 4 outcome RNG or files; the current runtime slice creates neither. Replace the v1.3 synthetic-scenario shape with an explicit v1.4 schema whose unit-bearing values, two-water forcing schedules, scenario edit paths, water-recipe lineage, and calibration registration are complete inputs rather than code defaults.
 
 **Tech Stack:** Python 3.12, Pydantic 2, frozen/slots dataclasses, NumPy `SeedSequence`/`PCG64`, PyYAML strict loader, existing AlmondLab chemistry/domain/provenance APIs, pytest, and exact authoring/package resource mirrors.
 
+**Runtime-alignment authority:** the LF rule committed at `608b761` and the
+immutable runtime-authority amendment committed at `ec35d56`, whose exact
+UTF-8/LF document SHA-256 is
+`f3da58e10b0e051e181c80163d05c856a001f1f29e8c18383278ae63c7f9aeef`,
+control only the aligned runtime boundaries in §§3.2 and 10 and the directly
+conflicting start-gate text below. This plan does not rewrite the approved
+prospective registration at `f200edd` + `d5412a9` or create a competing
+scientific authority.
+
 ## Global Constraints
 
-- This plan repairs prerequisites only. It does not implement `src/almondlab/simulate.py`, generate a cohort, calibrate a mechanism, or claim any Acceptance 7/8/9/16 result.
+- Apart from the narrow `ec35d56` exception, this plan repairs prerequisites
+  only. That exception permits `src/almondlab/simulate.py` solely for
+  discovery-only `CohortDesignBundle` and `Paper1SimulationConfig`
+  assembly/revalidation. It does not authorize Task 4 outcome RNG, files,
+  calibration, confirmation, generation, tournament assembly, or any
+  Acceptance 7/8/9/16 result.
 - Every biological or generated value remains `hypothesis_prior` or `synthetic_only`. No gene efficacy, salt tolerance, survival, food-safety, containment, permit, author, institution, funding, or preferred-candidate claim is authorized.
 - No result or serialized field may be named `winner` or `best_candidate`. The only non-negative-test filename exception is the addendum-required `winner_curse.yaml` input fixture; its serialized keys still obey the ban.
 - The whole independently transformed composite-root plant is the construct-level biological unit; the run-qualified reservoir/loop is the water-treatment unit.
 - Discovery remains exactly 9 groups × 2 waters × 2 runs × 4 reservoirs per water/run × 5 plants per group/reservoir = 720 plants.
-- Confirmation contains one to four externally selected C1–C6 IDs in registered order plus `empty_vector`, exactly six reservoirs per water across at least two later runs, and one prospectively frozen cell size of exactly 5 or 6 plants.
-- Discovery and confirmation must be disjoint in plant, physical transformation-batch, reservoir, water-batch, and run IDs; non-null event IDs are disjoint as defense in depth.
-- A run name is not temporal evidence. `max(discovery.run_sequence_ordinal) < min(confirmation.run_sequence_ordinal)` is mandatory and ordinals are never parsed from `run_id`.
+- Final Task 3 mechanically supports one to four selected C1–C6 IDs in registered order plus `empty_vector`, exactly six reservoirs per water across at least two later runs, and cell size 5 or 6; no such Task 4 production family is currently registered.
+- Any future registered discovery/confirmation pair must be disjoint in plant, physical transformation-batch, reservoir, water-batch, and run IDs; non-null event IDs are disjoint as defense in depth.
+- For any future registered pair, a run name is not temporal evidence: `max(discovery.run_sequence_ordinal) < min(confirmation.run_sequence_ordinal)` is mandatory and ordinals are never parsed from `run_id`.
 - Task 4 must call the final approved Task 3 canonical revalidation boundary before RNG construction or filesystem mutation.
 - All synthetic constants live in versioned configuration with exact units and evidence labels. Python/Pydantic defaults are prohibited for scientific values.
 - ECw is a measured typed field, never an ion generator or electroneutrality oracle. Bicarbonate and phosphate must not be double-counted when alkalinity is the charge term used by the approved core convention.
 - Existing v1.3 water values are hypothesis-prior design anchors, not empirical measurements. They must be archived exactly; an active recipe may not inherit an `empirically_calibrated` label.
 - All public inputs use exact primitive types, finite arithmetic, exact keys, canonical reconstruction, immutable nested values, and stable `AlmondLabError` codes.
-- The approved program specification, Paper 1 global constraints, Task 1/2 approved APIs, Task 4 preflight addendum, and final approved Task 3 API control in that order.
+- The approved program specification, Paper 1 global constraints, Task 1/2 approved APIs, Task 4 preflight addendum, and final approved Task 3 API retain their existing precedence, except for the sole discovery-only start-gate/runtime-interface deltas at `ec35d56`.
 
 ---
 
@@ -39,11 +53,12 @@ The following current-state facts are authoritative as of this preflight:
 | `configs/synthetic_scenarios.yaml` | `schema_version: "1.3.0"`, one `forcing`, eleven scalar `generator_parameters` | Raw SHA-256 `46286eb006fbfbaf13281dfe52d4c63c9dc00ff7b3ef0a8ee704146908f759cb` | Breaking, explicit migration is required. |
 | `src/almondlab/paper1_contracts.py` | `SyntheticScenarioConfig.forcing: RootZoneForcing` and `Mapping[str, float]` generator | Required-key set contains only eleven names | It cannot represent two waters, units, schedules, censoring, drift, death heterogeneity, or calibration. |
 | `Paper1DesignConfig` | discovery-only frozen identity | Nine groups, two discovery runs, four reservoirs/water/run, five plants/cell | Do not loosen it to represent confirmation. |
-| Uncommitted `src/almondlab/design.py` | moving Task 3 implementation | During this review it gained provisional `run_sequence_ordinal` and `ConfirmationDesignConfig` while remaining uncommitted | No provisional name or behavior is a Task 4 dependency until the exact commit is independently approved. |
+| Final `src/almondlab/design.py` | immutable Task 3 implementation | Final Task 3 commit `d242473269803fa16461f78e8784813272912fbb`; source SHA-256 `9ae36381d59c641728c01e1e04ef4a9f1106fc02332c9b352e3e71bc3ebf15b9`; `tests/test_design.py` SHA-256 `05565f4ac926809df35a1b9a8fac10404e27e0b0fdc8f01e1afbdd627bf5ffb3`; fixture SHA-256 `beecb5f2a3637aee52bcd74b5b717ff59f4d9bfe9a57a11429cf00950ee6a4b6` | Task 4 calls the exact final APIs and may not shadow, loosen, rename, or reconstruct them. |
 | `configs/model_domains.yaml` | `core_v1@1.0.0` allows only chassis `Vairo` | Raw SHA-256 `81bf2c2c442d07ec984010dd9c373d2da4fe776467b009246cd665609c159a71` | `chassis_interaction` must fail `DOMAIN_VIOLATION` until a second named synthetic chassis is prospectively added to a versioned `core_v1` policy. |
 | `tests/fixtures/candidate_effects.yaml` | non-null C1–C6 hypothesis anchors | Raw SHA-256 `4e92c1567227b9e1f6e0713b79890bfc652a5b21a8de013769eaaa01ac939c21` | These cannot serve as the `perfect_control`/global-null identity without an explicit neutral effect record. |
 
-Task 4 GREEN is forbidden until all of these gates are recorded:
+Full Task 4 outcome-generation GREEN remains forbidden until all of these
+gates are recorded:
 
 1. The final Task 3 commit is stable, independently approved, and its public API hash is copied into the Task 4 report.
 2. Discovery and confirmation roster/map/manifest/audit bundles exist, pass canonical revalidation, and have no retained same-run material.
@@ -52,12 +67,22 @@ Task 4 GREEN is forbidden until all of these gates are recorded:
 5. Both active full-ion recipes pass the independent signed-charge oracle, public `charge_balance_error`, and `core_v1` domain validation at the registered tolerance.
 6. The known-effect candidate, primary parameter, trade-off values, bracket, tolerances, and fit/holdout panel identities are prospectively registered.
 
+The sole current exception is the discovery-only assembly/revalidation slice
+at `ec35d56`: after this documentation alignment receives its own review, the
+exact registered discovery bundle may be assembled and revalidated, and the
+aggregate may be assembled/revalidated only with
+`(confirmation_config, confirmation_design) == (None, None)`. The mandatory
+root-seed-`20260812` Task 3 manifest replay is part of revalidation and is the
+only permitted PCG64 activity. No selectable seed, Task 4 RNG, files,
+calibration, confirmation family, generation, tournament, ranking, selection,
+or outcome is authorized by that exception.
+
 ## 2. Locked target file map and ownership
 
 | Owner | File | Change |
 |---|---|---|
-| Task 3 owner | `src/almondlab/design.py` | Finalize run ordinals, separate confirmation allocation, canonical whole-bundle revalidation, and exact discovery/confirmation identity audits. |
-| Task 3 owner | `tests/test_design.py` | RED/GREEN tests for the above without weakening the 720-plant discovery oracle. |
+| Final Task 3 authority | `src/almondlab/design.py` | Immutable at `d242473269803fa16461f78e8784813272912fbb`; no Task 3 edit is authorized by the current runtime slice. |
+| Final Task 3 authority | `tests/test_design.py` | Immutable source-hash oracle for the final API; current work may run but not rewrite it. |
 | Coordinated Task 1 contract owner | `src/almondlab/paper1_contracts.py` | Add v1.4 strict quantity/generator/scenario/water-recipe contracts and explicit migration APIs. |
 | Coordinated Task 1 contract owner | `tests/test_paper1_contracts.py` | Unit, schema, migration, edit-path, two-water, and copy-bypass RED tests. |
 | Protocol/config owner | `configs/archive/experiment_paper1_v1_3.yaml` | Exact byte copy of the current v1.3 design; immutable historical hypothesis-prior anchor. |
@@ -75,7 +100,11 @@ Task 4 does not modify candidate identities/H3 rules, biology equations, core ch
 
 ### 3.1 Public types and signatures
 
-The current provisional Task 3 surface separates the discovery and confirmation **configuration types**, while retaining one type-dispatched allocation entry point. Approve and freeze this exact shape; do not add a parallel `randomize_confirmation` adapter:
+The final approved Task 3 surface at immutable commit
+`d242473269803fa16461f78e8784813272912fbb` separates the discovery and
+confirmation **configuration types** while retaining one type-dispatched
+allocation entry point. Consume this exact shape; do not add a parallel
+`randomize_confirmation` adapter:
 
 ```python
 DesignConfig = Paper1DesignConfig | ConfirmationDesignConfig
@@ -89,7 +118,8 @@ def randomize(
 ) -> RandomizationManifest: ...
 ```
 
-`ConfirmationDesignConfig` is frozen, slots-based, and has no defaults. Its provisional schema string and field name are exactly `"1.0"` and `runs`:
+`ConfirmationDesignConfig` is frozen, slots-based, and has no defaults. Its
+final schema string and field name are exactly `"1.0"` and `runs`:
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -110,11 +140,16 @@ class ConfirmationDesignConfig:
 
 Runtime validation freezes `schema_version == "1.0"`, `synthetic_only`, `composite_root`, the two registered water IDs, at least two later runs, exactly six reservoirs per water **across all later runs**, cell size 5 or 6, and the two registered transformation-batch blocks. `full_allocation_groups` is a derived tuple of one to four selected C1–C6 IDs in registry order plus `empty_vector`; it is not caller-settable.
 
-Add `run_sequence_ordinal: int` to `PositionSlot`, `AllocationRecord`, blinded projections, canonical payloads, fixture schemas, and position-map identity checks. The exact integer is positive and interoperable; one `run_id` maps to one ordinal and one ordinal maps to one `run_id`.
+The final API carries `run_sequence_ordinal: int` through `PositionSlot`,
+`AllocationRecord`, blinded projections, canonical payloads, fixture schemas,
+and position-map identity checks. The exact integer is positive and
+interoperable; one `run_id` maps to one ordinal and one ordinal maps to one
+`run_id`.
 
 ### 3.2 Canonical public revalidation
 
-The current provisional Task 3 implementation exposes these exact boundaries. The final approved commit must preserve them, or this section must be updated from the approved diff before Task 4 starts:
+The final Task 3 implementation at
+`d242473269803fa16461f78e8784813272912fbb` exposes these exact boundaries:
 
 ```python
 def revalidate_confirmation_design(
@@ -177,7 +212,7 @@ class CohortDesignBundle:
 def assemble_cohort_design_bundle(
     *,
     cohort_id: Literal["discovery", "confirmation"],
-    config: DesignConfig,
+    config: Paper1DesignConfig | ConfirmationDesignConfig,
     baseline_roster: BaselineRoster,
     position_map: PositionMap,
     manifest: RandomizationManifest,
@@ -185,13 +220,42 @@ def assemble_cohort_design_bundle(
 ) -> CohortDesignBundle: ...
 
 def revalidate_cohort_design_bundle(
-    value: CohortDesignBundle,
+    value: object,
     *,
-    config: DesignConfig,
+    config: Paper1DesignConfig | ConfirmationDesignConfig,
 ) -> CohortDesignBundle: ...
 ```
 
-The assembler/revalidator calls the Task 3 boundaries, derives `ExperimentalUnitSpec.from_design(...)` or `from_confirmation_design(...)`, calls `cohort_identity_set`, and proves: roster plant IDs equal manifest plant IDs exactly; position IDs equal manifest position IDs exactly; each supplied plant and slot appears once; allocation fields agree with the physical roster/slot; no material remains; allocation/config/input hashes are correct; and the supplied audit equals a fresh audit by canonical content. Assembly of a discovery/confirmation pair additionally calls `validate_cohort_separation`. It rejects `isinstance`-only surrogates, `object.__setattr__` corruption, dataclass `replace` bypasses, and stale nested hashes.
+The design `config` is an external validation authority and is deliberately not
+a sixth `CohortDesignBundle` field. The assembler/revalidator calls the final
+Task 3 boundaries, derives `ExperimentalUnitSpec.from_design(...)`, calls
+`cohort_identity_set`, independently recomputes the audit, and proves: roster
+plant IDs equal manifest plant IDs exactly; position IDs equal manifest
+position IDs exactly; each supplied plant and slot appears once; allocation
+fields agree with the physical roster/slot; no material remains; and
+allocation/config/input hashes are correct. For the registered discovery
+bundle it also replays `randomize(config, manifest.root_seed, ...)` and requires
+canonical manifest equality. It rejects `isinstance`-only surrogates,
+`object.__setattr__` corruption, dataclass `replace` bypasses, and stale nested
+hashes.
+
+The successful current role is discovery only and requires
+`type(config) is Paper1DesignConfig`. Confirmation assembly fails
+`CONFIRMATION_DESIGN_REGISTRATION_REQUIRED` at `cohort_id`, with only
+`details.required_authority ==
+"task4_registered_confirmation_cohort_bundle"`, before reading `config` or
+family inputs. Revalidation first checks the exact outer bundle and primitive
+role, then fails a confirmation role the same way before config/nested access.
+The future-facing `DesignConfig` union does not authorize confirmation success.
+A generic mechanically valid discovery bundle may pass this mechanical
+boundary, but only the exact registered discovery source, root seed, roster,
+map, allocation, manifest, audit, and hashes may pass aggregate assembly.
+
+Only after a future confirmation registration exists may aggregate assembly
+revalidate the two cohort audits independently with their own configs/specs
+and then call `validate_cohort_separation`. It must not pass both cohort sets
+to one single-cohort audit. This future behavior is descriptive only and is
+not current confirmation authority.
 
 ### 3.3 Required Task 3 RED tests
 
@@ -772,6 +836,12 @@ Create an exact `EndpointRegistry` from the frozen candidate H3 records plus the
 
 ## 9. Calibration registration
 
+This section preserves historical repair-plan context only. Its former
+interface and RED-test signatures are non-normative and were superseded by the
+approved proposal at `f200edd` + `d5412a9`, especially §§20.9.1–20.9.3. No
+calibration, panel use, root solving, or calibration implementation is
+authorized by `ec35d56`.
+
 The only numeric calibration target already authorized is `log(1.30)`, the design alternative. It is not evidence of an almond effect.
 
 The protocol owner must newly register:
@@ -814,7 +884,8 @@ def load_known_effect_registration(
 
 `effects_template` is canonically reconstructed through the Task 2 candidate-effect boundary and contains both the registered primary scalar and the explicit trade-off scalar. The loader proves `candidate_id`, `primary_parameter_id`, and template identity agree with `CandidateRegistry`; target/unit are exactly `log(1.30)`/`log-ratio`; bounds and tolerances are type-exact and ordered; panel hashes are distinct canonical SHA-256 strings; and none of the fields is a fitted value, residual, rank, decision, or preferred-candidate claim.
 
-The corrected API is frozen:
+The historical API printed below is retained only to identify the retired
+mapping-of-one-sequence contract; it must not be implemented:
 
 ```python
 def calibrate_mechanism_to_estimand(
@@ -887,7 +958,8 @@ Also pin endpoint roots, interior roots, missing brackets, nonconvergence, nonfi
 
 ## 10. Paper1SimulationConfig assembly boundary
 
-After all repaired inputs are approved, Task 4 creates:
+The current authorized aggregate retains every typed authority needed for
+canonical revalidation:
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -896,14 +968,19 @@ class Paper1SimulationConfig:
     candidates: CandidateRegistry
     candidate_effects: Mapping[str, CandidateEffects]
     model_domain: ModelDomain
+    water_recipes: Paper1WaterRecipeRegistry
+    scenario_registry: SyntheticScenarioRegistry
+    stop_policy: Task4StopPolicy
     discovery_design: CohortDesignBundle
+    confirmation_config: ConfirmationDesignConfig | None
     confirmation_design: CohortDesignBundle | None
     generator: SyntheticGeneratorConfig
     config_sha256s: Mapping[str, str]
     evidence_label: Literal[EvidenceLabel.SYNTHETIC_ONLY]
 ```
 
-Only a factory may construct it:
+Only the exact factory may construct it, and every consumer must call the
+exact revalidator:
 
 ```python
 def assemble_paper1_simulation_config(
@@ -914,15 +991,135 @@ def assemble_paper1_simulation_config(
     model_domain: ModelDomain,
     water_recipes: Paper1WaterRecipeRegistry,
     scenario_registry: SyntheticScenarioRegistry,
+    stop_policy: Task4StopPolicy,
     discovery_design: CohortDesignBundle,
+    confirmation_config: ConfirmationDesignConfig | None,
     confirmation_design: CohortDesignBundle | None,
-    raw_config_bytes_by_name: Mapping[str, bytes],
+    raw_authority_bytes_by_name: Mapping[str, bytes],
+) -> Paper1SimulationConfig: ...
+
+def revalidate_paper1_simulation_config(
+    value: object,
 ) -> Paper1SimulationConfig: ...
 ```
 
-The factory canonically reconstructs every input, validates water recipe/design agreement, verifies the scenario registry’s recipe hash, validates both cohort bundles and their six identity namespaces (the five required physical namespaces plus non-null transformation events), checks root-seed separation, and builds raw plus normalized SHA-256 entries for every consumed config. No caller supplies a result hash or pass flag.
+`generator` is derived internally and must canonically equal
+`scenario_registry.anchor.generator`; no independent generator argument is
+accepted. The factory synthesizes `EvidenceLabel.SYNTHETIC_ONLY`; no caller
+supplies an evidence label, result hash, pass flag, nominal-forcing payload, or
+forcing hash. It canonically reconstructs every authority, validates active
+recipes with `physical_use=False`, authenticates the exact scenario and
+36-record sensitivity inventories, derives/authenticates the 336-record
+nominal forcing payload without RNG, witnesses the registered discovery
+capacity outcomes, and returns detached base objects. Direct dataclass
+construction is never evidence that the factory ran.
+
+The private Task 4 CandidateEffects wrapper in `ec35d56` Section 6 is the sole
+revalidation authority for the containing map; Task 4 must not call Task 2's
+private `_canonical_effects` or create another registry. It requires exact
+`dict`/`MappingProxyType` C1-C6 order, exact base `CandidateEffects`, exact
+four-field reconstruction, an exact `MappingProxyType` parameter map,
+primitive strings, finite float parameter values, and candidate-key agreement.
+Ordinary access/copy/construction `Exception` failures (never `BaseException`)
+normalize to `CANDIDATE_PARAMETER_VIOLATION`; existing public Task 2
+`AlmondLabError` values pass through. After reconstruction, the complete
+normalized digest must equal
+`0d5b62381409a3ed814b4687291e7f4c4c987c8d84db63353b85c11789fe25e8`
+before public `apply_candidate_effects` is called. Structurally valid altered
+content instead fails `PAPER1_CONFIG_AUTHORITY_MISMATCH` at
+`fixtures/candidate_effects.yaml:normalized_sha256`. The returned map is a new
+`MappingProxyType` of detached base instances.
+
+`raw_authority_bytes_by_name` has exact outer type `dict` or exact
+`MappingProxyType`, primitive `str` keys, exact `bytes` values, and this exact
+eight-key package-logical inventory:
+
+```text
+configs/candidates.yaml
+configs/experiment_paper1.yaml
+configs/model_domains.yaml
+configs/paper1_task4_stop_policy.yaml
+configs/paper1_water_recipes.yaml
+configs/synthetic_scenarios.yaml
+fixtures/candidate_effects.yaml
+fixtures/paper1_small.yaml
+```
+
+No absolute path, drive, backslash, alias, missing/extra key, path-like key,
+`bytearray`, `memoryview`, subclass, lazy mapping, or custom mapping is
+accepted. The factory hashes these supplied raw bytes directly. The aggregate
+retains the Task 3 fixture digest, not the source bytes; aggregate revalidation
+and capacity preflight never reopen an authoring path, read a host path, or
+load `almondlab.resources`.
+
+`config_sha256s` is factory-computed and has exactly these 16 immutable keys:
+
+```text
+configs/candidates.yaml:raw_sha256
+configs/candidates.yaml:normalized_sha256
+configs/experiment_paper1.yaml:raw_sha256
+configs/experiment_paper1.yaml:normalized_sha256
+configs/model_domains.yaml:raw_sha256
+configs/model_domains.yaml::core_v1:normalized_sha256
+configs/paper1_task4_stop_policy.yaml:raw_sha256
+configs/paper1_task4_stop_policy.yaml:normalized_sha256
+configs/paper1_water_recipes.yaml:raw_sha256
+configs/paper1_water_recipes.yaml:normalized_sha256
+configs/synthetic_scenarios.yaml:raw_sha256
+configs/synthetic_scenarios.yaml:normalized_sha256
+fixtures/candidate_effects.yaml:raw_sha256
+fixtures/candidate_effects.yaml:normalized_sha256
+fixtures/paper1_small.yaml:raw_sha256
+paper1_nominal_forcing_schedule_v2:canonical_sha256
+```
+
+All values are lowercase 64-character SHA-256 strings over the exact raw bytes
+or canonically reconstructed typed payload named by the key. In particular,
+the Task 3 fixture raw digest remains
+`beecb5f2a3637aee52bcd74b5b717ff59f4d9bfe9a57a11429cf00950ee6a4b6`
+and the derived nominal-forcing digest remains
+`329cb311b6a5915e1090a2e6b059857af9531bec3cbc26779d112eb9a5cbbc96`.
+
+Confirmation pairing and error precedence are exact:
+
+| `confirmation_config` | `confirmation_design` | Current result |
+|---|---|---|
+| `None` | `None` | legal discovery-only assembly/revalidation |
+| `None` | non-`None` | `PAPER1_SIMULATION_CONFIG_INVALID` at `confirmation_design` |
+| non-`None` | `None` | `PAPER1_SIMULATION_CONFIG_INVALID` at `confirmation_design` |
+| non-`None` | non-`None` | `CONFIRMATION_DESIGN_REGISTRATION_REQUIRED` at `confirmation_design` before family inspection |
+
+An incomplete pair has message `confirmation config and design must be absent
+or present together`. A complete pair fails with message `confirmation design
+requires separately approved registration` and only
+`details.required_authority ==
+"task4_registered_confirmation_cohort_bundle"`. A current confirmation bundle
+request fails the same code at `cohort_id` before config/family access. Frozen
+raw, normalized, or registered discovery drift fails
+`PAPER1_CONFIG_AUTHORITY_MISMATCH`; non-exact bundle and aggregate shapes use
+`COHORT_DESIGN_INVALID` or `PAPER1_SIMULATION_CONFIG_INVALID` at the narrowest
+field. Existing Task 1/2/3, recipe, scenario, domain, and capacity codes pass
+through unchanged.
+
+This section authorizes assembly/revalidation only. Outside the mandatory
+frozen Task 3 manifest replay, it permits no RNG. It permits no host/resource
+load, filesystem output, calibration, fit/holdout use, confirmation family,
+candidate rank or selection, synthetic discovery outcome, tournament, wrapper,
+or outcome generation. The S014 `0.50` capacity exception may be witnessed and
+continued past only when its complete registered
+`WATER_BATCH_CAPACITY_EXCEEDED` identity matches `ec35d56` Section 4; it is a
+preflight structural outcome, never generated data.
 
 ## 11. Implementation tasks
+
+The checklist below preserves the prerequisite implementation history; it is
+not additional current authority. Under `ec35d56`, the only active production
+work after alignment review is the new `simulate.py` assembly/revalidation
+slice, its tests, and the narrowly coordinated discovery-capacity
+resource-read removal. Any older instruction below to edit Task 3, generate a
+fixture/outcome, materialize calibration panels, calibrate, publish, or create
+a confirmation family is either already satisfied history or remains deferred
+and cannot override §10.
 
 ### Task 1: Freeze and review the final Task 3 dependency
 
@@ -1158,12 +1355,13 @@ The only unconditional numeric migrations are: hierarchy 0.02/0.02/0.04/0.10; ca
 
 The two legacy water records—including every ion, ECw, pH, osmolality, and temperature value—are safe only as immutable historical anchors. None is safe to copy into an active recipe. The single v1.3 forcing coordinate is contingent on B04 and cannot be replicated or assigned to control by migration code. Frozen candidate/H3 identities, the two water IDs, and `log(1.30)` are contract identities/design targets rather than calibration or efficacy evidence. Every other numeric field in Sections 5–9 is a prospective registration.
 
-## 13. Review and completion gates
+## 13. Full generator/outcome-generation review and completion gates
 
-The contract repair is ready for Task 4 only when:
+The contract repair is ready for the full Task 4 generator/outcome-generation
+phase only when:
 
 - final Task 3 is committed/approved and its public API is copied verbatim;
-- discovery and confirmation design bundles pass canonical whole-bundle revalidation;
+- separately registered discovery and confirmation design bundles pass canonical whole-bundle revalidation;
 - all five physical namespaces and optional event IDs are disjoint;
 - v1.3 scenario loading fails with an explicit migration error;
 - every old generator value has a documented destination and no new value is hidden;
@@ -1177,4 +1375,13 @@ The contract repair is ready for Task 4 only when:
 - independent statistical/scientific and code/reproducibility reviews approve;
 - no Acceptance 7/8/9/16 pass artifact, biological finding, or physical-compliance claim exists.
 
-Until these statements are proved, Task 4 remains blocked at the contract/configuration gate rather than receiving guessed defaults.
+Until these statements are proved, the full Task 4 generator/outcome-generation
+phase remains blocked at the contract/configuration gate rather than receiving
+guessed defaults.
+
+The narrow discovery-only runtime slice authorized by `ec35d56` is explicitly
+exempt from this full-phase gate. After its required documentation review,
+`CohortDesignBundle` and `Paper1SimulationConfig` assembly/revalidation may
+proceed only with `(confirmation_config, confirmation_design) == (None, None)`,
+under the exact authority and scope limits in Section 10. This exception does
+not authorize the full generator/outcome-generation phase.
