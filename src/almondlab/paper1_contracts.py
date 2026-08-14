@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum, StrEnum
-from importlib import import_module, resources
+from importlib import import_module
 from math import fsum, isclose, isfinite, log
 from pathlib import Path
 from types import MappingProxyType
@@ -2311,9 +2311,6 @@ _TASK4_DISCOVERY_GROUP_IDS = frozenset(
 _TASK4_CONFIRMATION_CANDIDATE_IDS = frozenset(
     {"C1", "C2", "C3", "C4", "C5", "C6"}
 )
-_TASK3_DISCOVERY_SOURCE_RAW_SHA256 = (
-    "beecb5f2a3637aee52bcd74b5b717ff59f4d9bfe9a57a11429cf00950ee6a4b6"
-)
 _TASK3_DISCOVERY_ROOT_SEED = 20260812
 # Task 4 prospectively migrated only the water chemistry in the active design;
 # the registered physical Task 3 draw and its allocation identity are unchanged.
@@ -2479,23 +2476,8 @@ def _canonical_task3_capacity_authorities(
             "manifest",
         )
     if discovery_config:
-        try:
-            source_bytes = (
-                resources.files("almondlab.resources")
-                .joinpath("fixtures/paper1_small.yaml")
-                .read_bytes()
-            )
-        except Exception as error:
-            fail(
-                "WATER_BATCH_AUTHORITY_INVALID",
-                "registered Task 3 discovery source is unavailable",
-                "position_map",
-                {"cause_type": type(error).__name__},
-            )
         if (
-            hashlib.sha256(source_bytes).hexdigest()
-            != _TASK3_DISCOVERY_SOURCE_RAW_SHA256
-            or checked_manifest.root_seed != _TASK3_DISCOVERY_ROOT_SEED
+            checked_manifest.root_seed != _TASK3_DISCOVERY_ROOT_SEED
             or checked_manifest.config_sha256
             != _TASK4_ACTIVE_DISCOVERY_CONFIG_SHA256
             or checked_manifest.allocation_sha256

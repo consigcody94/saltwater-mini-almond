@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from functools import lru_cache
+import importlib.resources
 from pathlib import Path
 
 import pytest
@@ -1007,6 +1008,27 @@ def test_shared_source_capacity_requires_complete_task3_authority_inputs() -> No
         manifest=manifest,
         recipe_registry=load_paper1_water_recipes(RECIPE_PATH),
         water_loop=_registered_water_loop(),
+    )
+    assert len(audits) == 4
+    assert {audit.aggregate_expected_debit_l for audit in audits} == {3606.0}
+
+
+def test_shared_source_capacity_does_not_reopen_task3_source_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a hidden package read after exact typed Task 3 authority is supplied."""
+
+    config, baseline_roster, position_map, manifest = _discovery_authorities()
+
+    def forbidden_resource_read(*args: object, **kwargs: object) -> object:
+        raise AssertionError("capacity preflight reopened paper1_small.yaml")
+
+    monkeypatch.setattr(importlib.resources, "files", forbidden_resource_read)
+    audits = _capacity_preflight(
+        config,
+        baseline_roster,
+        position_map,
+        manifest,
     )
     assert len(audits) == 4
     assert {audit.aggregate_expected_debit_l for audit in audits} == {3606.0}

@@ -5,3 +5,5 @@ __pycache__/
 .hypothesis/
 .coverage
 htmlcov/
+.pytest_tmp/
+.pytest_tmp*/
