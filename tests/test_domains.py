@@ -537,6 +537,11 @@ def test_model_domain_loader_uses_identical_packaged_authority_and_is_strict(
     assert registry.sha256 == packaged.sha256
     assert registry.domains == packaged.domains
     malformed = tmp_path / "model_domains.yaml"
-    malformed.write_text(source.read_text().replace("version: 1.0.0", "version: 1.0.0\n  unknown: true"))
+    malformed.write_text(
+        source.read_text().replace(
+            "version: 1.1.0",
+            "version: 1.1.0\n  unknown: true",
+        )
+    )
     with pytest.raises(ValidationError):
         load_model_domains(malformed)

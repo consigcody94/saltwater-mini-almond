@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 
@@ -27,7 +28,39 @@ CANONICAL_FIXTURES = frozenset(
     }
 )
 CANONICAL_POLICIES = frozenset({"thresholds.yaml", "verification.yaml"})
-HASH_LOCKED_ROOT_CONFIGS = CANONICAL_POLICIES | {"model_domains.yaml"}
+TASK4_RUNTIME_CONFIGS = frozenset(
+    {
+        "candidates.yaml",
+        "experiment_paper1.yaml",
+        "model_domains.yaml",
+        "paper1_task4_stop_policy.yaml",
+        "paper1_water_recipes.yaml",
+        "synthetic_scenarios.yaml",
+    }
+)
+TASK4_ARCHIVE_CONFIGS = frozenset(
+    {
+        "archive/experiment_paper1_v1_3.yaml",
+        "archive/synthetic_scenarios_v1_3.yaml",
+    }
+)
+HASH_LOCKED_ROOT_CONFIGS = (
+    CANONICAL_POLICIES | TASK4_RUNTIME_CONFIGS | TASK4_ARCHIVE_CONFIGS
+)
+
+
+def _recursive_resources(
+    directory: Traversable,
+    prefix: str = "",
+) -> dict[str, Traversable]:
+    observed: dict[str, Traversable] = {}
+    for path in directory.iterdir():
+        relative = f"{prefix}{path.name}"
+        if path.is_file():
+            observed[relative] = path
+        elif path.is_dir():
+            observed.update(_recursive_resources(path, f"{relative}/"))
+    return observed
 
 
 def test_authoring_and_runtime_fixture_sets_are_exact_byte_mirrors() -> None:
@@ -44,11 +77,11 @@ def test_authoring_and_runtime_policy_sets_are_exact_byte_mirrors() -> None:
     root = Path(__file__).parents[1]
     authoring = root / "configs"
     packaged = resources.files("almondlab.resources").joinpath("configs")
-    assert {
-        path.name for path in packaged.iterdir() if path.is_file()
-    } == CANONICAL_POLICIES | {"model_domains.yaml"}
-    for name in CANONICAL_POLICIES:
-        assert (authoring / name).read_bytes() == packaged.joinpath(name).read_bytes()
+    expected = HASH_LOCKED_ROOT_CONFIGS
+    packaged_by_name = _recursive_resources(packaged)
+    assert set(packaged_by_name) == expected
+    for name in expected:
+        assert (authoring / name).read_bytes() == packaged_by_name[name].read_bytes()
 
 
 def test_hash_locked_resources_materialize_lf_under_windows_autocrlf(
@@ -68,7 +101,7 @@ def test_hash_locked_resources_materialize_lf_under_windows_autocrlf(
             root / "src" / "almondlab" / "resources" / "fixtures",
             root / "tests" / "fixtures",
         )
-        for path in directory.iterdir()
+        for path in directory.rglob("*")
         if path.is_file() and path.suffix in {".yaml", ".json", ".csv"}
     )
     expected: dict[Path, bytes] = {}

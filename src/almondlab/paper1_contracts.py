@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum, StrEnum
-from importlib import resources
+from importlib import import_module, resources
 from math import fsum, isclose, isfinite, log
 from pathlib import Path
 from types import MappingProxyType
@@ -52,6 +52,43 @@ if TYPE_CHECKING:
 
 _MAPPING_PROXY_TYPE = type(MappingProxyType({}))
 MAX_INTEROPERABLE_JSON_INTEGER = 2**53 - 1
+TASK4_NUMPY_VERSION = "2.5.2"
+TASK4_SCIPY_VERSION = "1.18.0"
+
+
+def require_task4_scientific_runtime() -> None:
+    """Require the exact prospective Task 4 numerical runtime."""
+
+    for distribution, expected in (
+        ("numpy", TASK4_NUMPY_VERSION),
+        ("scipy", TASK4_SCIPY_VERSION),
+    ):
+        try:
+            module = import_module(distribution)
+            received = getattr(module, "__version__", None)
+        except Exception as error:
+            fail(
+                "TASK4_RUNTIME_VERSION_MISMATCH",
+                f"Task 4 requires {distribution} {expected}",
+                f"{distribution}_version",
+                {
+                    "expected": expected,
+                    "received": "unavailable",
+                    "cause_type": type(error).__name__,
+                },
+            )
+        if type(received) is not str or received != expected:
+            fail(
+                "TASK4_RUNTIME_VERSION_MISMATCH",
+                f"Task 4 requires {distribution} {expected}",
+                f"{distribution}_version",
+                {
+                    "expected": expected,
+                    "received": (
+                        received if type(received) is str else "invalid"
+                    ),
+                },
+            )
 
 
 class StrictPaper1Model(BaseModel):

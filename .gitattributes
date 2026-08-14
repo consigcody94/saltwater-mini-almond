@@ -1,4 +1,5 @@
 /configs/model_domains.yaml text eol=lf
+/configs/candidates.yaml text eol=lf
 /configs/experiment_paper1.yaml text eol=lf
 /configs/paper1_task4_stop_policy.yaml text eol=lf
 /configs/paper1_water_recipes.yaml text eol=lf
@@ -18,3 +19,17 @@
 /scripts/registration/task4_registration_hash_materializer.py text eol=lf
 /configs/archive/experiment_paper1_v1_3.yaml text eol=lf
 /configs/archive/synthetic_scenarios_v1_3.yaml text eol=lf
+/src/almondlab/resources/configs/candidates.yaml text eol=lf
+/src/almondlab/resources/configs/experiment_paper1.yaml text eol=lf
+/src/almondlab/resources/configs/model_domains.yaml text eol=lf
+/src/almondlab/resources/configs/paper1_task4_stop_policy.yaml text eol=lf
+/src/almondlab/resources/configs/paper1_water_recipes.yaml text eol=lf
+/src/almondlab/resources/configs/synthetic_scenarios.yaml text eol=lf
+/src/almondlab/resources/configs/archive/experiment_paper1_v1_3.yaml text eol=lf
+/src/almondlab/resources/configs/archive/synthetic_scenarios_v1_3.yaml text eol=lf
+/tests/fixtures/global_null.yaml text eol=lf
+/tests/fixtures/known_effect.yaml text eol=lf
+/tests/fixtures/winner_curse.yaml text eol=lf
+/src/almondlab/resources/fixtures/global_null.yaml text eol=lf
+/src/almondlab/resources/fixtures/known_effect.yaml text eol=lf
+/src/almondlab/resources/fixtures/winner_curse.yaml text eol=lf

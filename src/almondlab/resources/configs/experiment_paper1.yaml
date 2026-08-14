@@ -1,0 +1,58 @@
+schema_version: "1.3"
+evidence_label: synthetic_only
+population: composite_root
+full_allocation_groups:
+  - C1
+  - C2
+  - C3
+  - C4
+  - C5
+  - C6
+  - empty_vector
+  - sham_transformation
+  - unmodified_parent
+water_conditions:
+  - water_id: nonsaline_nutrient_matched_control
+    evidence_label: hypothesis_prior
+    chemistry:
+      ec_kind: ECw
+      ec_ds_m: 1.5
+      temperature_k: 298.15
+      measured_osmolality_osmol_kg: 0.02
+      ph: 6.5
+      alkalinity_mmol_c_l: 1.0
+      na_mmol_l: 4.0
+      cl_mmol_l: 4.0
+      ca_mmol_l: 2.0
+      mg_mmol_l: 1.0
+      k_mmol_l: 2.0
+      total_b_mmol_l: 0.05
+      sulfate_mmol_l: 1.0
+      bicarbonate_mmol_l: 0.75
+      nitrate_mmol_l: 5.0
+      phosphate_mmol_l: 0.25
+  - water_id: pilot_selected_full_ion_marine_challenge
+    evidence_label: hypothesis_prior
+    chemistry:
+      ec_kind: ECw
+      ec_ds_m: 6.0
+      temperature_k: 298.15
+      measured_osmolality_osmol_kg: 0.1
+      ph: 6.5
+      alkalinity_mmol_c_l: 1.0
+      na_mmol_l: 44.0
+      cl_mmol_l: 44.0
+      ca_mmol_l: 2.0
+      mg_mmol_l: 1.0
+      k_mmol_l: 2.0
+      total_b_mmol_l: 0.05
+      sulfate_mmol_l: 1.0
+      bicarbonate_mmol_l: 0.75
+      nitrate_mmol_l: 5.0
+      phosphate_mmol_l: 0.25
+runs: [discovery_run_1, discovery_run_2]
+reservoirs_per_water_run: 4
+independent_plants_per_group_reservoir: 5
+balanced_transformation_batches: [batch_a, batch_b]
+construct_level_unit: independently_transformed_plant
+water_treatment_unit: reservoir

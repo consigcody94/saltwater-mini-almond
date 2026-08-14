@@ -293,7 +293,7 @@ def test_core_domain_yaml_loads_with_exact_scope() -> None:
         "nitrate",
         "phosphate",
     )
-    assert domain.allowed_chassis == ("Vairo",)
+    assert domain.allowed_chassis == ("Vairo", "SYNTHETIC_VAIRO_B")
     assert domain.allowed_life_stages == ("juvenile",)
     assert domain.calibration_datasets == ()
     assert domain.extrapolation_policy == "deny"

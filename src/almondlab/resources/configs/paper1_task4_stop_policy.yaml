@@ -1,0 +1,87 @@
+schema_version: "1.0.0"
+policy_id: paper1_task4_stop_policy@1.0.0
+evidence_label: hypothesis_prior
+absent_applicability: explicit_not_applicable
+concentration_rule:
+  rule_id: root_tissue_na_cl_k_concentration
+  analyte_ids: [na, cl, k]
+  compartment_kinds:
+    - root_apoplast
+    - root_symplast
+    - root_vacuole
+    - xylem
+    - shoot_tissue
+  phase_ids: [initialization, state_transition, terminal]
+  maximum: {value: 4.0, unit: "mmol L^-1", evidence_label: hypothesis_prior}
+  boundary: stop_above_equality_accepted
+  evidence_label: hypothesis_prior
+other_rules:
+  - rule_id: ecw
+    quantity_id: ecw_ds_m
+    compartment_kinds: [source_water, irrigation_tank]
+    phase_ids: [operational_sample]
+    minimum: null
+    maximum: {value: 10.0, unit: "dS m^-1", evidence_label: hypothesis_prior}
+    boundary: stop_above_equality_accepted
+    applicability_key_fields: []
+    aggregate_debit_preflight: false
+    evidence_label: hypothesis_prior
+  - rule_id: osmolality
+    quantity_id: measured_osmolality_osmol_kg
+    compartment_kinds: [mechanistic_water_forcing]
+    phase_ids: [integration]
+    minimum: null
+    maximum: {value: 0.4, unit: "osmol kg^-1", evidence_label: hypothesis_prior}
+    boundary: stop_above_equality_accepted
+    applicability_key_fields: []
+    aggregate_debit_preflight: false
+    evidence_label: hypothesis_prior
+  - rule_id: loop_compartment_volume
+    quantity_id: volume_l
+    compartment_kinds:
+      - treatment_feed
+      - treatment_product
+      - treatment_concentrate
+      - blend_tank
+      - irrigation_tank
+      - root_zone
+      - drainage
+      - condensate
+      - purge_holding
+    phase_ids: [initialization, state_transition, terminal]
+    minimum: {value: 0.1, unit: L, evidence_label: hypothesis_prior}
+    maximum: {value: 1000.0, unit: L, evidence_label: hypothesis_prior}
+    boundary: stop_outside_boundaries_accepted
+    applicability_key_fields: [loop_id, compartment_id]
+    aggregate_debit_preflight: false
+    evidence_label: hypothesis_prior
+  - rule_id: shared_source_batch_volume
+    quantity_id: volume_l
+    compartment_kinds: [shared_source_batch_inventory]
+    phase_ids: [preflight, initialization, state_transition, terminal]
+    minimum: {value: 0.0, unit: L, evidence_label: hypothesis_prior}
+    maximum: {value: 5000.0, unit: L, evidence_label: hypothesis_prior}
+    boundary: stop_outside_boundaries_accepted
+    applicability_key_fields: [cohort_id, water_batch_id]
+    aggregate_debit_preflight: true
+    evidence_label: hypothesis_prior
+  - rule_id: injury
+    quantity_id: injury
+    compartment_kinds: [plant_state]
+    phase_ids: [state_transition, terminal]
+    minimum: null
+    maximum: {value: 1.0, unit: dimensionless, evidence_label: hypothesis_prior}
+    boundary: stop_above_equality_accepted
+    applicability_key_fields: [plant_id]
+    aggregate_debit_preflight: false
+    evidence_label: hypothesis_prior
+  - rule_id: containment_discharge
+    quantity_id: unauthorized_discharge_volume_l
+    compartment_kinds: [external_unauthorized_discharge_ledger]
+    phase_ids: [initialization, state_transition, terminal]
+    minimum: null
+    maximum: {value: 0.0, unit: L, evidence_label: hypothesis_prior}
+    boundary: stop_above_equality_accepted
+    applicability_key_fields: [ledger_category]
+    aggregate_debit_preflight: false
+    evidence_label: hypothesis_prior
