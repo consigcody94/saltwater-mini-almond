@@ -1,23 +1,25 @@
 # Saltwater Mini-Almond Genetic Tournament & Virtual Laboratory
 
-[![Verification Suite](https://img.shields.io/badge/Verification%20Suite-1533%20Passed%20%7C%20100%25-brightgreen)](tests/)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![Stage 1 Registered Report](https://img.shields.io/badge/Protocol-Stage%201%20Registered%20Report-purple)](manuscript/stage1_registered_report.md)
-[![Live Manuscript](https://img.shields.io/badge/Live%20Paper-GitHub%20Pages-success)](https://consigcody94.github.io/saltwater-mini-almond/)
-[![Interactive Digital Twin](https://img.shields.io/badge/Digital%20Twin-Interactive%20Explorer-blueviolet)](https://consigcody94.github.io/saltwater-mini-almond/explorer.html)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Verification Suite](https://img.shields.io/badge/Verification%20Suite-1533%20Passed%20%7C%20100%25-059669.svg?style=flat-square)](tests/)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-2563eb.svg?style=flat-square)](https://www.python.org/downloads/)
+[![Stage 1 Registered Report](https://img.shields.io/badge/Protocol-Stage%201%20Registered%20Report-7c3aed.svg?style=flat-square)](manuscript/stage1_registered_report.md)
+[![Live Manuscript](https://img.shields.io/badge/Live%20Paper-GitHub%20Pages-0284c7.svg?style=flat-square)](https://consigcody94.github.io/saltwater-mini-almond/)
+[![Digital Twin Simulator](https://img.shields.io/badge/Digital%20Twin-Interactive%20Explorer-6366f1.svg?style=flat-square)](https://consigcody94.github.io/saltwater-mini-almond/explorer.html)
+[![License: MIT](https://img.shields.io/badge/License-MIT-475569.svg?style=flat-square)](LICENSE)
 
 > **Pre-Registered Research Protocol & Computational Virtual Laboratory (`almondlab`):**  
 > *A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems*  
-> 🚀 **[Launch Live Interactive Digital Twin Explorer](https://consigcody94.github.io/saltwater-mini-almond/explorer.html)** | 📄 **[Read Full Manuscript on GitHub Pages](https://consigcody94.github.io/saltwater-mini-almond/)**
+> [**Launch Live Digital Twin Explorer**](https://consigcody94.github.io/saltwater-mini-almond/explorer.html) &nbsp;|&nbsp; [**Read Full Manuscript on GitHub Pages**](https://consigcody94.github.io/saltwater-mini-almond/)
 
 ---
 
-## 📌 Overview & Executive Summary
+## <img src="assets/icons/book.svg" width="20" height="20" valign="middle"/> Executive Summary & Program Scope
 
-California produces over **80% of the world's commercial almond supply**, but increasing groundwater salinization, agricultural overdraft, and root-zone salt accumulation threaten the long-term viability of Central Valley orchards.
+California produces over **80% of the world's commercial almond supply** (approx. 2.6 to 3.1 billion pounds annually across 1.35 million bearing acres). However, escalating groundwater overdraft, root-zone salinization, and pumping curtailments under the **Sustainable Groundwater Management Act (SGMA)** threaten the long-term viability of Central Valley orchards.
 
-This repository packages the **Stage 1 Registered Report Protocol** and **Computational Virtual Laboratory (`almondlab`)** for a prospective genetic tournament evaluating six candidate salt-tolerance physiological modules engineered into compact composite-root almond (*Prunus dulcis*) rootstocks:
+Almond trees (*Prunus dulcis*) are salt-sensitive woody perennials that suffer foliar necrosis, yield collapse, and tree mortality when root-zone electrical conductivity exceeds $1.5\text{--}2.0\text{ dS/m}$. Conventional breeding is constrained by multi-year juvenility cycles, while open-field saline irrigation destroys soil structure and pollutes regional aquifers.
+
+This repository packages the **Stage 1 Registered Report Protocol** and **Computational Virtual Laboratory (`almondlab`)** for a prospective genetic tournament evaluating six candidate salt-tolerance physiological modules engineered into compact composite-root almond rootstocks:
 
 1. **SOS1-type active Na⁺ efflux** from root epidermis to rhizosphere.
 2. **HKT1;5-mediated xylem Na⁺ retrieval** and sheath unloading.
@@ -26,35 +28,35 @@ This repository packages the **Stage 1 Registered Report Protocol** and **Comput
 5. **Enhanced Ascorbate Peroxidase (*APX*)** for root ROS and lipid peroxidation mitigation.
 6. **Suberin biosynthesis pathway (*CYP86A1*)** for Casparian strip apoplastic barrier reinforcement.
 
-The biological evaluation is paired with a **Zero-Discharge Contained Greenhouse Architecture** featuring precision lysimeters, selective reverse osmosis (RO) desalination, nutrient remineralization, and solid salt crystallization.
+The biological evaluation is paired with a **Zero-Discharge Contained Greenhouse Architecture** featuring precision lysimeters, selective reverse osmosis (RO) desalination, continuous nutrient remineralization, and solid salt crystallization.
 
 ---
 
-## 💰 Techno-Economic Feasibility & Water Crisis Price Analysis
+## <img src="assets/icons/chart.svg" width="20" height="20" valign="middle"/> Techno-Economic Feasibility & Water Crisis Price Analysis
 
-Under the **Sustainable Groundwater Management Act (SGMA)** and chronic drought cycles, open-field orchards facing **$600 to $2,000+/AF water spot prices** become economically unviable, while soil salinity ($EC_e > 2.0\text{ dS/m}$) destroys over 50% of marketable yield.
+Under SGMA and drought cycles, open-field orchards facing **$600 to $2,000+/AF water spot prices** become economically unviable, while soil salinity ($EC_e > 2.0\text{ dS/m}$) destroys over 50% of marketable crop yield.
 
 ![Figure 8: Techno-Economic & Water Crisis Price Comparison Chart](manuscript/figures/08-water-crisis-economic-comparison.png)
-*Figure 8. Comprehensive economic comparison: (A) Levelized cost ($/lb) across water price trajectories showing AlmondLab cost parity at $450/AF; (B) Consumptive water footprint per pound of kernel (85% reduction); (C) Yield retention curves under increasing root-zone salinity; (D) 20-year cumulative cash flow during a simulated California megadrought shock.*
+*Figure 8. Multi-panel techno-economic analysis: (A) Levelized production cost ($/lb kernel) vs. water market spot price showing AlmondLab cost parity at $450/AF; (B) Consumptive water footprint per pound of almond kernel (85% reduction); (C) Yield retention curves under increasing root-zone salinity ($EC_e$, dS/m); (D) 20-year cumulative cash flow trajectory under a simulated California megadrought shock.*
 
-### Table: Comparative System Economics & Water Sensitivity
+### Comparative System Economics & Water Sensitivity
 
 | Dimension / Metric | Conventional Flood | Conventional Drip | Open Field + Desal | AlmondLab Closed-Loop CEA |
 |---|---|---|---|---|
 | **Consumptive Water Footprint** | 1,900 gal / lb | 1,400 gal / lb | 1,150 gal / lb | **285 gal / lb (-85% reduction)** |
 | **Initial CapEx ($/acre)** | $12,000 | $16,500 | $28,000 | **$75,000 (Facility + Automation)** |
-| **Cost @ $100/AF (Baseline)** | **$1.85 / lb** | $1.98 / lb | $2.82 / lb | $2.27 / lb |
-| **Cost @ $600/AF (Drought / SGMA)** | $2.88 / lb | $2.65 / lb | $3.04 / lb | **$2.39 / lb (Cost Parity)** |
-| **Cost @ $1,500/AF (Megadrought)** | $4.44 / lb | $3.85 / lb | $3.44 / lb | **$2.60 / lb (-32% cheaper)** |
+| **Cost @ $100/AF (Baseline Allocation)** | **$1.85 / lb** | $1.98 / lb | $2.82 / lb | $2.27 / lb |
+| **Cost @ $600/AF (Drought / SGMA Tier 1)** | $2.88 / lb | $2.65 / lb | $3.04 / lb | **$2.39 / lb (Cost Advantage)** |
+| **Cost @ $1,500/AF (Megadrought Peak)** | $4.44 / lb | $3.85 / lb | $3.44 / lb | **$2.60 / lb (-32% cheaper)** |
 | **Salinity Damage Threshold ($EC_e$)** | 1.5 dS/m | 1.5 dS/m | 2.2 dS/m | **4.0 dS/m (C1–C6 Resistance)** |
-| **Yield Drag @ $EC_e = 3.2\text{ dS/m}$** | **-32.3% loss** | **-32.3% loss** | -16.0% loss | **0.0% (Zero Yield Drag)** |
-| **20-Year Megadrought Net Profit** | -$12,400 / acre | +$18,000 / acre | +$42,000 / acre | **+$112,000 / acre (Payback: 6.2 yrs)** |
+| **Yield Loss at $EC_e = 3.2\text{ dS/m}$** | **-32.3% loss** | **-32.3% loss** | -16.0% loss | **0.0% (Zero Yield Drag)** |
+| **20-Year Megadrought Net Cash Flow** | -$12,400 / acre | +$18,000 / acre | +$42,000 / acre | **+$112,000 / acre (Payback: 6.2 yrs)** |
 
-*(See full economic report in [`manuscript/economic_water_crisis_analysis.md`](manuscript/economic_water_crisis_analysis.md)).*
+*(Full techno-economic analysis available in [`manuscript/economic_water_crisis_analysis.md`](manuscript/economic_water_crisis_analysis.md)).*
 
 ---
 
-## 🖼️ Complete Visual Architecture & Scientific Concepts
+## <img src="assets/icons/layers.svg" width="20" height="20" valign="middle"/> Complete Visual Architecture Series
 
 ### 1. Blinded Discovery & Confirmation Cohorts
 ![Blinded Discovery & Confirmation Layout](manuscript/figures/07-blinded-discovery-confirmation-layout-v5.png)
@@ -98,7 +100,7 @@ Under the **Sustainable Groundwater Management Act (SGMA)** and chronic drought 
 
 ---
 
-## 🧬 Candidate Genetic Modules (C1–C6)
+## <img src="assets/icons/dna.svg" width="20" height="20" valign="middle"/> Candidate Genetic Modules (C1–C6)
 
 | Candidate ID | Module Source & Name | Physiological Target | Primary H3 Assay Endpoint | Pre-Registered Falsification Gate |
 |---|---|---|---|---|
@@ -109,9 +111,12 @@ Under the **Sustainable Groundwater Management Act (SGMA)** and chronic drought 
 | **C5** | Enhanced Peroxidase (*APX*) | ROS & lipid peroxidation defense | Malondialdehyde (MDA) stress marker | $\Delta \le \ln(0.75)$ (25% reduction) |
 | **C6** | Suberin Synthase (*CYP86A1*) | Casparian strip apoplastic barrier | Endodermal suberin lamellae thickness ($\mu\text{m}$) | Absolute $\Delta \ge +0.20\,\mu\text{m}$ |
 
+*(Detailed plasmid maps and CRISPR target sites: [`manuscript/vector_specifications.md`](manuscript/vector_specifications.md)).*  
+*(Combinatorial stacking roadmap: [`manuscript/combinatorial_gene_stacking.md`](manuscript/combinatorial_gene_stacking.md)).*
+
 ---
 
-## 📊 Pre-Registered Decision Architecture
+## <img src="assets/icons/cpu.svg" width="20" height="20" valign="middle"/> Continuum Biophysics & Decision Architecture
 
 The discovery tournament enforces conservative falsification criteria to protect against false positives and winner's curse bias:
 
@@ -123,9 +128,11 @@ The discovery tournament enforces conservative falsification criteria to protect
   *(Marginal gate probabilities are strictly preserved and never multiplied)*.
 - **Leader Ties & Slot Capping:** Candidates within $A_{\max} - A[k] \le 0.02$ are labeled `co-leading`. At most four finalists ($\le 4$) advance to confirmatory trial.
 
+*(Mathematical continuum derivations: [`manuscript/biophysical_equations.md`](manuscript/biophysical_equations.md)).*
+
 ---
 
-## 💻 Virtual Laboratory CLI (`almondlab`)
+## <img src="assets/icons/terminal.svg" width="20" height="20" valign="middle"/> Virtual Laboratory Command-Line Interface (`almondlab`)
 
 The package includes a comprehensive command-line interface:
 
@@ -160,7 +167,7 @@ uv run almondlab report --output outputs/report.md
 
 ---
 
-## 🧪 Verification & Test Suite
+## <img src="assets/icons/flask.svg" width="20" height="20" valign="middle"/> Verification & Test Suite
 
 Run the full verification test suite (1,536 test items):
 
@@ -168,22 +175,25 @@ Run the full verification test suite (1,536 test items):
 uv run pytest --basetemp=.pytest_tmp
 ```
 
-All unit, property-based (Hypothesis), and acceptance tests pass with **100% green coverage** on Windows/Linux environments.
+All unit, property-based (Hypothesis), and acceptance tests pass with **100% green coverage** on Windows and POSIX environments.
 
 ---
 
-## 📄 Manuscript & Analysis Formats
+## <img src="assets/icons/book.svg" width="20" height="20" valign="middle"/> Technical Dossiers & Manuscript Formats
 
-- **Stage 1 Registered Report Markdown:** [`manuscript/stage1_registered_report.md`](manuscript/stage1_registered_report.md)
+- **Stage 1 Registered Report Protocol:** [`manuscript/stage1_registered_report.md`](manuscript/stage1_registered_report.md)
 - **Publication HTML Paper:** [`manuscript/stage1_registered_report.html`](manuscript/stage1_registered_report.html)
 - **Word Document (.docx):** [`manuscript/stage1_registered_report.docx`](manuscript/stage1_registered_report.docx)
-- **Techno-Economic Water Analysis:** [`manuscript/economic_water_crisis_analysis.md`](manuscript/economic_water_crisis_analysis.md)
-- **Machine-Readable Gates Audit:** [`manuscript/submission_gates.json`](manuscript/submission_gates.json)
-- **Visual Concepts Gallery:** [`assets/concepts/concept-gallery.html`](assets/concepts/concept-gallery.html)
+- **Techno-Economic Water Crisis Analysis:** [`manuscript/economic_water_crisis_analysis.md`](manuscript/economic_water_crisis_analysis.md)
+- **Synthetic Biology Vector Specifications:** [`manuscript/vector_specifications.md`](manuscript/vector_specifications.md)
+- **Continuum Biophysics & Equations:** [`manuscript/biophysical_equations.md`](manuscript/biophysical_equations.md)
+- **Combinatorial Gene Stacking Roadmap:** [`manuscript/combinatorial_gene_stacking.md`](manuscript/combinatorial_gene_stacking.md)
+- **Machine-Readable Submission Gates:** [`manuscript/submission_gates.json`](manuscript/submission_gates.json)
+- **Interactive Digital Twin Explorer:** [`docs/explorer.html`](docs/explorer.html)
 
 ---
 
-## ⚖️ Scientific Integrity & Watermarking Notice
+## <img src="assets/icons/shield.svg" width="20" height="20" valign="middle"/> Scientific Integrity & Watermarking Notice
 
 ```
 SYNTHETIC — NOT BIOLOGICAL EVIDENCE
@@ -192,7 +202,7 @@ SYNTHETIC — NOT BIOLOGICAL EVIDENCE
 
 ---
 
-## 📜 Citation & Metadata
+## <img src="assets/icons/book.svg" width="20" height="20" valign="middle"/> Citation & Metadata
 
 ```bibtex
 @article{almondlab2026stage1,
