@@ -4,10 +4,12 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Stage 1 Registered Report](https://img.shields.io/badge/Protocol-Stage%201%20Registered%20Report-purple)](manuscript/stage1_registered_report.md)
 [![Live Manuscript](https://img.shields.io/badge/Live%20Paper-GitHub%20Pages-success)](https://consigcody94.github.io/saltwater-mini-almond/)
+[![Interactive Digital Twin](https://img.shields.io/badge/Digital%20Twin-Interactive%20Explorer-blueviolet)](https://consigcody94.github.io/saltwater-mini-almond/explorer.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Pre-Registered Research Protocol & Computational Virtual Laboratory (`almondlab`):**  
-> *A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems*
+> *A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems*  
+> 🚀 **[Launch Live Interactive Digital Twin Explorer](https://consigcody94.github.io/saltwater-mini-almond/explorer.html)** | 📄 **[Read Full Manuscript on GitHub Pages](https://consigcody94.github.io/saltwater-mini-almond/)**
 
 ---
 

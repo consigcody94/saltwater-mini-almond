@@ -196,11 +196,13 @@ def generate_html() -> None:
     <span class="badge">Stage 1 Registered Report</span>
     <span class="badge">Plant Biotechnology</span>
     <span class="badge">Techno-Economics</span>
+    <a href="explorer.html" class="badge" style="background:#059669; color:#ffffff; padding:0.35rem 0.8rem; text-decoration:none; font-weight:700;">🚀 Launch Live Digital Twin Explorer</a>
     <h1>A Registered Genetic Tournament of Marine, Halophytic, and Native <i>Prunus</i> Salt-Response Modules in Compact Almond Root Systems</h1>
     <div class="meta">
         <p><strong>Format:</strong> Pre-Registered Research Protocol</p>
         <p><strong>Target Journal:</strong> Nature Biotechnology / In Silico Plants</p>
         <p><strong>Repository:</strong> <a href="https://github.com/consigcody94/saltwater-mini-almond" target="_blank">consigcody94/saltwater-mini-almond</a></p>
+        <p><strong>Interactive Simulator:</strong> <a href="explorer.html">Open Web Digital Twin</a></p>
         <p><strong>Version:</strong> 1.4-Registered (August 2026)</p>
     </div>
 </header>

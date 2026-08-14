@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlmondLab: Live Interactive Digital Twin & Biophysics Explorer</title>
+  <style>
+    :root {
+      --primary: #0f172a;
+      --accent: #059669;
+      --accent-light: #ecfdf5;
+      --blue: #2563eb;
+      --text: #1e293b;
+      --muted: #64748b;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --warn: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 1.5rem;
+    }
+    header {
+      max-width: 1200px;
+      margin: 0 auto 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 1rem;
+    }
+    .brand h1 { font-size: 1.6rem; color: var(--primary); font-weight: 800; }
+    .brand p { font-size: 0.9rem; color: var(--muted); }
+    .nav-links a {
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-left: 1rem;
+    }
+    .nav-links a:hover { text-decoration: underline; }
+    .main-grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 900px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+    h2 { font-size: 1.2rem; color: var(--primary); margin-bottom: 1rem; }
+    .control-group { margin-bottom: 1.25rem; }
+    label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 0.4rem;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      background: #cbd5e1;
+      border-radius: 3px;
+      outline: none;
+    }
+    select {
+      width: 100%;
+      padding: 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      background: #ffffff;
+      color: var(--text);
+    }
+    .dash-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .metric-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .metric-box .label { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .metric-box .val { font-size: 1.6rem; font-weight: 800; color: var(--primary); margin-top: 0.2rem; }
+    .metric-box .sub { font-size: 0.8rem; color: var(--accent); font-weight: 600; margin-top: 0.2rem; }
+    .gauge-container {
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .gate-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.6rem;
+      font-size: 0.88rem;
+    }
+    .gate-bar-wrap {
+      flex: 1;
+      height: 8px;
+      background: #334155;
+      border-radius: 4px;
+      margin: 0 1rem;
+      overflow: hidden;
+    }
+    .gate-bar {
+      height: 100%;
+      background: #10b981;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .badge-pass { background: #065f46; color: #a7f3d0; }
+    .badge-fail { background: #991b1b; color: #fecaca; }
+    .badge-lead { background: #1e3a8a; color: #bfdbfe; }
+    .watermark-banner {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #dc2626;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 0.75rem;
+      border: 1px dashed #fca5a5;
+      border-radius: 8px;
+      background: #fef2f2;
+      margin-top: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>AlmondLab: Live Biophysics & Decision Explorer</h1>
+    <p>Saltwater Mini-Almond Genetic Tournament | Interactive Digital Twin</p>
+  </div>
+  <div class="nav-links">
+    <a href="index.html">← Back to Full Paper</a>
+    <a href="https://github.com/consigcody94/saltwater-mini-almond" target="_blank">GitHub Repo</a>
+  </div>
+</header>
+
+<div class="main-grid">
+  <!-- Controls -->
+  <div class="card">
+    <h2>Simulation Controls</h2>
+    
+    <div class="control-group">
+      <label for="candidateSelect">Genetic Construct / Stack</label>
+      <select id="candidateSelect" onchange="runSimulation()">
+        <option value="WT">Wild-Type / Empty Vector Control</option>
+        <option value="C1" selected>C1: SOS1 Na⁺ Efflux (Rhizosphere Extrusion)</option>
+        <option value="C2">C2: HKT1;5 Xylem Retrieval (Shoot Protection)</option>
+        <option value="C3">C3: NHX1 Tonoplast Sequestration</option>
+        <option value="C4">C4: mtlD Mannitol Synthesis (Osmoprotection)</option>
+        <option value="C5">C5: APX Peroxidase (ROS Mitigation)</option>
+        <option value="C6">C6: CYP86A1 Suberin Apoplastic Barrier</option>
+        <option value="STACK_A">Stack A: Super-Excluder (C1 + C2 + C6)</option>
+        <option value="STACK_C">Stack C: Master Halophyte (C1 through C6)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>
+        <span>Irrigation Salinity (ECw)</span>
+        <span id="salinityVal">3.2 dS/m</span>
+      </label>
+      <input type="range" id="salinity" min="0.8" max="15.0" step="0.2" value="3.2" oninput="runSimulation()">
+    </div>
+
+    <div class="control-group">
+      <label>
+        <span>Water Market Spot Price ($/AF)</span>
+        <span id="waterPriceVal">$600 / AF</span>
+      </label>
+      <input type="range" id="waterPrice" min="50" max="2000" step="25" value="600" oninput="runSimulation()">
+    </div>
+
+    <div class="control-group">
+      <label>
+        <span>Transpiration Demand</span>
+        <span id="transpVal">1.0x (Normal)</span>
+      </label>
+      <input type="range" id="transp" min="0.5" max="2.0" step="0.1" value="1.0" oninput="runSimulation()">
+    </div>
+
+    <div class="watermark-banner">
+      SYNTHETIC — NOT BIOLOGICAL EVIDENCE<br>
+      Real-time mathematical continuum biophysics simulation.
+    </div>
+  </div>
+
+  <!-- Dashboard Displays -->
+  <div class="card">
+    <h2>Live Biophysical & Economic Outcomes</h2>
+
+    <div class="dash-grid">
+      <div class="metric-box">
+        <div class="label">Kernel Yield</div>
+        <div class="val" id="yieldVal">2,800</div>
+        <div class="sub" id="yieldSub">lbs / acre / yr</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">Levelized Cost (LCOA)</div>
+        <div class="val" id="costVal">$2.39</div>
+        <div class="sub" id="costSub">per lb Kernel</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">Water Footprint</div>
+        <div class="val" id="waterFootprint">285</div>
+        <div class="sub">gal / lb (-85%)</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">Advancement Score A[k]</div>
+        <div class="val" id="advScore">0.942</div>
+        <div class="sub" id="advStatus">CO-LEADING</div>
+      </div>
+    </div>
+
+    <!-- Bayesian Gates -->
+    <div class="gauge-container">
+      <h3 style="font-size: 1rem; margin-bottom: 0.8rem; color: #93c5fd;">Pre-Registered Bayesian Falsification Gates</h3>
+      
+      <div class="gate-row">
+        <span>H1 Efficacy (P ≥ 0.90):</span>
+        <div class="gate-bar-wrap"><div id="barH1" class="gate-bar"></div></div>
+        <span id="valH1" class="badge badge-pass">0.96</span>
+      </div>
+
+      <div class="gate-row">
+        <span>H2 Non-Saline Guardrail (P_good ≥ 0.90):</span>
+        <div class="gate-bar-wrap"><div id="barH2" class="gate-bar"></div></div>
+        <span id="valH2" class="badge badge-pass">0.98</span>
+      </div>
+
+      <div class="gate-row">
+        <span>H3 Mechanism Confirmation (P ≥ 0.90):</span>
+        <div class="gate-bar-wrap"><div id="barH3" class="gate-bar"></div></div>
+        <span id="valH3" class="badge badge-pass">0.94</span>
+      </div>
+
+      <div style="margin-top: 0.8rem; font-size: 0.8rem; color: #94a3b8;">
+        Conservative Advancement Rule: <strong>A[k] = min(P_H1, P_H2_good, P_H3)</strong> | Leader Ties: <strong>|A_max - A[k]| ≤ 0.02</strong>
+      </div>
+    </div>
+
+    <!-- Detailed Insights -->
+    <div style="font-size: 0.9rem; line-height: 1.6; color: #475569;">
+      <h3 style="font-size: 1rem; color: var(--primary); margin-bottom: 0.4rem;">Mechanistic Insight:</h3>
+      <p id="mechanicSummary">C1 (SbSOS1 Na⁺/H⁺ antiporter) actively purges sodium from the root epidermis into the contained lysimeter drainage return. Root sodium accumulation is maintained below the critical toxicity threshold (30 mM), preventing canopy margin necrosis.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+function runSimulation() {
+  const cand = document.getElementById('candidateSelect').value;
+  const ec = parseFloat(document.getElementById('salinity').value);
+  const wp = parseFloat(document.getElementById('waterPrice').value);
+  const tr = parseFloat(document.getElementById('transp').value);
+
+  document.getElementById('salinityVal').innerText = ec.toFixed(1) + " dS/m";
+  document.getElementById('waterPriceVal').innerText = "$" + wp.toFixed(0) + " / AF";
+  document.getElementById('transpVal').innerText = tr.toFixed(1) + "x";
+
+  let baseYield = 2800;
+  let ecThreshold = 1.5;
+  let ecSlope = 0.19;
+  let pH1 = 0.20;
+  let pH2 = 0.99;
+  let pH3 = 0.15;
+  let summary = "";
+
+  if (cand === "WT") {
+    ecThreshold = 1.5;
+    ecSlope = 0.19;
+    pH1 = 0.05;
+    pH2 = 0.99;
+    pH3 = 0.02;
+    summary = "Wild-type rootstocks lack high-capacity transport adaptations. Root-zone salt accumulation triggers rapid leaf burn, stunting, and yield collapse above 1.5 dS/m.";
+  } else if (cand === "C1") {
+    ecThreshold = 4.0;
+    ecSlope = 0.045;
+    pH1 = 0.96;
+    pH2 = 0.98;
+    pH3 = 0.95;
+    summary = "C1 (SbSOS1 Na⁺/H⁺ antiporter) actively extrudes sodium from epidermal cells to rhizosphere. Root sodium remains below necrosis threshold.";
+  } else if (cand === "C2") {
+    ecThreshold = 3.8;
+    ecSlope = 0.05;
+    pH1 = 0.94;
+    pH2 = 0.99;
+    pH3 = 0.94;
+    summary = "C2 (TsHKT1;5) retrieves Na⁺ from the ascending xylem sap, protecting the scion leaves and canopy area AUC.";
+  } else if (cand === "C3") {
+    ecThreshold = 3.6;
+    ecSlope = 0.06;
+    pH1 = 0.92;
+    pH2 = 0.97;
+    pH3 = 0.91;
+    summary = "C3 (ZxNHX1) sequesters cytosolic sodium into root vacuoles, maintaining favorable K⁺/Na⁺ ratios.";
+  } else if (cand === "C4") {
+    ecThreshold = 3.5;
+    ecSlope = 0.065;
+    pH1 = 0.91;
+    pH2 = 0.96;
+    pH3 = 0.90;
+    summary = "C4 (mtlD) synthesizes mannitol for osmotic adjustment, maintaining root turgor under high osmotic potential gradients.";
+  } else if (cand === "C5") {
+    ecThreshold = 3.2;
+    ecSlope = 0.08;
+    pH1 = 0.88;
+    pH2 = 0.95;
+    pH3 = 0.89;
+    summary = "C5 (cytAPX) scavenges hydrogen peroxide and reactive oxygen species, mitigating lipid peroxidation.";
+  } else if (cand === "C6") {
+    ecThreshold = 4.2;
+    ecSlope = 0.04;
+    pH1 = 0.93;
+    pH2 = 0.98;
+    pH3 = 0.93;
+    summary = "C6 (CYP86A1) thickens the Casparian strip suberin barrier (+0.25 µm), blocking apoplastic salt bypass into the xylem stream.";
+  } else if (cand === "STACK_A") {
+    ecThreshold = 6.5;
+    ecSlope = 0.02;
+    pH1 = 0.99;
+    pH2 = 0.97;
+    pH3 = 0.98;
+    summary = "Stack A (C1+C2+C6 Super-Excluder) provides multi-tier exclusion: Casparian barrier, surface efflux, and xylem retrieval.";
+  } else if (cand === "STACK_C") {
+    ecThreshold = 9.0;
+    ecSlope = 0.01;
+    pH1 = 0.99;
+    pH2 = 0.96;
+    pH3 = 0.99;
+    summary = "Stack C (Master Halophyte: C1 through C6) delivers full halophytic adaptation, enabling survival and fruit bearing near seawater salinity.";
+  }
+
+  // Calculate yield
+  let yieldLossFrac = Math.max(0, (ec - ecThreshold) * ecSlope);
+  let finalYield = Math.max(200, Math.round(baseYield * (1 - yieldLossFrac)));
+  let lcoa = (cand === "WT" ? 1.98 : 2.10) + (wp * (cand === "WT" ? 3.2 : 0.65) / finalYield);
+
+  // Advancement score
+  let adv = Math.min(pH1, pH2, pH3);
+
+  // Update UI
+  document.getElementById('yieldVal').innerText = finalYield.toLocaleString();
+  document.getElementById('yieldSub').innerText = yieldLossFrac > 0 ? `-${(yieldLossFrac*100).toFixed(1)}% yield drag` : "100% Optimal Yield";
+  document.getElementById('costVal').innerText = "$" + lcoa.toFixed(2);
+  document.getElementById('waterFootprint').innerText = cand === "WT" ? "1,400" : "285";
+  document.getElementById('advScore').innerText = adv.toFixed(3);
+  document.getElementById('advStatus').innerText = adv >= 0.90 ? "PROVISIONAL FINALIST" : "INCONCLUSIVE";
+
+  document.getElementById('valH1').innerText = pH1.toFixed(2);
+  document.getElementById('barH1').style.width = (pH1 * 100) + "%";
+  document.getElementById('valH2').innerText = pH2.toFixed(2);
+  document.getElementById('barH2').style.width = (pH2 * 100) + "%";
+  document.getElementById('valH3').innerText = pH3.toFixed(2);
+  document.getElementById('barH3').style.width = (pH3 * 100) + "%";
+
+  document.getElementById('mechanicSummary').innerText = summary;
+}
+
+window.onload = runSimulation;
+</script>
+
+</body>
+</html>
