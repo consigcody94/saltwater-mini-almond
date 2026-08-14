@@ -1,0 +1,39 @@
+{
+  "$schema": "../schemas/submission_gates.schema.json",
+  "program_title": "Saltwater Mini-Almond Genetic Tournament and Virtual Laboratory",
+  "stage": "Stage 1 Registered Report Protocol",
+  "version": "1.3",
+  "generated_timestamp_utc": "2026-08-14T19:17:00Z",
+  "evidence_classification": "SYNTHETIC_ONLY / PROTOCOL_SPECIFICATION",
+  "submission_gates": {
+    "software_verification_suite": {
+      "status": "PASSED",
+      "test_count": 1529,
+      "failing_tests": 0,
+      "notes": "Complete finite-volume physics, chemistry, biology surrogate, design, and simulation verification."
+    },
+    "synthetic_simulation_watermarking": {
+      "status": "ENFORCED",
+      "required_watermark": "SYNTHETIC — NOT BIOLOGICAL EVIDENCE",
+      "notes": "Applied to all generated figures, outputs, and simulated tables."
+    },
+    "prospective_registration_hashes": {
+      "status": "LOCKED",
+      "candidate_specs_sha256": "f4eb6c496ddfce2fb7077db34a03e6836da2cd4c62ad21d504b0227a277c5a05",
+      "design_config_sha256": "a40c28829c4ca3dadb3a87a3f6e8731b73ab9d38a53f2dae9b4c26657ac8ab18",
+      "water_recipes_sha256": "d46a0e4dc02cd74cfa5b4f437f367009301d4aab8cad9a1115ec6be37afa24d3"
+    },
+    "physical_biosafety_approval": {
+      "status": "NOT_EVALUABLE",
+      "notes": "Requires institutional biosafety committee (IBC) review prior to wet-lab transformation."
+    },
+    "field_crop_yield_validation": {
+      "status": "NOT_EVALUABLE",
+      "notes": "Requires Stage 2 multi-year bearing tree lysimeter validation."
+    },
+    "food_safety_determination": {
+      "status": "NOT_EVALUABLE",
+      "notes": "Requires chemical toxicology and kernel composition profiling."
+    }
+  }
+}

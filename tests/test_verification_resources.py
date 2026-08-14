@@ -16,8 +16,10 @@ CANONICAL_FIXTURES = frozenset(
         "conservation_case_manifest.candidates.json",
         "conservation_case_manifest.yaml",
         "entity_units_density.yaml",
+        "global_null.yaml",
         "internal_plant_flux_cap.yaml",
         "ions_conservative.yaml",
+        "known_effect.yaml",
         "no_purge.yaml",
         "perfect_na_exclusion.yaml",
         "ro_remineralization.yaml",
@@ -25,6 +27,7 @@ CANONICAL_FIXTURES = frozenset(
         "shared_reservoir_trap.csv",
         "sufficient_purge.yaml",
         "water_one_day.yaml",
+        "winner_curse.yaml",
     }
 )
 CANONICAL_POLICIES = frozenset({"thresholds.yaml", "verification.yaml"})
