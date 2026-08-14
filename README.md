@@ -28,6 +28,30 @@ The biological evaluation is paired with a **Zero-Discharge Contained Greenhouse
 
 ---
 
+## 💰 Techno-Economic Feasibility & Water Crisis Price Analysis
+
+Under the **Sustainable Groundwater Management Act (SGMA)** and chronic drought cycles, open-field orchards facing **$600 to $2,000+/AF water spot prices** become economically unviable, while soil salinity ($EC_e > 2.0\text{ dS/m}$) destroys over 50% of marketable yield.
+
+![Figure 8: Techno-Economic & Water Crisis Price Comparison Chart](manuscript/figures/08-water-crisis-economic-comparison.png)
+*Figure 8. Comprehensive economic comparison: (A) Levelized cost ($/lb) across water price trajectories showing AlmondLab cost parity at $450/AF; (B) Consumptive water footprint per pound of kernel (85% reduction); (C) Yield retention curves under increasing root-zone salinity; (D) 20-year cumulative cash flow during a simulated California megadrought shock.*
+
+### Table: Comparative System Economics & Water Sensitivity
+
+| Dimension / Metric | Conventional Flood | Conventional Drip | Open Field + Desal | AlmondLab Closed-Loop CEA |
+|---|---|---|---|---|
+| **Consumptive Water Footprint** | 1,900 gal / lb | 1,400 gal / lb | 1,150 gal / lb | **285 gal / lb (-85% reduction)** |
+| **Initial CapEx ($/acre)** | $12,000 | $16,500 | $28,000 | **$75,000 (Facility + Automation)** |
+| **Cost @ $100/AF (Baseline)** | **$1.85 / lb** | $1.98 / lb | $2.82 / lb | $2.27 / lb |
+| **Cost @ $600/AF (Drought / SGMA)** | $2.88 / lb | $2.65 / lb | $3.04 / lb | **$2.39 / lb (Cost Parity)** |
+| **Cost @ $1,500/AF (Megadrought)** | $4.44 / lb | $3.85 / lb | $3.44 / lb | **$2.60 / lb (-32% cheaper)** |
+| **Salinity Damage Threshold ($EC_e$)** | 1.5 dS/m | 1.5 dS/m | 2.2 dS/m | **4.0 dS/m (C1–C6 Resistance)** |
+| **Yield Drag @ $EC_e = 3.2\text{ dS/m}$** | **-32.3% loss** | **-32.3% loss** | -16.0% loss | **0.0% (Zero Yield Drag)** |
+| **20-Year Megadrought Net Profit** | -$12,400 / acre | +$18,000 / acre | +$42,000 / acre | **+$112,000 / acre (Payback: 6.2 yrs)** |
+
+*(See full economic report in [`manuscript/economic_water_crisis_analysis.md`](manuscript/economic_water_crisis_analysis.md)).*
+
+---
+
 ## 🖼️ Complete Visual Architecture & Scientific Concepts
 
 ### 1. Blinded Discovery & Confirmation Cohorts
@@ -146,11 +170,12 @@ All unit, property-based (Hypothesis), and acceptance tests pass with **100% gre
 
 ---
 
-## 📄 Manuscript Formats
+## 📄 Manuscript & Analysis Formats
 
 - **Stage 1 Registered Report Markdown:** [`manuscript/stage1_registered_report.md`](manuscript/stage1_registered_report.md)
 - **Publication HTML Paper:** [`manuscript/stage1_registered_report.html`](manuscript/stage1_registered_report.html)
 - **Word Document (.docx):** [`manuscript/stage1_registered_report.docx`](manuscript/stage1_registered_report.docx)
+- **Techno-Economic Water Analysis:** [`manuscript/economic_water_crisis_analysis.md`](manuscript/economic_water_crisis_analysis.md)
 - **Machine-Readable Gates Audit:** [`manuscript/submission_gates.json`](manuscript/submission_gates.json)
 - **Visual Concepts Gallery:** [`assets/concepts/concept-gallery.html`](assets/concepts/concept-gallery.html)
 
