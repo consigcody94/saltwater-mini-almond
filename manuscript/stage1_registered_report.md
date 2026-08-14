@@ -5,6 +5,7 @@
 **Target Category:** Plant Biotechnology, Agronomy & Controlled Environment Agriculture  
 **Version:** 1.3-Registered (August 2026)  
 **Status:** Protocol Approved for Peer Review / Virtual Verification Complete  
+**Repository:** [consigcody94/saltwater-mini-almond](https://github.com/consigcody94/saltwater-mini-almond)  
 
 ---
 
@@ -26,8 +27,8 @@ To solve both challenges simultaneously, this program establishes:
 1. **Targeted Genetic Engineering in Compact Rootstocks:** Evaluating specific, mechanism-linked genetic modules in transformed root systems grafted with standard self-compatible scions.
 2. **Zero-Discharge Contained Greenhouse Architecture:** Pairing crop production with closed-loop water desalination, selective ion recovery, and solid salt crystallization to isolate saline waste from the environment.
 
-![Figure 1: High-Tech Zero-Discharge Closed-Loop Greenhouse System for Dwarf Almond Cultivation](figures/fig1_greenhouse_system.jpg)
-*Figure 1. Architectural overview of the closed-loop controlled-environment agriculture greenhouse. Compact mini-almond trees are grown in precision lysimeters on elevated benches with closed-loop drip irrigation, continuous nutrient remineralization, and zero saline runoff to surrounding land.*
+![Figure 1: Blinded Discovery and Confirmation Cohort Layout](figures/07-blinded-discovery-confirmation-layout-v5.png)
+*Figure 1. Facility and experimental cohort layout. The registered design is visible without exposing treatment identity to greenhouse staff: neutral opaque pot tags, physically separated discovery and independent confirmation cohorts, elevated benches, dedicated treated-water supply loops, and captured drainage returns.*
 
 ---
 
@@ -35,8 +36,8 @@ To solve both challenges simultaneously, this program establishes:
 
 Six primary candidate genetic constructs (C1–C6) have been designed and prospectively registered to target distinct physiological bottlenecks in plant salt tolerance:
 
-![Figure 2: Cellular and Anatomical Salinity Tolerance Mechanisms in Engineered Almond Roots](figures/fig2_root_mechanisms.jpg)
-*Figure 2. Mechanism-linked physiological traits engineered into compact almond rootstocks: (C1) SOS1 Na⁺ efflux, (C2) HKT1 xylem retrieval, (C3) NHX1 vacuolar sequestration, (C4) mannitol osmolyte accumulation, (C5) ascorbate peroxidase ROS detoxification, and (C6) endodermal Casparian strip suberin reinforcement.*
+![Figure 2: Six-Gene Physiological Mechanism Map on Almond Root Cross-Section](figures/02-six-gene-mechanism-map.png)
+*Figure 2. Six-gene mechanism tournament. Each construct is mapped to a distinct cellular and anatomical mechanism across the root cross-section, explicitly accounting for systemic transport risks (e.g. SOS1 xylem loading vs. extrusion).*
 
 ### Table 1: Candidate Genetic Modules and Mechanism Verification Rules
 
@@ -51,18 +52,18 @@ Six primary candidate genetic constructs (C1–C6) have been designed and prospe
 
 ---
 
-## 3. Experimental Design and Randomization Structure
+## 3. Four-Stream Closed-Loop Facility & Experimental Architecture
 
-### 3.1 Experimental Hierarchy
-- **Experimental Unit (Biology):** The individual transformed composite-root plant ($N = 720$).
-- **Experimental Unit (Hydraulics/Water):** The independent reservoir system ($N = 16$ tanks across 2 temporal runs).
-- **Water Treatments:**
-  1. *Nonsaline Control:* Standard nutrient recipe ($EC_w = 0.8\text{ dS/m}$).
-  2. *Chronic Saline Stress:* Target California saline blend with $\text{Na}^+ = 30\text{ mM}$, $\text{Cl}^- = 30\text{ mM}$, $\text{B} = 0.5\text{ mg/L}$ ($EC_w = 3.2\text{ dS/m}$).
+The contained research greenhouse isolates all water and salt mass flows into four strictly separated streams:
 
-### 3.2 Randomization & Blinding
-- Blocked by spatial row/column coordinates and transformation batch to prevent confounding.
-- Double-blinded phenotyping with escrowed seed sequences and cryptographic manifest hashing (`SHA-256`).
+![Figure 3: Four-Stream Closed-Loop Water and Salt Architecture](figures/04-contained-greenhouse-closed-loop-v2.png)
+*Figure 3. Four-stream closed loop. Coastal feed water, clean RO product water, captured crop drainage, and isolated brine concentrate remain completely segregated to prevent any environmental contamination.*
+
+![Figure 4: Replicated Research Bay with Hypothesis Blocks](figures/05-contained-experimental-bay-v3.png)
+*Figure 4. Replicated experimental bay. Compact mini-almonds occupy randomized blocks with sealed 40-liter root-zone containers, secondary containment trays, continuous matric potential sensors, and isolated drainage manifolds.*
+
+![Figure 5: Instrumented Experimental Research Aisle](figures/06-contained-experimental-aisle-v4.png)
+*Figure 5. Working-scale research aisle. Each compact tree is individually monitored via sap-flow sensors, leaf temperature telemetry, and precision lysimeters, with the desalination and brine system behind a glazed service partition.*
 
 ---
 
@@ -89,7 +90,19 @@ where:
 
 ---
 
-## 5. Machine-Readable Submission Gates
+## 5. Virtual Laboratory & Computational Decision Platform
+
+The physical experiment is paired with an auditable computational platform (`almondlab`) providing end-to-end digital twin simulation, Bayesian inference, and hash-verified decision gates:
+
+![Figure 6: Virtual Laboratory Interactive Decision & Simulation Dashboard](figures/03-virtual-lab-dashboard-demo.png)
+*Figure 6. Virtual laboratory software interface. Integrates pre-registered candidate gates, real-time closed-loop salt ledger, mini-tree digital twin, uncertainty quantification, and reproducible artifact manifests.*
+
+![Figure 7: Contained Greenhouse Engineering Layout](figures/01-contained-greenhouse-concept.png)
+*Figure 7. Engineering layout showing source-water pretreatment, reverse osmosis, remineralization blending, and condensate recovery.*
+
+---
+
+## 6. Machine-Readable Submission Gates
 
 To preserve rigorous scientific integrity, computational simulations are explicitly watermarked, and physical/regulatory milestones remain classified as `not_evaluable` until physical wet-lab completion:
 
@@ -107,9 +120,9 @@ To preserve rigorous scientific integrity, computational simulations are explici
 
 ---
 
-## 6. Reproducibility, Repository & Traceability
+## 7. Reproducibility, Repository & Traceability
 
 The complete reproducible virtual laboratory implementation, test suite, and configuration manifests are version-controlled in the project repository:
-- **Repository Root:** [`outputs/saltwater-mini-almond/`](file:///C:/Users/fowlb/Documents/Codex/2026-08-12/lets/outputs/saltwater-mini-almond)
-- **Primary Design Manuscript:** [`outputs/2026-08-12-saltwater-mini-almond-program-design.md`](file:///C:/Users/fowlb/Documents/Codex/2026-08-12/lets/outputs/2026-08-12-saltwater-mini-almond-program-design.md)
-- **Verified Test Suites:** 23 test suites covering 1,500+ unit, property, and acceptance tests.
+- **Repository Root:** [github.com/consigcody94/saltwater-mini-almond](https://github.com/consigcody94/saltwater-mini-almond)
+- **Verified Test Suites:** 23 test suites covering 1,536 unit, property, and acceptance tests.
+- **Watermark:** `SYNTHETIC — NOT BIOLOGICAL EVIDENCE`

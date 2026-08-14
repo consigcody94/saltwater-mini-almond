@@ -1,4 +1,4 @@
-"""Compiles the Stage 1 Registered Report Markdown into publication-grade HTML and DOCX formats.
+"""Compiles the Stage 1 Registered Report Markdown into publication-grade HTML and DOCX formats with all 7 visual concept figures.
 """
 
 from __future__ import annotations
@@ -16,13 +16,28 @@ MANUSCRIPT_DIR = ROOT / "manuscript"
 MD_PATH = MANUSCRIPT_DIR / "stage1_registered_report.md"
 HTML_PATH = MANUSCRIPT_DIR / "stage1_registered_report.html"
 DOCX_PATH = MANUSCRIPT_DIR / "stage1_registered_report.docx"
-FIG1_PATH = MANUSCRIPT_DIR / "figures" / "fig1_greenhouse_system.jpg"
-FIG2_PATH = MANUSCRIPT_DIR / "figures" / "fig2_root_mechanisms.jpg"
+DOCS_DIR = ROOT / "docs"
+FIG_DIR = MANUSCRIPT_DIR / "figures"
+
+
+FIGURES = [
+    ("fig1", FIG_DIR / "07-blinded-discovery-confirmation-layout-v5.png", "Figure 1. Facility and experimental cohort layout. The registered design is visible without exposing treatment identity to greenhouse staff: neutral opaque pot tags, physically separated discovery and independent confirmation cohorts, elevated benches, dedicated treated-water supply loops, and captured drainage returns."),
+    ("fig2", FIG_DIR / "02-six-gene-mechanism-map.png", "Figure 2. Six-gene mechanism tournament. Each construct is mapped to a distinct cellular and anatomical mechanism across the root cross-section, explicitly accounting for systemic transport risks (e.g. SOS1 xylem loading vs. extrusion)."),
+    ("fig3", FIG_DIR / "04-contained-greenhouse-closed-loop-v2.png", "Figure 3. Four-stream closed loop. Coastal feed water, clean RO product water, captured crop drainage, and isolated brine concentrate remain completely segregated to prevent any environmental contamination."),
+    ("fig4", FIG_DIR / "05-contained-experimental-bay-v3.png", "Figure 4. Replicated experimental bay. Compact mini-almonds occupy randomized blocks with sealed 40-liter root-zone containers, secondary containment trays, continuous matric potential sensors, and isolated drainage manifolds."),
+    ("fig5", FIG_DIR / "06-contained-experimental-aisle-v4.png", "Figure 5. Working-scale research aisle. Each compact tree is individually monitored via sap-flow sensors, leaf temperature telemetry, and precision lysimeters, with the desalination and brine system behind a glazed service partition."),
+    ("fig6", FIG_DIR / "03-virtual-lab-dashboard-demo.png", "Figure 6. Virtual laboratory software interface. Integrates pre-registered candidate gates, real-time closed-loop salt ledger, mini-tree digital twin, uncertainty quantification, and reproducible artifact manifests."),
+    ("fig7", FIG_DIR / "01-contained-greenhouse-concept.png", "Figure 7. Engineering layout showing source-water pretreatment, reverse osmosis, remineralization blending, and condensate recovery."),
+]
 
 
 def generate_html() -> None:
-    fig1_b64 = base64.b64encode(FIG1_PATH.read_bytes()).decode("utf-8")
-    fig2_b64 = base64.b64encode(FIG2_PATH.read_bytes()).decode("utf-8")
+    b64_figs = {}
+    for key, path, _ in FIGURES:
+        if path.exists():
+            b64_figs[key] = base64.b64encode(path.read_bytes()).decode("utf-8")
+        else:
+            b64_figs[key] = ""
 
     template = """<!DOCTYPE html>
 <html lang="en">
@@ -47,7 +62,7 @@ def generate_html() -> None:
             line-height: 1.65;
             color: var(--text);
             background-color: var(--bg);
-            max-width: 960px;
+            max-width: 1000px;
             margin: 0 auto;
             padding: 2.5rem 1.5rem;
         }
@@ -91,7 +106,7 @@ def generate_html() -> None:
             padding: 1.25rem 1.5rem;
             border-radius: 8px;
             margin: 2rem 0;
-        }
+        }}
         .abstract h2 {
             margin-top: 0;
             color: #166534;
@@ -184,7 +199,7 @@ def generate_html() -> None:
     <div class="meta">
         <p><strong>Format:</strong> Pre-Registered Research Protocol</p>
         <p><strong>Target Journal:</strong> Nature Biotechnology / In Silico Plants</p>
-        <p><strong>Repository:</strong> consigcody94/saltwater-mini-almond</p>
+        <p><strong>Repository:</strong> <a href="https://github.com/consigcody94/saltwater-mini-almond" target="_blank">consigcody94/saltwater-mini-almond</a></p>
         <p><strong>Version:</strong> 1.3-Registered (August 2026)</p>
     </div>
 </header>
@@ -215,8 +230,8 @@ def generate_html() -> None:
 </ol>
 
 <figure>
-    <img src="data:image/jpeg;base64,__FIG1__" alt="Figure 1: High-Tech Zero-Discharge Closed-Loop Greenhouse System">
-    <figcaption><strong>Figure 1. Architectural overview of the closed-loop controlled-environment agriculture greenhouse.</strong> Compact mini-almond trees are grown in precision lysimeters on elevated benches with closed-loop drip irrigation, continuous nutrient remineralization, and zero saline runoff to surrounding land.</figcaption>
+    <img src="data:image/png;base64,__FIG1__" alt="Figure 1: Blinded Discovery and Confirmation Cohort Layout">
+    <figcaption>__CAP1__</figcaption>
 </figure>
 
 <h2>2. Biological Architecture & Candidate Genetic Modules</h2>
@@ -225,8 +240,8 @@ def generate_html() -> None:
 </p>
 
 <figure>
-    <img src="data:image/jpeg;base64,__FIG2__" alt="Figure 2: Cellular and Anatomical Salinity Tolerance Mechanisms">
-    <figcaption><strong>Figure 2. Mechanism-linked physiological traits engineered into compact almond rootstocks:</strong> (C1) SOS1 Na⁺ efflux, (C2) HKT1 xylem retrieval, (C3) NHX1 vacuolar sequestration, (C4) mannitol osmolyte accumulation, (C5) ascorbate peroxidase ROS detoxification, and (C6) endodermal Casparian strip suberin reinforcement.</figcaption>
+    <img src="data:image/png;base64,__FIG2__" alt="Figure 2: Six-Gene Physiological Mechanism Map">
+    <figcaption>__CAP2__</figcaption>
 </figure>
 
 <h3>Table 1: Candidate Genetic Modules and Mechanism Verification Rules</h3>
@@ -286,24 +301,25 @@ def generate_html() -> None:
     </tbody>
 </table>
 
-<h2>3. Experimental Design and Randomization Structure</h2>
-<h3>3.1 Experimental Hierarchy</h3>
-<ul>
-    <li><strong>Experimental Unit (Biology):</strong> The individual transformed composite-root plant (N = 720).</li>
-    <li><strong>Experimental Unit (Hydraulics/Water):</strong> The independent reservoir system (N = 16 tanks across 2 temporal runs).</li>
-    <li><strong>Water Treatments:</strong>
-        <ol>
-            <li><i>Nonsaline Control:</i> Standard nutrient recipe (EC<sub>w</sub> = 0.8 dS/m).</li>
-            <li><i>Chronic Saline Stress:</i> Target California saline blend with Na⁺ = 30 mM, Cl⁻ = 30 mM, B = 0.5 mg/L (EC<sub>w</sub> = 3.2 dS/m).</li>
-        </ol>
-    </li>
-</ul>
+<h2>3. Four-Stream Closed-Loop Facility & Experimental Architecture</h2>
+<p>
+    The contained research greenhouse isolates all water and salt mass flows into four strictly separated streams:
+</p>
 
-<h3>3.2 Randomization & Blinding</h3>
-<ul>
-    <li>Blocked by spatial row/column coordinates and transformation batch to prevent confounding.</li>
-    <li>Double-blinded phenotyping with escrowed seed sequences and cryptographic manifest hashing (<code>SHA-256</code>).</li>
-</ul>
+<figure>
+    <img src="data:image/png;base64,__FIG3__" alt="Figure 3: Four-Stream Closed Loop">
+    <figcaption>__CAP3__</figcaption>
+</figure>
+
+<figure>
+    <img src="data:image/png;base64,__FIG4__" alt="Figure 4: Replicated Experimental Bay">
+    <figcaption>__CAP4__</figcaption>
+</figure>
+
+<figure>
+    <img src="data:image/png;base64,__FIG5__" alt="Figure 5: Instrumented Research Aisle">
+    <figcaption>__CAP5__</figcaption>
+</figure>
 
 <h2>4. Prospective Statistical Analysis Plan (SAP)</h2>
 <h3>4.1 Bayesian Discovery Model</h3>
@@ -314,7 +330,7 @@ def generate_html() -> None:
     &mu;<sub>i</sub> = &alpha;<sub>g<sub>i</sub></sub> + &beta;<sub>g<sub>i</sub></sub> S<sub>i</sub> + &gamma; B<sub>i</sub> + r<sub>run<sub>i</sub></sub> + t<sub>batch<sub>i</sub></sub> + u<sub>reservoir<sub>i</sub></sub>
 </p>
 <p>
-    where g<sub>i</sub> &isin; {C1,&hellip;,C6, empty_vector, unmodified}, S<sub>i</sub> &isin; {0, 1} indicates chronic saline treatment, and &beta;<sub>g<sub>i</sub></sub> represents the construct-by-salinity interaction estimand (&delta;<sub>k</sub> = &beta;<sub>k</sub> - &beta;<sub>control</sub>).
+    where g<sub>i</sub> &isin; {C1, &hellip;, C6, empty_vector, unmodified}, S<sub>i</sub> &isin; {0, 1} indicates chronic saline treatment, and &beta;<sub>g<sub>i</sub></sub> represents the construct-by-salinity interaction estimand (&delta;<sub>k</sub> = &beta;<sub>k</sub> - &beta;<sub>control</sub>).
 </p>
 
 <h3>4.2 Pre-Registered Decision Rules</h3>
@@ -331,7 +347,22 @@ def generate_html() -> None:
     <li><strong>Leader Ties & Slot Allocation:</strong> Candidates within A<sub>max</sub> - A[k] &le; 0.02 are labeled <code>co-leading</code>. At most four finalists advance to confirmatory trial.</li>
 </ol>
 
-<h2>5. Machine-Readable Submission Gates</h2>
+<h2>5. Virtual Laboratory & Computational Decision Platform</h2>
+<p>
+    The physical experiment is paired with an auditable computational platform (<code>almondlab</code>) providing end-to-end digital twin simulation, Bayesian inference, and hash-verified decision gates:
+</p>
+
+<figure>
+    <img src="data:image/png;base64,__FIG6__" alt="Figure 6: Virtual Laboratory Software Interface">
+    <figcaption>__CAP6__</figcaption>
+</figure>
+
+<figure>
+    <img src="data:image/png;base64,__FIG7__" alt="Figure 7: Contained Greenhouse Layout">
+    <figcaption>__CAP7__</figcaption>
+</figure>
+
+<h2>6. Machine-Readable Submission Gates</h2>
 <pre><code>{
   "submission_gates": {
     "software_verification_suite": "PASSED (100% test coverage)",
@@ -342,7 +373,7 @@ def generate_html() -> None:
   }
 }</code></pre>
 
-<h2>6. Reproducibility & Virtual Laboratory CLI</h2>
+<h2>7. Reproducibility & Virtual Laboratory CLI</h2>
 <p>
     The virtual laboratory CLI exposes ten standardized commands to audit, reproduce, and verify every step of the prospective pipeline:
 </p>
@@ -366,29 +397,32 @@ almondlab report --output outputs/report.md</code></pre>
 </body>
 </html>
 """
-    final_html = template.replace("__FIG1__", fig1_b64).replace("__FIG2__", fig2_b64)
+    final_html = template
+    for i, (key, _, cap) in enumerate(FIGURES):
+        final_html = final_html.replace(f"__FIG{i+1}__", b64_figs[key])
+        final_html = final_html.replace(f"__CAP{i+1}__", cap)
+
     HTML_PATH.write_text(final_html, encoding="utf-8")
-    print(f"Generated HTML manuscript: {HTML_PATH}")
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    (DOCS_DIR / "index.html").write_text(final_html, encoding="utf-8")
+    print(f"Generated HTML manuscript: {HTML_PATH} and docs/index.html")
 
 
 def generate_docx() -> None:
     doc = docx.Document()
 
-    # Set margins
     for section in doc.sections:
         section.top_margin = Inches(1.0)
         section.bottom_margin = Inches(1.0)
         section.left_margin = Inches(1.0)
         section.right_margin = Inches(1.0)
 
-    # Title
     title = doc.add_heading(
         "Stage 1 Registered Report: A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems",
         level=0,
     )
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
-    # Metadata paragraph
     meta = doc.add_paragraph()
     meta.add_run("Format: ").bold = True
     meta.add_run("Stage 1 Registered Report Protocol\n")
@@ -416,53 +450,55 @@ def generate_docx() -> None:
     doc.add_paragraph(
         "Conventional breeding for salinity tolerance in tree crops is hindered by multi-year juvenility periods and complex rootstock-scion interactions. Furthermore, simply applying saline water or ocean brine to agricultural fields degrades the soil structure and pollutes regional aquifers."
     )
-    doc.add_paragraph(
-        "To solve both challenges simultaneously, this program establishes:\n"
-        "1. Targeted Genetic Engineering in Compact Rootstocks: Evaluating specific, mechanism-linked genetic modules in transformed root systems grafted with standard self-compatible scions.\n"
-        "2. Zero-Discharge Contained Greenhouse Architecture: Pairing crop production with closed-loop water desalination, selective ion recovery, and solid salt crystallization to isolate saline waste from the environment."
-    )
 
-    if FIG1_PATH.exists():
-        doc.add_picture(str(FIG1_PATH), width=Inches(6.0))
-        cap1 = doc.add_paragraph("Figure 1. Architectural overview of the closed-loop controlled-environment agriculture greenhouse with precision lysimeters and zero saline runoff.")
-        cap1.style = "Caption"
+    for i, (key, path, caption) in enumerate(FIGURES):
+        if i == 0:
+            if path.exists():
+                doc.add_picture(str(path), width=Inches(6.0))
+                cap = doc.add_paragraph(caption)
+                cap.style = "Caption"
+            doc.add_heading("2. Biological Architecture & Candidate Genetic Modules", level=1)
+            doc.add_paragraph(
+                "Six primary candidate genetic constructs (C1–C6) have been designed and prospectively registered to target distinct physiological bottlenecks in plant salt tolerance:"
+            )
+        elif i == 1:
+            if path.exists():
+                doc.add_picture(str(path), width=Inches(6.0))
+                cap = doc.add_paragraph(caption)
+                cap.style = "Caption"
 
-    doc.add_heading("2. Biological Architecture & Candidate Genetic Modules", level=1)
-    doc.add_paragraph(
-        "Six primary candidate genetic constructs (C1–C6) have been designed and prospectively registered to target distinct physiological bottlenecks in plant salt tolerance:"
-    )
+            # Table 1
+            doc.add_heading("Table 1: Candidate Genetic Modules and Mechanism Verification Rules", level=2)
+            table = doc.add_table(rows=1, cols=5)
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            hdr_cells = table.rows[0].cells
+            hdr_cells[0].text = "ID"
+            hdr_cells[1].text = "Genetic Module & Source"
+            hdr_cells[2].text = "Target Mechanism"
+            hdr_cells[3].text = "Primary H3 Assay Endpoint"
+            hdr_cells[4].text = "Directional Threshold"
 
-    if FIG2_PATH.exists():
-        doc.add_picture(str(FIG2_PATH), width=Inches(6.0))
-        cap2 = doc.add_paragraph("Figure 2. Mechanism-linked physiological traits engineered into compact almond rootstocks (C1–C6).")
-        cap2.style = "Caption"
+            rows_data = [
+                ("C1", "Marine SOS1 Na⁺/H⁺ Antiporter", "Active root Na⁺ extrusion to rhizosphere", "Root-surface outward Na⁺ flux per dry mass", "Margin >= ln(1.20) (20% increase)"),
+                ("C2", "Halophytic HKT1;5 Transporter", "Xylem Na⁺ retrieval and sheath unloading", "Shoot-to-root Na⁺ concentration ratio", "Margin <= ln(0.80) (20% reduction)"),
+                ("C3", "Tonoplast NHX1 Exchanger", "Vacuolar Na⁺ compartmentalization", "Intracellular vacuolar-to-cytosolic Na⁺ ratio", "Absolute diff >= +10.0"),
+                ("C4", "Mannitol-1-P Dehydrogenase (mtlD)", "Compatible osmolyte accumulation", "Root tissue mannitol concentration (umol/g)", "Difference >= +15.0 umol/g"),
+                ("C5", "Enhanced Ascorbate Peroxidase (APX)", "Root ROS and lipid peroxidation mitigation", "Malondialdehyde (MDA) stress marker", "Margin <= ln(0.75) (25% reduction)"),
+                ("C6", "Suberin Biosynthesis (CYP86A1)", "Enhanced Casparian strip barrier", "Endodermal suberin lamellae thickness (um)", "Difference >= +0.20 um"),
+            ]
+            for row in rows_data:
+                row_cells = table.add_row().cells
+                for idx, val in enumerate(row):
+                    row_cells[idx].text = val
 
-    # Table 1
-    doc.add_heading("Table 1: Candidate Genetic Modules and Mechanism Verification Rules", level=2)
-    table = doc.add_table(rows=1, cols=5)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = "ID"
-    hdr_cells[1].text = "Genetic Module & Source"
-    hdr_cells[2].text = "Target Mechanism"
-    hdr_cells[3].text = "Primary H3 Assay Endpoint"
-    hdr_cells[4].text = "Directional Threshold"
+            doc.add_heading("3. Four-Stream Closed-Loop Facility & Experimental Architecture", level=1)
+        else:
+            if path.exists():
+                doc.add_picture(str(path), width=Inches(6.0))
+                cap = doc.add_paragraph(caption)
+                cap.style = "Caption"
 
-    rows_data = [
-        ("C1", "Marine SOS1 Na⁺/H⁺ Antiporter", "Active root Na⁺ extrusion to rhizosphere", "Root-surface outward Na⁺ flux per dry mass", "Margin >= ln(1.20) (20% increase)"),
-        ("C2", "Halophytic HKT1;5 Transporter", "Xylem Na⁺ retrieval and sheath unloading", "Shoot-to-root Na⁺ concentration ratio", "Margin <= ln(0.80) (20% reduction)"),
-        ("C3", "Tonoplast NHX1 Exchanger", "Vacuolar Na⁺ compartmentalization", "Intracellular vacuolar-to-cytosolic Na⁺ ratio", "Absolute diff >= +10.0"),
-        ("C4", "Mannitol-1-P Dehydrogenase (mtlD)", "Compatible osmolyte accumulation", "Root tissue mannitol concentration (umol/g)", "Difference >= +15.0 umol/g"),
-        ("C5", "Enhanced Ascorbate Peroxidase (APX)", "Root ROS and lipid peroxidation mitigation", "Malondialdehyde (MDA) stress marker", "Margin <= ln(0.75) (25% reduction)"),
-        ("C6", "Suberin Biosynthesis (CYP86A1)", "Enhanced Casparian strip barrier", "Endodermal suberin lamellae thickness (um)", "Difference >= +0.20 um"),
-    ]
-
-    for row in rows_data:
-        row_cells = table.add_row().cells
-        for i, val in enumerate(row):
-            row_cells[i].text = val
-
-    doc.add_heading("3. Prospective Statistical Analysis Plan (SAP)", level=1)
+    doc.add_heading("4. Prospective Statistical Analysis Plan (SAP)", level=1)
     doc.add_paragraph(
         "Bayesian Discovery Model:\n"
         "mu_i = alpha_{g_i} + beta_{g_i} * S_i + gamma * B_i + r_{run_i} + t_{batch_i} + u_{reservoir_i}\n\n"
@@ -474,7 +510,7 @@ def generate_docx() -> None:
         "5. Leader Ties: Candidates within A_max - A[k] <= 0.02 are labeled co-leading. At most four finalists advance."
     )
 
-    doc.add_heading("4. Machine-Readable Submission Gates & Watermarking", level=1)
+    doc.add_heading("5. Machine-Readable Submission Gates & Watermarking", level=1)
     doc.add_paragraph(
         "SYNTHETIC — NOT BIOLOGICAL EVIDENCE\n"
         "Software verification suite: PASSED (100% test coverage across 1,536 test items)\n"

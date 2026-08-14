@@ -1,0 +1,35 @@
+{
+  "title": "Stage 1 Registered Report: A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems",
+  "upload_type": "publication",
+  "publication_type": "protocol",
+  "description": "Pre-registered study protocol and computational virtual laboratory for a high-density, closed-loop genetic tournament evaluating six candidate salt-tolerance mechanisms engineered into compact composite-root almond (Prunus dulcis) rootstocks.",
+  "creators": [
+    {
+      "name": "Cody, Consig",
+      "affiliation": "AlmondLab Virtual Laboratory"
+    },
+    {
+      "name": "The AlmondLab Virtual Laboratory Consortium",
+      "affiliation": "Open Science Plant Biotechnology Initiative"
+    }
+  ],
+  "access_right": "open",
+  "license": "MIT",
+  "keywords": [
+    "Plant Biotechnology",
+    "Salinity Tolerance",
+    "Almond",
+    "Prunus dulcis",
+    "Registered Report",
+    "Virtual Laboratory",
+    "Controlled Environment Agriculture",
+    "Desalination"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/consigcody94/saltwater-mini-almond",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}

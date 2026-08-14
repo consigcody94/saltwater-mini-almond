@@ -1,0 +1,21 @@
+{
+  "schema_name": "OSF Preregistration / Registered Report (Stage 1)",
+  "title": "A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems",
+  "hypotheses": [
+    "H1 (Efficacy): Transgenic composite-root almond candidates (C1-C6) will demonstrate >= 20% improvement in canopy area AUC under chronic 3.2 dS/m saline stress compared to empty-vector control (P(delta_k >= ln(1.20)) >= 0.90).",
+    "H2 (Non-Saline Guardrail): Constructs will exhibit <= 10% penalty in non-saline conditions (P(alpha_k - alpha_control < ln(0.90)) <= 0.10).",
+    "H3 (Mechanism Confirmation): Candidates will demonstrate directional biological mechanism confirmation in targeted physiological assays with P >= 0.90."
+  ],
+  "design": "Nested blocked randomized factorial design (720 plants, 16 independent reservoir systems, 2 temporal runs, 8 transformation batches)",
+  "analysis_plan": "Bayesian hierarchical mixed-effects model with weakly informative priors and Hamiltonian Monte Carlo sampling (PyMC/ArviZ)",
+  "stopping_rule": "Pre-registered sample size N=720 with interim futility monitoring at N=360 and N=540",
+  "falsification_boundaries": {
+    "h1_threshold": "ln(1.20)",
+    "h2_threshold": "ln(0.90)",
+    "advancement_metric": "min(P_H1, P_H2_good, P_H3)",
+    "leader_relative_tie_margin": 0.02,
+    "confirmation_slot_cap": 4
+  },
+  "repository": "https://github.com/consigcody94/saltwater-mini-almond",
+  "provenance_watermark": "SYNTHETIC — NOT BIOLOGICAL EVIDENCE"
+}

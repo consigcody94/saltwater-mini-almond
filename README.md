@@ -1,16 +1,17 @@
 # Saltwater Mini-Almond Genetic Tournament & Virtual Laboratory
 
-[![Verification Suite](https://img.shields.io/badge/Verification%20Suite-1533%20Passed%20%7C%20100%25-brightgreen)](file:///C:/Users/fowlb/Documents/Codex/2026-08-12/lets/outputs/saltwater-mini-almond/tests)
+[![Verification Suite](https://img.shields.io/badge/Verification%20Suite-1533%20Passed%20%7C%20100%25-brightgreen)](tests/)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![Stage 1 Registered Report](https://img.shields.io/badge/Protocol-Stage%201%20Registered%20Report-purple)](file:///C:/Users/fowlb/Documents/Codex/2026-08-12/lets/outputs/saltwater-mini-almond/manuscript/stage1_registered_report.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Stage 1 Registered Report](https://img.shields.io/badge/Protocol-Stage%201%20Registered%20Report-purple)](manuscript/stage1_registered_report.md)
+[![Live Manuscript](https://img.shields.io/badge/Live%20Paper-GitHub%20Pages-success)](https://consigcody94.github.io/saltwater-mini-almond/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Pre-Registered Study Protocol & Virtual Laboratory Package:**  
+> **Pre-Registered Research Protocol & Computational Virtual Laboratory (`almondlab`):**  
 > *A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems*
 
 ---
 
-## 📌 Overview & Abstract
+## 📌 Overview & Executive Summary
 
 California produces over **80% of the world's commercial almond supply**, but increasing groundwater salinization, agricultural overdraft, and root-zone salt accumulation threaten the long-term viability of Central Valley orchards.
 
@@ -27,17 +28,47 @@ The biological evaluation is paired with a **Zero-Discharge Contained Greenhouse
 
 ---
 
-## 🏗️ Architectural Overview
+## 🖼️ Complete Visual Architecture & Scientific Concepts
 
-### Figure 1: Closed-Loop Solar Desalination & Precision Lysimeter Facility
-![Closed-Loop Greenhouse Architecture](manuscript/figures/fig1_greenhouse_system.jpg)
-*High-density dwarf almond cultivation on elevated lysimeter benches with continuous inline nutrient dosing, selective RO desalination, and zero saline runoff into surrounding agricultural soils.*
+### 1. Blinded Discovery & Confirmation Cohorts
+![Blinded Discovery & Confirmation Layout](manuscript/figures/07-blinded-discovery-confirmation-layout-v5.png)
+*Figure 1. Double-blinded facility layout with neutral opaque pot tags, physically segregated discovery and independent confirmation cohorts, elevated lysimeter benches, and isolated drain-return plumbing.*
 
 ---
 
-### Figure 2: Mechanism-Linked Root Ion-Transport Biophysics
-![Cellular Salinity Tolerance Mechanisms](manuscript/figures/fig2_root_mechanisms.jpg)
-*Candidate genetic interventions (C1–C6) targeting distinct biophysical barriers across the root cross-section: rhizospheric exclusion, xylem unloading, vacuolar sequestration, osmoprotection, antioxidant defense, and Casparian strip suberization.*
+### 2. Six-Gene Physiological Mechanism Tournament
+![Six Gene Mechanism Tournament](manuscript/figures/02-six-gene-mechanism-map.png)
+*Figure 2. Mechanism-linked physiological traits engineered into compact almond rootstocks (C1–C6) targeting distinct cellular and anatomical barriers across the root cross-section.*
+
+---
+
+### 3. Four-Stream Closed-Loop Facility Architecture
+![Four-Stream Closed-Loop Facility](manuscript/figures/04-contained-greenhouse-closed-loop-v2.png)
+*Figure 3. Total mass-balance segregation: coastal feed water, clean RO product water, captured crop drainage, and isolated brine concentrate remain completely isolated.*
+
+---
+
+### 4. Replicated Research Bay with Hypothesis Blocks
+![Replicated Research Bay](manuscript/figures/05-contained-experimental-bay-v3.png)
+*Figure 4. Replicated experimental bay. Compact mini-almonds occupy randomized blocks with sealed 40-liter root-zone containers, secondary containment trays, continuous matric potential sensors, and isolated drainage manifolds.*
+
+---
+
+### 5. Instrumented Experimental Research Aisle
+![Instrumented Experimental Research Aisle](manuscript/figures/06-contained-experimental-aisle-v4.png)
+*Figure 5. Working-scale research aisle. Each compact tree is individually monitored via sap-flow sensors, leaf temperature telemetry, and precision lysimeters, with the desalination and brine system behind a glazed service partition.*
+
+---
+
+### 6. Virtual Laboratory Interactive Decision & Simulation Platform
+![Virtual Laboratory Interactive Dashboard](manuscript/figures/03-virtual-lab-dashboard-demo.png)
+*Figure 6. Virtual laboratory software interface (`almondlab`). Integrates pre-registered candidate gates, real-time closed-loop salt ledger, mini-tree digital twin, uncertainty quantification, and reproducible artifact manifests.*
+
+---
+
+### 7. Contained Greenhouse Engineering Layout
+![Contained Greenhouse Engineering Layout](manuscript/figures/01-contained-greenhouse-concept.png)
+*Figure 7. Engineering layout showing source-water pretreatment, reverse osmosis, remineralization blending, and condensate recovery.*
 
 ---
 
@@ -121,6 +152,7 @@ All unit, property-based (Hypothesis), and acceptance tests pass with **100% gre
 - **Publication HTML Paper:** [`manuscript/stage1_registered_report.html`](manuscript/stage1_registered_report.html)
 - **Word Document (.docx):** [`manuscript/stage1_registered_report.docx`](manuscript/stage1_registered_report.docx)
 - **Machine-Readable Gates Audit:** [`manuscript/submission_gates.json`](manuscript/submission_gates.json)
+- **Visual Concepts Gallery:** [`assets/concepts/concept-gallery.html`](assets/concepts/concept-gallery.html)
 
 ---
 
@@ -133,7 +165,7 @@ SYNTHETIC — NOT BIOLOGICAL EVIDENCE
 
 ---
 
-## 📜 Citation
+## 📜 Citation & Metadata
 
 ```bibtex
 @article{almondlab2026stage1,

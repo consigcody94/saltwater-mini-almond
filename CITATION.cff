@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software or registered report protocol, please cite it as below."
+title: "A Registered Genetic Tournament of Marine, Halophytic, and Native Prunus Salt-Response Modules in Compact Almond Root Systems"
+authors:
+  - family-names: "Cody"
+    given-names: "Consig"
+  - name: "The AlmondLab Virtual Laboratory Consortium"
+version: "0.1.0-stage1"
+date-released: "2026-08-14"
+license: "MIT"
+repository-code: "https://github.com/consigcody94/saltwater-mini-almond"
+url: "https://consigcody94.github.io/saltwater-mini-almond/"
+type: "software"
+keywords:
+  - "plant biotechnology"
+  - "salinity tolerance"
+  - "almond"
+  - "Prunus dulcis"
+  - "registered report"
+  - "virtual laboratory"
+  - "Bayesian inference"
+  - "controlled environment agriculture"
