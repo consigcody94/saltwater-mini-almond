@@ -1,0 +1,153 @@
+schema_version: "1.0.0"
+fixture_id: winner_curse
+artifact_role: registration_template
+interpretation: synthetic_design_input_only
+evidence_label: synthetic_only
+authority_bindings:
+  candidate_registry:
+    raw_sha256: f4eb6c496ddfce2fb7077db34a03e6836da2cd4c62ad21d504b0227a277c5a05
+    normalized_sha256: 4e401c13ebfd97544a7f5bf7e7c967637dbf8329f0650dae7676c4656968f0ca
+    consumption: exact_candidate_order_and_primary_parameters
+  candidate_effects:
+    raw_sha256: 4e92c1567227b9e1f6e0713b79890bfc652a5b21a8de013769eaaa01ac939c21
+    normalized_sha256: 0d5b62381409a3ed814b4687291e7f4c4c987c8d84db63353b85c11789fe25e8
+    consumption: c2_registered_effect_template
+  discovery_design:
+    raw_sha256: a40c28829c4ca3dadb3a87a3f6e8731b73ab9d38a53f2dae9b4c26657ac8ab18
+    normalized_sha256: f5911a6a63d7444575c2013d9737b9219ef21fb1f5c58dcc5fd633bcde38f5c9
+  water_recipes:
+    raw_sha256: d46a0e4dc02cd74cfa5b4f437f367009301d4aab8cad9a1115ec6be37afa24d3
+    normalized_sha256: 8a902441d143017fddfddf5b174302187dd8da1d9a46f98af9a94d18e317b1bd
+  scenario_registry:
+    raw_sha256: fdc7b4068d80a9d5e42f7c2c5322d7a79b076951b1cccc3ba674af91a53d56d6
+    normalized_sha256: 4229e855bcf783d994ce24f6dc98d1dc8eded92f5134f854880cb44204f6150a
+    source_mapping_sha256: 36033d8d58b65cc5647c0139ba4bebf92250cf9d8a7c08eba81f54b89ea10e51
+  core_domain:
+    raw_sha256: 0cac0e90c7746e4897f760d2ff87a57d2ddceb175690d51be1beb31f41719411
+    normalized_sha256: f6e80805ac05a2059baae3e9a05dab1c89b988911b34a366a46249bb9fac8ee0
+  stop_policy:
+    raw_sha256: 03e07ee719e5e376e9c03202be945c6b02d77a7373a3bdb164d5c08f7427ee34
+    normalized_sha256: 94c1aee1bc6b5547973e29d201373dfbe2f545ec694ac5dc9b836b40fa0127a9
+  nominal_forcing:
+    schema_version: "1.1.0"
+    materialization_algorithm: paper1_nominal_forcing_schedule_v2
+    canonical_sha256: 329cb311b6a5915e1090a2e6b059857af9531bec3cbc26779d112eb9a5cbbc96
+    record_count: 336
+    evidence_label: synthetic_only
+  task3_discovery:
+    commit: d242473269803fa16461f78e8784813272912fbb
+    fixture_raw_sha256: beecb5f2a3637aee52bcd74b5b717ff59f4d9bfe9a57a11429cf00950ee6a4b6
+    manifest_root_seed: 20260812
+    baseline_roster_canonical_sha256: f34dc944bf951fc8c2f752d981433482d475a4c4f3091e6d8d8f2e7d0df719d8
+    position_map_canonical_sha256: fed49c40785388661b46a0ee5c174617e39230fac80171677cfdcca9b9d9cbea
+    allocation_sha256: bd4cb366ac9c3144ab881af29615311839f1fc0a9a881645ba4995dcab7b7c3f
+    manifest_canonical_sha256: dea12ab75748223c01e24accbe92eca153a7da90aa3b1235294e75699ad7516f
+    record_count: 720
+scenario_binding:
+  scenario_id: selection_bias_false_leader
+  expected_changed_paths:
+    - generator.hierarchy.plant_variance
+  plant_variance:
+    value: 0.2
+    unit: log-ratio^2
+    evidence_label: hypothesis_prior
+  evidence_label: synthetic_only
+candidate_order: [C1, C2, C3, C4, C5, C6]
+mechanism_templates:
+  - candidate_id: C1
+    mechanism_role: equal_null
+    template_source: anchor_identity_v1
+    parameters:
+      na_efflux_vmax_multiplier: 1.0
+      atp_cost_per_na: 2.0
+    template_reference: null
+    requires_calibration_resolution: false
+    evidence_label: hypothesis_prior
+  - candidate_id: C2
+    mechanism_role: hypothesized_useful
+    template_source: candidate_effects_registry_v1
+    parameters:
+      ros_clearance_multiplier: 1.5
+      redox_growth_penalty: 0.015
+    template_reference: null
+    requires_calibration_resolution: false
+    evidence_label: hypothesis_prior
+  - candidate_id: C3
+    mechanism_role: equal_null
+    template_source: anchor_identity_v1
+    parameters:
+      mannitol_vmax_multiplier: 1.0
+      mannitol_carbon_cost: 0.4
+    template_reference: null
+    requires_calibration_resolution: false
+    evidence_label: hypothesis_prior
+  - candidate_id: C4
+    mechanism_role: equal_null
+    template_source: anchor_identity_v1
+    parameters:
+      na_efflux_vmax_multiplier: 1.0
+      xylem_loading_leak_multiplier: 1.0
+    template_reference: null
+    requires_calibration_resolution: false
+    evidence_label: hypothesis_prior
+  - candidate_id: C5
+    mechanism_role: equal_null
+    template_source: anchor_identity_v1
+    parameters:
+      xylem_na_retrieval_multiplier: 1.0
+      root_na_injury_multiplier: 1.0
+    template_reference: null
+    requires_calibration_resolution: false
+    evidence_label: hypothesis_prior
+  - candidate_id: C6
+    mechanism_role: equal_null
+    template_source: anchor_identity_v1
+    parameters:
+      sos_efflux_activation_multiplier: 1.0
+      cipk_pleiotropy_penalty: 0.02
+    template_reference: null
+    requires_calibration_resolution: false
+    evidence_label: hypothesis_prior
+calibration_registration: null
+generation_binding:
+  seed_tree_contract_id: task4_named_seed_tree@1.0.0
+  task4_root_seed: 420260816
+  seed_evidence_label: hypothesis_prior
+  generation_gates:
+    - fixture_authority_approval
+    - task4_generator_authority
+    - task4_registered_confirmation_cohort_bundle
+  discovery:
+    cohort_id: discovery
+    authority_state: registered_design_only
+    required_authority: null
+    candidate_ids: [C1, C2, C3, C4, C5, C6]
+    full_allocation_groups: [C1, C2, C3, C4, C5, C6, empty_vector, sham_transformation, unmodified_parent]
+    task3_fixture_raw_sha256: beecb5f2a3637aee52bcd74b5b717ff59f4d9bfe9a57a11429cf00950ee6a4b6
+    task3_manifest_root_seed: 20260812
+    design_config_normalized_sha256: f5911a6a63d7444575c2013d9737b9219ef21fb1f5c58dcc5fd633bcde38f5c9
+    baseline_roster_canonical_sha256: f34dc944bf951fc8c2f752d981433482d475a4c4f3091e6d8d8f2e7d0df719d8
+    position_map_canonical_sha256: fed49c40785388661b46a0ee5c174617e39230fac80171677cfdcca9b9d9cbea
+    allocation_sha256: bd4cb366ac9c3144ab881af29615311839f1fc0a9a881645ba4995dcab7b7c3f
+    manifest_canonical_sha256: dea12ab75748223c01e24accbe92eca153a7da90aa3b1235294e75699ad7516f
+    run_sequence_ordinals: [1, 2]
+    seed_leaf_name: 00_discovery
+  confirmation:
+    cohort_id: confirmation
+    authority_state: registration_required
+    required_authority: task4_registered_confirmation_cohort_bundle
+    candidate_ids: null
+    full_allocation_groups: null
+    task3_fixture_raw_sha256: null
+    task3_manifest_root_seed: null
+    design_config_normalized_sha256: null
+    baseline_roster_canonical_sha256: null
+    position_map_canonical_sha256: null
+    allocation_sha256: null
+    manifest_canonical_sha256: null
+    run_sequence_ordinals: null
+    seed_leaf_name: 01_confirmation
+hidden_truth_sentinel:
+  sentinel_id: TASK4_PRIVATE_CANARY_WINNER_CURSE_V1
+  value: "ALMONDLAB::PRIVATE_TRUTH::WINNER_CURSE::V1::DO_NOT_PUBLISH"
+  evidence_label: synthetic_only
