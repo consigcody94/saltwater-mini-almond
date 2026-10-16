@@ -13,6 +13,16 @@
 
 ---
 
+## Interactive Physical Explainer: The Saltwater Mini-Almond Rhizosphere Osmometer Bench
+An interactive isometric precision instrument built with [wheresryan22/anatomy](https://github.com/wheresryan22/anatomy) embodying halophytic root biophysics:
+
+> **[Launch Interactive Physical Explainer](https://consigcody94.github.io/scientific-anatomy/figures/saltwater-almond/saltwater-almond.html)** · *(Local: [`docs/figures/saltwater-almond.html`](docs/figures/saltwater-almond.html))*
+
+[![Saltwater Mini-Almond Rhizosphere Osmometer Bench](docs/figures/saltwater-almond-dark.png)](https://consigcody94.github.io/scientific-anatomy/figures/saltwater-almond/saltwater-almond.html)
+*Figure: The Saltwater Mini-Almond Rhizosphere Osmometer Bench. A soil salinity carriage advancing from 1.2 dS/m control to 32.0 dS/m seawater shock beneath a root tensiometer observation chamber. Dual ion-selective electrodes measure cytosolic [Na+] accumulation and K+/Na+ discrimination ratio, while a dial gauge displays leaf water potential Ψ_leaf.*
+
+---
+
 ## <img src="assets/icons/book.svg" width="20" height="20" valign="middle"/> Executive Summary & Program Scope
 
 California produces over **80% of the world's commercial almond supply** (approx. 2.6 to 3.1 billion pounds annually across 1.35 million bearing acres). However, escalating groundwater overdraft, root-zone salinization, and pumping curtailments under the **Sustainable Groundwater Management Act (SGMA)** threaten the long-term viability of Central Valley orchards.
